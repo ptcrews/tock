@@ -44,6 +44,7 @@ CFLAGS   += -std=gnu11
 CPPFLAGS += -I$(TOCK_USERLAND_BASE_DIR)/libtock -g -mthumb -mfloat-abi=soft
 CPPFLAGS += \
 	    -frecord-gcc-switches\
+	    -pipe\
 	    -Os\
 	    -fdata-sections -ffunction-sections\
 	    -fstack-usage -Wstack-usage=$(STACK_SIZE)\
