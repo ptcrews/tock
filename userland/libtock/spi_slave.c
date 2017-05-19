@@ -20,7 +20,7 @@ int spi_slave_write_byte(unsigned char byte) {
 }
 
 /* This registers a callback for when the slave is selected. */
-int spi_slave_slave_chip_selected(subscribe_cb cb, bool* cond) {
+int spi_slave_chip_selected(subscribe_cb cb, bool* cond) {
   return subscribe(SPI_SLAVE, 1, cb, cond);
 }
 
