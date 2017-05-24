@@ -4,7 +4,7 @@
 #include "spi.h"
 #include "button.h"
 
-#define BUF_SIZE 200
+#define BUF_SIZE 16
 char rbuf[BUF_SIZE];
 char wbuf[BUF_SIZE];
 char ibuf[BUF_SIZE];
@@ -15,13 +15,13 @@ bool toggle = true;
 // equality, setting the LED if the 
 // buffers are *not* equal.
 static void buffer_eq (char *buf1, char *buf2) {
-    int i;
-    for (i = 0; i < BUF_SIZE; i++) {
-      if (buf1[i] != buf2[i]) {
-        led_on(0);
-        return;
-      }
+  int i;
+  for (i = 0; i < BUF_SIZE; i++) {
+    if (buf1[i] != buf2[i]) {
+      led_on(0);
+      return;
     }
+  }
 }
 
 // This callback occurs when a read_write call completed.
@@ -31,22 +31,23 @@ static void write_cb(__attribute__ ((unused)) int arg0,
               __attribute__ ((unused)) int arg2,
               __attribute__ ((unused)) int arg3,
               __attribute__ ((unused)) void* userdata) {
-    led_toggle(0);
-    if (toggle) {
-      buffer_eq (wbuf, ibuf);
-    } else {
-      buffer_eq (rbuf, zbuf);
-    }
+  led_toggle(0);
+  if (toggle) {
+    buffer_eq (wbuf, ibuf);
+  } else {
+    buffer_eq (rbuf, zbuf);
+  }
 }
 
 // This is the callback for the button press.
 // Each button press represents a transfer, and
 // we do not start transfering until the button
 // has been pressed.
-static void button_cb(__attribute__((unused)) int arg0,
+static void button_cb(__attribute__((unused)) int btn_num,
+              __attribute__ ((unused)) int val,
               __attribute__ ((unused)) int arg2,
-              __attribute__ ((unused)) int arg3,
               __attribute__ ((unused)) void* userdata) {
+  if (val == 0) {
     if (toggle) {
         // This is the first read write; note that this is
         // inverted from the spi_slave_transfer, as we do
@@ -59,6 +60,7 @@ static void button_cb(__attribute__((unused)) int arg0,
     // Note that the toggle is reset inside the button callback,
     // not the write completed callback. This decision was arbitrary.
     toggle = !toggle;
+  }
 }
 
 // This function first initializes the various buffers to
@@ -69,7 +71,7 @@ static void button_cb(__attribute__((unused)) int arg0,
 // If a buffer is corrupted, we set the LED to be on.
 int main(void) {
   int i;
-  for (i = 0; i < 200; i++) {
+  for (i = 0; i < BUF_SIZE; i++) {
     wbuf[i] = i;
     ibuf[i] = i;
     zbuf[i] = 0;

@@ -345,9 +345,7 @@ impl<'a, S: SpiSlaveDevice> SpiSlave<'a, S> {
                     kwbuf[i] = *c;
                 });
         });
-        self.spi_slave.read_write_bytes(self.kernel_write.take(),
-                                        self.kernel_read.take(),
-                                        len);
+        self.spi_slave.read_write_bytes(self.kernel_write.take(), self.kernel_read.take(), len);
     }
 }
 
@@ -407,7 +405,7 @@ impl<'a, S: SpiSlaveDevice> Driver for SpiSlave<'a, S> {
                 let appc = match self.app.take() {
                     None => SlaveApp {
                         callback: Some(callback),
-                        selected_callback: None, 
+                        selected_callback: None,
                         app_read: None,
                         app_write: None,
                         len: 0,
@@ -446,7 +444,7 @@ impl<'a, S: SpiSlaveDevice> Driver for SpiSlave<'a, S> {
     /// 0: check if present
     /// 1: read/write a single byte (blocking)
     ///   - No longer supported
-    /// 2: read/write buffers 
+    /// 2: read/write buffers
     ///   - read and write buffers optional
     ///   - fails if arg1 (bytes to write) >
     ///     write_buffer.len()
@@ -474,7 +472,7 @@ impl<'a, S: SpiSlaveDevice> Driver for SpiSlave<'a, S> {
     ///
     /// 11: hold CS line low between transfers
     ///   - set CSAAT bit of control register
-    ///   - not supported for slave 
+    ///   - not supported for slave
     /// 12: release CS line (high) between transfers
     ///   - clear CSAAT bit of control register
     ///   - not supported for slave
