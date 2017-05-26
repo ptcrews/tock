@@ -213,6 +213,13 @@ impl Spi {
 
         if self.role.get() == SpiRole::SpiSlave {
             regs.ier.set(spi_consts::sr::NSSR); // Enable NSSR
+
+            // Enable interrupts at the nvic level
+            unsafe {
+                nvic::disable(nvic::NvicIdx::SPI);
+                nvic::clear_pending(nvic::NvicIdx::SPI);
+                nvic::enable(nvic::NvicIdx::SPI);
+            }
         }
     }
 
@@ -229,6 +236,12 @@ impl Spi {
 
         if self.role.get() == SpiRole::SpiSlave {
             regs.idr.set(spi_consts::sr::NSSR); // Disable NSSR
+
+            // Disable interrupts at the nvic level
+            unsafe {
+                nvic::disable(nvic::NvicIdx::SPI);
+                nvic::clear_pending(nvic::NvicIdx::SPI);
+            }
         }
     }
 

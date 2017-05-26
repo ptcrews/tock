@@ -317,9 +317,6 @@ pub unsafe fn reset_handler() {
         }
     };
 
-    // Now enable the SPI
-    sam4l::spi::SPI.enable();
-
     // Configure the SI7021, device address 0x40
     let si7021_alarm = static_init!(
         VirtualMuxAlarm<'static, sam4l::ast::Ast>,
