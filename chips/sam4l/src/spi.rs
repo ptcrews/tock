@@ -180,6 +180,7 @@ impl Spi {
         let regs: &mut SpiRegisters = unsafe { mem::transmute(self.registers) };
 
         self.role.set(role);
+        self.enable_clock();
 
         if self.role.get() == SpiRole::SpiMaster {
             // Only need to set LASTXFER if we are master
@@ -396,21 +397,19 @@ impl Spi {
     pub fn handle_interrupt(&self) {
         // Do nothing if master mode
         if self.role.get() == SpiRole::SpiMaster {
-            return
+            return;
         }
 
         let regs: &mut SpiRegisters = unsafe { mem::transmute(self.registers) };
         let sr = regs.sr.get();
 
-        self.slave_client.get().map(|client| {
-            if (sr & spi_consts::sr::NSSR) != 0 {
-                client.chip_selected()
-            }
+        self.slave_client.get().map(|client| if (sr & spi_consts::sr::NSSR) != 0 {
+            client.chip_selected()
         });
     }
 
     /// Asynchronous buffer read/write of SPI.
-    /// returns true if operation starts (will receive callback through SpiMasterClient 
+    /// returns true if operation starts (will receive callback through SpiMasterClient
     /// or SpiSlaveClient depending on the SPI role),
     /// returns false if the operation does not start.
     /// If both buffers are none, the operation is equivalent to a no-op.
@@ -605,7 +604,8 @@ impl spi::SpiSlave for Spi {
         regs.tdr.set(write_byte as u32);
     }
 
-    /// This performs a synchronous read_write
+    /// This performs a synchronous read and write for debugging purposes.
+    /// We only use the asynchronous read_write_bytes interface in capsule code
     fn read_write_byte(&self, write_byte: u8) -> u8 {
         let regs: &mut SpiRegisters = unsafe { mem::transmute(self.registers) };
 
@@ -613,13 +613,13 @@ impl spi::SpiSlave for Spi {
         while (regs.sr.get() & spi_consts::sr::TDRE) == 0 {}
 
         // write byte
-        regs.tdr.set((write_byte as u32) & spi_consts::sr::TD);
+        regs.tdr.set((write_byte as u32) & spi_consts::tdr::TD);
 
         // wait for byte to come in RDRF (F = full)
         while (regs.sr.get() & spi_consts::sr::RDRF) == 0 {}
 
         // read byte
-        (regs.rdr.get() & spi_consts::sr::RD) as u8
+        (regs.rdr.get() & spi_consts::rdr::RD) as u8
     }
 
     fn read_write_bytes(&self,
