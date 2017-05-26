@@ -31,25 +31,7 @@ impl spi::SpiSlaveClient for SlaveCB {
     #[allow(unused_variables, dead_code)]
     fn chip_selected(&self) {
         unsafe {
-            // This should be 0 at the start of every transfer
-            // if COUNTER != 0 {
-            //     loop {
-            //         SPI_SLAVE.set_write_byte(0xA5);
-            //     }
-            // }
-
             SPI_SLAVE.set_write_byte(0x05);
-            // Send initial byte
-            /*
-            if FLOP {
-                SPI_SLAVE.set_write_byte(BUF1[COUNTER]);
-            } else {
-                SPI_SLAVE.set_write_byte(BUF2[COUNTER]);
-            }
-            */
-
-
-
         }
     }
 }
@@ -85,6 +67,4 @@ pub unsafe fn spi_slave_dummy_test() {
     //sam4l::spi::SPI_SLAVE.set_baud_rate(1000000);
 
     // pin2.clear();
-
-    // TODO: We clear this for the trigger, set it perminantly to behave as NSS
 }

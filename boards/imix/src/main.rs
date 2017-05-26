@@ -103,7 +103,7 @@ impl kernel::Platform for Imix {
             10 => f(Some(self.si7021)),
             11 => f(Some(self.ninedof)),
             16 => f(Some(self.crc)),
-            19 => {
+            23 => {
                 f({
                     match self.spi {
                         SpiType::SpiSlaveT(i) => Some(i),
