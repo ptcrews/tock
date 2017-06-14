@@ -377,7 +377,6 @@ impl<'a, S: SpiSlaveDevice> Driver for SpiSlave<'a, S> {
         }
     }
 
-    #[inline(never)]
     fn subscribe(&self, subscribe_num: usize, callback: Callback) -> ReturnCode {
         match subscribe_num {
             0 /* read_write */ => {

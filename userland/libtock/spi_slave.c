@@ -2,17 +2,11 @@
 
 #define SPI_SLAVE 25
 
-__attribute__((const)) int spi_slave_init(void) {return 0;}
 int spi_slave_get_chip_select(void)             {return command(SPI_SLAVE, 4, 0);}
 int spi_slave_set_phase(bool phase)             {return command(SPI_SLAVE, 7, (unsigned char)phase);}
 int spi_slave_get_phase(void)                   {return command(SPI_SLAVE, 8, 0);}
 int spi_slave_set_polarity(bool pol)            {return command(SPI_SLAVE, 9, (unsigned char)pol);}
 int spi_slave_get_polarity(void)                {return command(SPI_SLAVE, 10, 0);}
-
-/* This is no longer supported */
-int spi_slave_write_byte(unsigned char byte) {
-  return command(SPI_SLAVE, 1, byte);
-}
 
 /* This registers a callback for when the slave is selected. */
 int spi_slave_chip_selected(subscribe_cb cb, bool* cond) {
