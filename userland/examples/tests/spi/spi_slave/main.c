@@ -1,8 +1,8 @@
 #include <stdbool.h>
 
-#include "led.h"
-#include "spi_slave.h"
-#include "gpio.h"
+#include <led.h>
+#include <spi_slave.h>
+#include <gpio.h>
 
 #define GPIO_PIN 31
 
@@ -66,7 +66,6 @@ int main(void) {
   for (i = 0; i < 200; i++) {
     wbuf[i] = i;
   }
-  spi_slave_init();
 
   spi_slave_set_polarity(false);
   spi_slave_set_phase(false);

@@ -1,4 +1,4 @@
-#include "spi_slave.h"
+#include <spi_slave.h>
 
 #define SPI_SLAVE 25
 
