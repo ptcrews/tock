@@ -340,48 +340,10 @@ impl<'a, S: SpiSlaveDevice> Driver for SpiSlave<'a, S> {
         match allow_num {
             0 => {
                 self.app.map(|app| app.app_read = Some(slice));
-                /*
-                let appc = match self.app.take() {
-                    None => {
-                        SlaveApp {
-                            callback: None,
-                            selected_callback: None,
-                            app_read: Some(slice),
-                            app_write: None,
-                            len: 0,
-                            index: 0,
-                        }
-                    }
-                    Some(mut appc) => {
-                        appc.app_read = Some(slice);
-                        appc
-                    }
-                };
-                self.app.replace(appc);
-                */
                 ReturnCode::SUCCESS
             }
             1 => {
                 self.app.map(|app| app.app_write = Some(slice));
-                /*
-                let appc = match self.app.take() {
-                    None => {
-                        SlaveApp {
-                            callback: None,
-                            selected_callback: None,
-                            app_read: None,
-                            app_write: Some(slice),
-                            len: 0,
-                            index: 0,
-                        }
-                    }
-                    Some(mut appc) => {
-                        appc.app_write = Some(slice);
-                        appc
-                    }
-                };
-                self.app.replace(appc);
-                */
                 ReturnCode::SUCCESS
             }
             _ => ReturnCode::ENOSUPPORT,
@@ -403,44 +365,10 @@ impl<'a, S: SpiSlaveDevice> Driver for SpiSlave<'a, S> {
         match subscribe_num {
             0 /* read_write */ => {
                 self.app.map(|app| app.callback = Some(callback));
-                /*
-                let appc = match self.app.take() {
-                    None => SlaveApp {
-                        callback: Some(callback),
-                        selected_callback: None,
-                        app_read: None,
-                        app_write: None,
-                        len: 0,
-                        index: 0,
-                    },
-                    Some(mut appc) => {
-                        appc.callback = Some(callback);
-                        appc
-                    }
-                };
-                self.app.replace(appc);
-                */
                 ReturnCode::SUCCESS
             },
             1 /* chip selected */ => {
                 self.app.map(|app| app.selected_callback = Some(callback));
-                /*
-                let appc = match self.app.take() {
-                    None => SlaveApp {
-                        callback: None,
-                        selected_callback: Some(callback),
-                        app_read: None,
-                        app_write: None,
-                        len: 0,
-                        index: 0,
-                    },
-                    Some(mut appc) => {
-                        appc.selected_callback = Some(callback);
-                        appc
-                    }
-                };
-                self.app.replace(appc);
-                */
                 ReturnCode::SUCCESS
             },
             _ => ReturnCode::ENOSUPPORT
