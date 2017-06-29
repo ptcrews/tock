@@ -9,8 +9,9 @@ extern crate kernel;
 extern crate sam4l;
 
 #[allow(unused_imports)]
-use capsules::net::sixlowpan;
+use capsules::net::lowpan;
 use capsules::rf233::RF233;
+use capsules::radio_loopback::RadioLoopback;
 use capsules::timer::TimerDriver;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use capsules::virtual_i2c::{I2CDevice, MuxI2C};
@@ -32,6 +33,8 @@ mod i2c_dummy;
 #[allow(dead_code)]
 mod spi_dummy;
 
+type RF233Device = RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>;
+
 struct Imix {
     console: &'static capsules::console::Console<'static, sam4l::usart::USART>,
     gpio: &'static capsules::gpio::GPIO<'static, sam4l::gpio::GPIOPin>,
@@ -47,9 +50,9 @@ struct Imix {
     spi: &'static capsules::spi::Spi<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
     ipc: kernel::ipc::IPC,
     ninedof: &'static capsules::ninedof::NineDof<'static>,
+    // radio: &'static capsules::radio::RadioDriver<'static, RF233Device>,
     radio: &'static capsules::radio::RadioDriver<'static,
-                                                 capsules::rf233::RF233<'static,
-                                                 VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>>,
+                                                 RadioLoopback<'static, RF233Device>>,
     crc: &'static capsules::crc::Crc<'static, sam4l::crccu::Crccu<'static>>,
 }
 
@@ -269,14 +272,22 @@ pub unsafe fn reset_handler() {
     let rf233_spi = static_init!(VirtualSpiMasterDevice<'static, sam4l::spi::Spi>,
                                  VirtualSpiMasterDevice::new(mux_spi, 3));
     // Create the RF233 driver, passing its pins and SPI client
-    let rf233: &RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>> =
-        static_init!(RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
-                             RF233::new(rf233_spi,
-                                        &sam4l::gpio::PA[09],    // reset
-                                        &sam4l::gpio::PA[10],    // sleep
-                                        &sam4l::gpio::PA[08],    // irq
-                                        &sam4l::gpio::PA[08])); //  irq_ctl
+    let rf233: &RF233Device =
+        static_init!(RF233Device,
+                     RF233::new(rf233_spi,
+                                &sam4l::gpio::PA[09],    // reset
+                                &sam4l::gpio::PA[10],    // sleep
+                                &sam4l::gpio::PA[08],    // irq
+                                &sam4l::gpio::PA[08])); //  irq_ctl
     sam4l::gpio::PA[08].set_client(rf233);
+    rf233_spi.set_client(rf233);
+    rf233.initialize(&mut RF233_BUF, &mut RF233_REG_WRITE, &mut RF233_REG_READ);
+
+    // Create a radio loopback device that wraps the RF233 and prints
+    // transmitted payloads to the console
+    let rf233_loopback: &RadioLoopback<'static, RF233Device> =
+        static_init!(RadioLoopback<'static, RF233Device>,
+                     RadioLoopback::new(rf233));
 
     // FXOS8700CQ accelerometer, device address 0x1e
     let fxos8700_i2c = static_init!(I2CDevice, I2CDevice::new(mux_i2c, 0x1e));
@@ -361,18 +372,23 @@ pub unsafe fn reset_handler() {
         capsules::crc::Crc<'static, sam4l::crccu::Crccu<'static>>,
         capsules::crc::Crc::new(&mut sam4l::crccu::CRCCU, kernel::Container::create()));
 
-    rf233_spi.set_client(rf233);
-    rf233.initialize(&mut RF233_BUF, &mut RF233_REG_WRITE, &mut RF233_REG_READ);
+    // Radio capsule without loopback
+    // let radio_capsule = static_init!(
+    //     capsules::radio::RadioDriver<'static, RF233Device>,
+    //     capsules::radio::RadioDriver::new(rf233));
+    // radio_capsule.config_buffer(&mut RADIO_BUF);
+    // rf233.set_transmit_client(radio_capsule);
+    // rf233.set_receive_client(radio_capsule, &mut RF233_RX_BUF);
+    // rf233.set_config_client(radio_capsule);
 
+    // Radio capsule with loopback
     let radio_capsule = static_init!(
-        capsules::radio::RadioDriver<'static,
-                                     RF233<'static,
-                                           VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>>,
-        capsules::radio::RadioDriver::new(rf233));
+        capsules::radio::RadioDriver<'static, RadioLoopback<'static, RF233Device>>,
+        capsules::radio::RadioDriver::new(rf233_loopback));
     radio_capsule.config_buffer(&mut RADIO_BUF);
-    rf233.set_transmit_client(radio_capsule);
-    rf233.set_receive_client(radio_capsule, &mut RF233_RX_BUF);
-    rf233.set_config_client(radio_capsule);
+    rf233_loopback.set_transmit_client(radio_capsule);
+    rf233_loopback.set_receive_client(radio_capsule, &mut RF233_RX_BUF);
+    rf233_loopback.set_config_client(radio_capsule);
 
     let imix = Imix {
         console: console,
