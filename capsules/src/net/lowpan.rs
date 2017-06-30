@@ -668,13 +668,13 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                       mesh_local_prefix: &[u8])
                       -> Result<(IP6Header, usize, Option<FragInfo>), ()> {
         // Get the LOWPAN_IPHC header (the first two bytes are the header)
-        let iphc_header_1: u8 = buf[0];
-        let iphc_header_2: u8 = buf[1];
+        let iphc_header_1: u8 = buf[0]; // First byte
+        let iphc_header_2: u8 = buf[1]; // Second byte
         let mut offset: usize = 2;
         let mut ip6_header: IP6Header = IP6Header::new();
 
         // Decompress CIE and get context
-        if iphc_header_1 & iphc::CID != 0 {
+        if iphc_header_2 & iphc::CID != 0 {
             self.decompress_cie(iphc_header_1);
         }
 
@@ -763,19 +763,67 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         };
         ip6_header.set_hop_limit(hop_limit);
     }
+
+    fn decompress_src(iphc_header: u8,
+                      src_addr: &IPAddr,
+                      src_mac_addr: &MacAddr,
+                      src_ctx: &Context, // Context must always be something
+                      buf: &[u8],
+                      offset: &mut usize) {
+        let iphc_sam = iphc_header & iphc::SAM_MASK;
+        let mut ip6_src_addr = [0, 16];
+        // If stateful compression used
+        if iphc_header & iphc::SAC != 0 {
+            // Address all zeroes
+            if iphc_sam == 0 {
+                ip6_header.set_src_ip(ip6_src_addr);
+            } else {
+                decompress_iid();
+            }
+        // Stateful compression not used
+        } else {
+            // Address carried inline
+            if iphc_sam == 0 {
+                // TODO: Syntax?
+                ip6_header.set_src_ip(&buf[*offset..*offset+15]);
+                *offset += 16;
+            } else {
+                decompress_iid();
+            }
+        }
+    }
+
+    // iphc_masked is masked with either the DAM or SAM masks before calling
+    // this function.
+    fn decompress_iid(ip6_addr: &mut [u8],
+                      iphc_masked: u8,
+                      ctx: &Option<Context>,
+                      buf: &[u8],
+                      offset: &mut usize) {
+        if ctx.is_none() {
+            match iphc_masked {
+                DAM_MODE_INLINE | SAM_MODE_INLINE => {
+                },
+                DAM_MODE1 | SAM_MODE1 => {
+                },
+                DAM_MODE2 | SAM_MODE2 => {
+                },
+                DAM_MODE3 | SAM_MODE3 => {
+                },
+            }
+            // Address carried inline
+            if iphc_masked == 0 {
+                // TODO: Syntax
+                ip6_addr[0..15] = buf[*offset..*offset+15];
+                *offset += 16;
+            // First 64 bits elided (link local prefix + zero padding)
+            } else if iphc_masked == DAM_MODE1 || iphc_masked == SAM_MODE1 {
+            } else if
+        }
+    }
 }
 /*
-                    ip6_header: &IP6Header,
-                    next_headers: &[u8],
-                    src_mac_addr: MacAddr,
-                    dst_mac_addr: MacAddr,
-                    mut buf: &mut [u8])
-                    -> Result<usize, ()> {
-        // The first two bytes are the LOWPAN_IPHC header
-        let mut offset: usize = 2;
 
-        // Initialize the LOWPAN_IPHC header
-        buf[0..2].copy_from_slice(&iphc::DISPATCH);
 
         let mut src_ctx: Option<Context> = self.ctx_store
             .get_context_from_addr(ip6_header.src_addr);
