@@ -5,8 +5,6 @@
 //
 // Author: Philip Levis
 // Date: Jan 12 2017
-//
-
 
 use core::cell::Cell;
 use kernel::{AppId, Driver, Callback, AppSlice, Shared};
