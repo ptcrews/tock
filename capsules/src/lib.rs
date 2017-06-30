@@ -30,6 +30,7 @@ pub mod crc;
 pub mod rf233;
 pub mod rf233_const;
 pub mod radio;
+pub mod radio_debug;
 pub mod rng;
 pub mod temp_nrf51dk;
 pub mod symmetric_encryption;
