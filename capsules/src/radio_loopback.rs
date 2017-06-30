@@ -161,8 +161,8 @@ impl<'a, R: radio::Radio + 'a> radio::RadioData for RadioLoopback<'a, R> {
         // Transmit len is header + payload
         let offset = self.radio.payload_offset(source_long, false);
         let payload_len = (len - self.radio.header_size(source_long, false)) as usize;
-        debug!("Transmitting radio packet: dest={:x}, len={}, source_long={}",
-               dest, len, source_long);
+        debug!("TX packet: dest={:04x}, len={}, source_long={}, payload_len={}",
+               dest, len, source_long, payload_len);
 
         // All of this is because the debug macro adds a newline, and
         // we don't have strings.
@@ -170,9 +170,9 @@ impl<'a, R: radio::Radio + 'a> radio::RadioData for RadioLoopback<'a, R> {
         let payload_full: usize = payload_len >> 3;
         let payload_rem: usize = payload_len & 7;
         for i in 0..payload_full {
-            let chunk_offset = i << 3;
+            let chunk_offset = offset as usize + (i << 3);
             debug!("{} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
-                   if i == 0 {"hex:"} else { "    " },
+                   if i == 0 { "hex:" } else { "    " },
                    payload[chunk_offset + 0],
                    payload[chunk_offset + 1],
                    payload[chunk_offset + 2],
@@ -182,10 +182,10 @@ impl<'a, R: radio::Radio + 'a> radio::RadioData for RadioLoopback<'a, R> {
                    payload[chunk_offset + 6],
                    payload[chunk_offset + 7]);
         }
-        let chunk_offset = payload_full << 3;
+        let chunk_offset = offset as usize + (payload_full << 3);
         match payload_rem {
             7 => debug!("{} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
-                        if payload_full == 0 {"hex:"} else { "    " },
+                        if payload_full == 0 { "hex:" } else { "    " },
                         payload[chunk_offset + 0],
                         payload[chunk_offset + 1],
                         payload[chunk_offset + 2],
@@ -194,7 +194,7 @@ impl<'a, R: radio::Radio + 'a> radio::RadioData for RadioLoopback<'a, R> {
                         payload[chunk_offset + 5],
                         payload[chunk_offset + 6]),
             6 => debug!("{} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
-                        if payload_full == 0 {"hex:"} else { "    " },
+                        if payload_full == 0 { "hex:" } else { "    " },
                         payload[chunk_offset + 0],
                         payload[chunk_offset + 1],
                         payload[chunk_offset + 2],
@@ -202,29 +202,29 @@ impl<'a, R: radio::Radio + 'a> radio::RadioData for RadioLoopback<'a, R> {
                         payload[chunk_offset + 4],
                         payload[chunk_offset + 5]),
             5 => debug!("{} {:02x} {:02x} {:02x} {:02x} {:02x}",
-                        if payload_full == 0 {"hex:"} else { "    " },
+                        if payload_full == 0 { "hex:" } else { "    " },
                         payload[chunk_offset + 0],
                         payload[chunk_offset + 1],
                         payload[chunk_offset + 2],
                         payload[chunk_offset + 3],
                         payload[chunk_offset + 4]),
             4 => debug!("{} {:02x} {:02x} {:02x} {:02x}",
-                        if payload_full == 0 {"hex:"} else { "    " },
+                        if payload_full == 0 { "hex:" } else { "    " },
                         payload[chunk_offset + 0],
                         payload[chunk_offset + 1],
                         payload[chunk_offset + 2],
                         payload[chunk_offset + 3]),
             3 => debug!("{} {:02x} {:02x} {:02x}",
-                        if payload_full == 0 {"hex:"} else { "    " },
+                        if payload_full == 0 { "hex:" } else { "    " },
                         payload[chunk_offset + 0],
                         payload[chunk_offset + 1],
                         payload[chunk_offset + 2]),
             2 => debug!("{} {:02x} {:02x}",
-                        if payload_full == 0 {"hex:"} else { "    " },
+                        if payload_full == 0 { "hex:" } else { "    " },
                         payload[chunk_offset + 0],
                         payload[chunk_offset + 1]),
             1 => debug!("{} {:02x}",
-                        if payload_full == 0 {"hex:"} else { "    " },
+                        if payload_full == 0 { "hex:" } else { "    " },
                         payload[chunk_offset + 0]),
             _ => {}
         };
