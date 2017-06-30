@@ -802,23 +802,27 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                       offset: &mut usize) {
         if ctx.is_none() {
             match iphc_masked {
+                // Address carried inline
                 DAM_MODE_INLINE | SAM_MODE_INLINE => {
+                    // TODO: Syntax
+                    ip6_addr[0..15] = buf[*offset..*offset+15];
+                    *offset += 16;
                 },
+                // First 64 bits elided (link local prefix + zero padding)
                 DAM_MODE1 | SAM_MODE1 => {
+                    //TODO
                 },
                 DAM_MODE2 | SAM_MODE2 => {
                 },
                 DAM_MODE3 | SAM_MODE3 => {
                 },
+                _ => // TODO: ???
             }
-            // Address carried inline
             if iphc_masked == 0 {
                 // TODO: Syntax
-                ip6_addr[0..15] = buf[*offset..*offset+15];
-                *offset += 16;
-            // First 64 bits elided (link local prefix + zero padding)
             } else if iphc_masked == DAM_MODE1 || iphc_masked == SAM_MODE1 {
-            } else if
+            } else if {
+            }
         }
     }
 }
