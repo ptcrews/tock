@@ -699,8 +699,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                      iphc_header: u8,
                      buf: &[u8],
                      offset: &mut usize) {
-        let fl_compressed = iphc_header & iphc::TF_FLOW_LABEL) != 0;
-        let tc_compressed = iphc_header & iphc::TF_TRAFFIC_CLASS) != 0;
+        let fl_compressed = (iphc_header & iphc::TF_FLOW_LABEL) != 0;
+        let tc_compressed = (iphc_header & iphc::TF_TRAFFIC_CLASS) != 0;
 
         // Both traffic class and flow label elided, must be zero
         if fl_compressed && tc_compressed {
