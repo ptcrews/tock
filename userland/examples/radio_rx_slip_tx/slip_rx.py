@@ -40,7 +40,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
         received = 0
         while (1):
             c = ser.read()
-            sys.stdout.write(c)
+            sys.stdout.write(format(c, '02x'))
             sys.stdout.flush()
 
             # if it's an END character then we're done with
