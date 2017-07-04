@@ -22,7 +22,7 @@ ESC_ESC = 0335    # ESC ESC_ESC means ESC data byte
 
 max_packet_len = 100
 
-def recv_packet():
+def recv_packet(ser):
     packet = []
     received = 0
     while (1):
@@ -74,7 +74,7 @@ if not os.path.exists(directory):
 with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f:
     while (1):
         print "LOOP"
-        packet = recv_packet()
+        packet = recv_packet(ser)
         # sys.stdout.write(packet)    # echo packet on-screen as ASCII
         # sys.stdout.flush()          # make sure it actually gets written out
         f.write(packet)             # write line of text to file
