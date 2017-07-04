@@ -1,4 +1,5 @@
 #include <led.h>
+#include <stdio.h>
 #include <timer.h>
 
 int main(void) {
@@ -15,8 +16,8 @@ int main(void) {
         led_off(i);
       }
     }
-
+    
     // This delay uses an underlying timer in the kernel.
-    delay_ms(250);
+    delay_ms(1000);
   }
 }

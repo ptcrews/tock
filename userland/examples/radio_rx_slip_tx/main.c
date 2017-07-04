@@ -27,7 +27,7 @@ static void callback(__attribute__ ((unused)) int unused0,
 
 /** SERIAL TRANSMIT **/
 
-/* Uses serial line IP (SLIP), specified in RFC 1055. */
+/* Uses serial line IP (SLIP) as specified in RFC 1055. */
 
 /* SLIP special character codes */
 #define END             0300    /* indicates end of packet */
