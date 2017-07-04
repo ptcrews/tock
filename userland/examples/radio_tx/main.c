@@ -11,6 +11,12 @@
 char packet[BUF_SIZE];
 bool toggle = true;
 
+/* SLIP special character codes */
+#define END             0300    /* indicates end of packet */
+#define ESC             0333    /* indicates byte stuffing */
+#define ESC_END         0334    /* ESC ESC_END means END data byte */
+#define ESC_ESC         0335    /* ESC ESC_ESC means ESC data byte */
+
 int main(void) {
   int i;
   for (i = 0; i < BUF_SIZE; i++) {
@@ -20,6 +26,11 @@ int main(void) {
   radio_init();
 
   printf("START 802.15.4 TRANSMIT\n");
+
+  printf("END CODE:     %x\n", END);
+  printf("ESC CODE:     %x\n", ESC);
+  printf("ESC_END CODE: %x\n", ESC_END);
+  printf("ESC_ESC CODE: %x\n", ESC_ESC);
 
   radio_set_addr(0x1540);
   radio_set_pan(0xABCD);
