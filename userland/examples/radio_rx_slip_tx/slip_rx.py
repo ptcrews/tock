@@ -70,6 +70,7 @@ if not os.path.exists(directory):
 
 with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f:
     while (1):
+        print "LOOP"
         packet = recv_packet()
         sys.stdout.write(packet)    # echo packet on-screen as ASCII
         sys.stdout.flush()          # make sure it actually gets written out
