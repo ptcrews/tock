@@ -36,7 +36,7 @@ static void callback(__attribute__ ((unused)) int unused0,
 #define ESC_ESC         0335    /* ESC ESC_ESC means ESC data byte */
 
 static void send_char(char c) {
-  printf("%c", c);
+  printf("%x", c);
 }
 
 /* SEND_PACKET: sends a packet of length "len", starting at

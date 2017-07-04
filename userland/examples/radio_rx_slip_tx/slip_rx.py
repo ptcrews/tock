@@ -20,10 +20,11 @@ ESC     = 0333      # indicates byte stuffing
 ESC_END = 0334      # ESC ESC_END means END data byte
 ESC_ESC = 0335      # ESC ESC_ESC means ESC data byte
 
-print format(END, '02x')
-print format(ESC, '02x')
-print format(ESC_END, '02x')
-print format(ESC_ESC, '02x')
+print "START SLIP RECEIVE"
+print 'END:', format(END, '02x')
+print 'ESC:', format(ESC, '02x')
+print 'ESC_END:', format(ESC_END, '02x')
+print 'ESC_ESC:', format(ESC_ESC, '02x')
 
 max_packet_len = 100
 
