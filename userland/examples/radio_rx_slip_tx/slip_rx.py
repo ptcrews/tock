@@ -22,17 +22,6 @@ ESC_ESC = 0335    # ESC ESC_ESC means ESC data byte
 
 max_packet_len = 100
 
-if not os.path.exists(directory):
-    os.makedirs(directory)
-
-with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f:
-    while (1):
-        packet = recv_packet()
-        sys.stdout.write(packet)    # echo packet on-screen as ASCII
-        sys.stdout.flush()          # make sure it actually gets written out
-        f.write(packet)             # write line of text to file
-        f.flush()                   # make sure it actually gets written out
-
 def recv_packet():
     packet = []
     received = 0
@@ -75,3 +64,14 @@ def recv_packet():
         else:
             if received < max_packet_len:
                 packet.append(c)
+
+if not os.path.exists(directory):
+    os.makedirs(directory)
+
+with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f:
+    while (1):
+        packet = recv_packet()
+        sys.stdout.write(packet)    # echo packet on-screen as ASCII
+        sys.stdout.flush()          # make sure it actually gets written out
+        f.write(packet)             # write line of text to file
+        f.flush()                   # make sure it actually gets written out
