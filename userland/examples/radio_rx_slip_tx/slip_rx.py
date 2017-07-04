@@ -27,16 +27,15 @@ if not os.path.exists(directory):
 
 with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f:
     while (1):
-        print "OUTER"
+
+        print "RECEIVING PACKET:"
+
         packet = []
         received = 0
         while (1):
-            print "INNER"
             c = ser.read()
             sys.stdout.write(c)
             sys.stdout.flush()
-
-            print "SWITCH"
 
             # if it's an END character then we're done with
             # the packet
@@ -73,6 +72,9 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
                     packet.append(c)
                     received += 1
         ''.join(packet)
+
+        print "\nDECODED PACKET:"
+        print packet
 
         # sys.stdout.write(packet)    # echo packet on-screen as ASCII
         # sys.stdout.flush()          # make sure it actually gets written out
