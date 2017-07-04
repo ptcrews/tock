@@ -27,6 +27,8 @@ def recv_packet():
     received = 0
     while (1):
         c = ser.read()
+        sys.stdout.write(c)
+        sys.stdout.flush()
 
         # if it's an END character then we're done with
         # the packet
@@ -73,7 +75,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
     while (1):
         print "LOOP"
         packet = recv_packet()
-        sys.stdout.write(packet)    # echo packet on-screen as ASCII
-        sys.stdout.flush()          # make sure it actually gets written out
+        # sys.stdout.write(packet)    # echo packet on-screen as ASCII
+        # sys.stdout.flush()          # make sure it actually gets written out
         f.write(packet)             # write line of text to file
         f.flush()                   # make sure it actually gets written out
