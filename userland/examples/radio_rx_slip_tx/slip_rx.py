@@ -64,6 +64,7 @@ def recv_packet():
         else:
             if received < max_packet_len:
                 packet.append(c)
+                received += 1
 
 if not os.path.exists(directory):
     os.makedirs(directory)
