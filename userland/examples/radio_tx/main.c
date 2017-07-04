@@ -27,10 +27,10 @@ int main(void) {
 
   printf("START 802.15.4 TRANSMIT\n");
 
-  printf("END CODE:     %x\n", END);
-  printf("ESC CODE:     %x\n", ESC);
-  printf("ESC_END CODE: %x\n", ESC_END);
-  printf("ESC_ESC CODE: %x\n", ESC_ESC);
+  printf("END:     %x\n", END);
+  printf("ESC:     %x\n", ESC);
+  printf("ESC_END: %x\n", ESC_END);
+  printf("ESC_ESC: %x\n", ESC_ESC);
 
   radio_set_addr(0x1540);
   radio_set_pan(0xABCD);
