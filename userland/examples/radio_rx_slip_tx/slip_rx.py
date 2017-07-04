@@ -26,6 +26,7 @@ def recv_packet(ser):
     packet = []
     received = 0
     while (1):
+        print "BANANA"
         c = ser.read()
         sys.stdout.write(c)
         sys.stdout.flush()
