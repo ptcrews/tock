@@ -15,10 +15,10 @@ fname     = 'log_' + str(date) + '.txt'      # log file to save data in
 fmode     = 'w'                              # log file mode = APPEND
 
 # SLIP special character codes
-END     = '0300'.decode('hex')    # indicates end of packet
-ESC     = '0333'.decode('hex')    # indicates byte stuffing
-ESC_END = '0334'.decode('hex')    # ESC ESC_END means END data byte
-ESC_ESC = '0335'.decode('hex')    # ESC ESC_ESC means ESC data byte
+END     = 0300      # indicates end of packet
+ESC     = 0333      # indicates byte stuffing
+ESC_END = 0334      # ESC ESC_END means END data byte
+ESC_ESC = 0335      # ESC ESC_ESC means ESC data byte
 
 print format(END, '02x')
 print format(ESC, '02x')
