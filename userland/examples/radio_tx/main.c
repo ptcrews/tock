@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <stdio.h>
 
 #include "gpio.h"
 #include "led.h"
@@ -13,14 +14,16 @@ bool toggle = true;
 int main(void) {
   int i;
   for (i = 0; i < BUF_SIZE; i++) {
-    packet[i] = i;
+    packet[i] = 'a';
   }
   gpio_enable_output(0);
   radio_init();
+
+  printf("START 802.15.4 TRANSMIT\n");
+
   radio_set_addr(0x1540);
-  radio_init();
   radio_set_pan(0xABCD);
-  radio_init();
+  radio_commit();             // START HERE
   while (1) {
     led_toggle(0);
     int err = radio_send(0x0802, packet, BUF_SIZE);
