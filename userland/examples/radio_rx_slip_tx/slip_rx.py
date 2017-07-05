@@ -34,12 +34,13 @@ if not os.path.exists(directory):
 with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f:
     while (1):
 
-        print "RECEIVING PACKET:"
-
         packet = []
         received = 0
         while (1):
             c = ord(ser.read())  # read single byte, output is str
+
+            if received == 0:
+                print "RECEIVING PACKET:"
 
             print c,
             # sys.stdout.write(c)
