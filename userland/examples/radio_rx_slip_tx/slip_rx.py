@@ -14,11 +14,11 @@ directory = 'logs'
 fname     = 'log_' + str(date) + '.txt'      # log file to save data in
 fmode     = 'w'                              # log file mode = APPEND
 
-# SLIP special character codes
-END     = format(0300, '02x') # 0300 indicates end of packet
-ESC     = format(0333, '02x') # 0333 indicates byte stuffing
-ESC_END = format(0334, '02x') # 0334 ESC ESC_END means END data byte
-ESC_ESC = format(0335, '02x') # 0335 ESC ESC_ESC means ESC data byte
+# SLIP special character codes, written in octal
+END     = 0300  # 0300 indicates end of packet
+ESC     = 0333  # 0333 indicates byte stuffing
+ESC_END = 0334  # 0334 ESC ESC_END means END data byte
+ESC_ESC = 0335  # 0335 ESC ESC_ESC means ESC data byte
 
 print "START SLIP RECEIVE"
 print 'END:',     END
@@ -59,7 +59,6 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
             # what to store in the packet based on that.
             elif c == ESC:
                 c = ser.read()
-
                 # if "c" is not one of these two, then we
                 # have a protocol violation.  The best bet
                 # seems to be to leave the byte alone and

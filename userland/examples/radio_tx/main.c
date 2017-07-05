@@ -11,7 +11,7 @@
 char packet[BUF_SIZE];
 bool toggle = true;
 
-/* SLIP special character codes */
+/* SLIP special character codes, written in octal */
 #define END             0300    /* indicates end of packet */
 #define ESC             0333    /* indicates byte stuffing */
 #define ESC_END         0334    /* ESC ESC_END means END data byte */
