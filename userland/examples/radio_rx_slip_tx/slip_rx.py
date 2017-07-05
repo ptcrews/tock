@@ -81,7 +81,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
                     received += 1
         packet = ''.join(packet)
 
-        print "\nDECODED PACKET (LENGTH ",received,"):"
+        print "\nDECODED PACKET (LENGTH " + str(received) + "):"
         print packet
 
         # sys.stdout.write(packet)    # echo packet on-screen as ASCII
