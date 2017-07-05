@@ -40,9 +40,8 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
         received = 0
         while (1):
             c = ser.read()
-            print c
-            # sys.stdout.write(c)
-            # sys.stdout.flush()
+            sys.stdout.write(c)
+            sys.stdout.flush()
 
             # if it's an END character then we're done with
             # the packet
