@@ -40,7 +40,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
             c = ord(ser.read())  # read single byte, output is str
 
             if received == 0:
-                print "RECEIVING PACKET:"
+                print "\nRECEIVING PACKET:"
 
             print c,
             # sys.stdout.write(c)
