@@ -31,7 +31,7 @@ max_packet_len = 100
 if not os.path.exists(directory):
     os.makedirs(directory)
 
-with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f, open(directory + '/log.txt', fmode) as f:
+with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f, open(directory + '/log.txt', fmode) as f_cur:
     while (1):
 
         packet = []
@@ -90,4 +90,6 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
         # sys.stdout.write(packet)    # echo packet on-screen as ASCII
         # sys.stdout.flush()          # make sure it actually gets written out
         f.write(packet)             # write line of text to file
+        f_cur.write(packet)
         f.flush()                   # make sure it actually gets written out
+        f_cur.flush()
