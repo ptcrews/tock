@@ -39,7 +39,11 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
         packet = []
         received = 0
         while (1):
-            c = ord(ser.read())
+            byteseq = ser.read()  # read single byte
+            if !byteseq:
+                break
+            c = int(byteseq[0])
+
             print c,
             # sys.stdout.write(c)
             # sys.stdout.flush()
