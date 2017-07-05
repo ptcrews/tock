@@ -39,10 +39,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
         packet = []
         received = 0
         while (1):
-            onebytestr = ser.read()  # read single byte, output is str
-            if len(onebytestr) == 0:
-                break
-            c = ord(onebytestr[0])
+            c = ord(ser.read())  # read single byte, output is str
 
             print "BYTE:", c,
             # sys.stdout.write(c)
@@ -79,7 +76,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
             # it store the character for us
             else:
                 if received < max_packet_len:
-                    packet.append(c)
+                    packet.append(chr(c))
                     received += 1
         ''.join(packet)
 
