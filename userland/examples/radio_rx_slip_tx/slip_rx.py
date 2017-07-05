@@ -42,7 +42,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
             onebytestr = ser.read()  # read single byte, output is str
             if len(onebytestr) == 0:
                 break
-            c = int(onebytestr[0])
+            c = ord(onebytestr[0])
 
             print "BYTE:", c,
             # sys.stdout.write(c)
