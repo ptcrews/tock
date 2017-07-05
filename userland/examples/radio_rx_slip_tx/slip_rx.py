@@ -31,7 +31,7 @@ max_packet_len = 100
 if not os.path.exists(directory):
     os.makedirs(directory)
 
-with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f:
+with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f, open(directory + '/log.txt', fmode) as f:
     while (1):
 
         packet = []
