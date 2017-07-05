@@ -40,7 +40,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
         received = 0
         while (1):
             byteseq = ser.read()  # read single byte
-            if !byteseq:
+            if len(byteseq) == 0:
                 break
             c = int(byteseq[0])
 
