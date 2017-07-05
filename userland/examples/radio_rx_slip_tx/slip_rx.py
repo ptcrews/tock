@@ -78,7 +78,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
                 if received < max_packet_len:
                     packet.append(chr(c))
                     received += 1
-        ''.join(packet)
+        packet = ''.join(packet)
 
         print "\nDECODED PACKET:"
         print packet
