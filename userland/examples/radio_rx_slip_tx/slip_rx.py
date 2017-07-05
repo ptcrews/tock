@@ -41,7 +41,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
         while (1):
             c = ord(ser.read())  # read single byte, output is str
 
-            print "BYTE:", c,
+            print c,
             # sys.stdout.write(c)
             # sys.stdout.flush()
 
