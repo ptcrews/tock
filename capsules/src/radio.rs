@@ -194,7 +194,9 @@ impl<'a, R: radio::Radio> radio::RxClient for RadioDriver<'a, R> {
         if self.app.is_some() {
             self.app.map(move |app| {
                 if app.app_read.is_some() {
-                    let offset = self.radio.payload_offset(false, false) as usize;
+                    // let offset = self.radio.payload_offset(false, false) as usize;
+                    let offset = 2; // Length of physical layer header (one byte for rf233 header, one byte for packet length)
+                                    // Goal is to pass entire 802.15.4 to userspace for third party decoding.
                     let dest = app.app_read.as_mut().unwrap();
                     let d = &mut dest.as_mut();
                     for (i, c) in buf[offset..len as usize].iter().enumerate() {
