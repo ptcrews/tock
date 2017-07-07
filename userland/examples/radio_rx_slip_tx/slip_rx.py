@@ -30,7 +30,7 @@ print 'ESC_ESC:', ESC_ESC
 
 max_packet_len = 100
 
-for directory in (log_dir, packet_dir):
+for directory in [log_dir, packet_dir]:
     if not os.path.exists(directory):
         os.makedirs(directory)
 
@@ -92,7 +92,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
 
         # sys.stdout.write(packet)    # echo packet on-screen as ASCII
         # sys.stdout.flush()          # make sure it actually gets written out
-        for file in (f, f_cur):
+        for file in [f, f_cur]:
             file.write(packet)             # write line of text to file
             file.flush()                   # make sure it actually gets written out
 
