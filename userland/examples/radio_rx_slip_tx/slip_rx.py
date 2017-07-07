@@ -30,9 +30,10 @@ print 'ESC_ESC:', ESC_ESC
 
 max_packet_len = 100
 
-for directory in [log_dir, packet_dir]:
-    if not os.path.exists(directory):
-        os.makedirs(directory)
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+if not os.path.exists(packet_dir):
+    os.makedirs(packet_dir)
 
 with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f, open(directory + '/log.txt', fmode) as f_cur:
     while (1):
@@ -92,8 +93,9 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
 
         # sys.stdout.write(packet)    # echo packet on-screen as ASCII
         # sys.stdout.flush()          # make sure it actually gets written out
-        for file in [f, f_cur]:
-            file.write(packet)             # write line of text to file
-            file.flush()                   # make sure it actually gets written out
+        f_cur.write(packet)             # write line of text to file
+        f_cur.flush()                   # make sure it actually gets written out
+        f.write(packet)
+        f.flush()
 
         wrpcap("pkt_" + str(datetime.datetime.now()) + ".cap", packet)
