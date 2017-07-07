@@ -438,6 +438,7 @@ pub unsafe fn reset_handler() {
     rf233.start();
 
     debug!("Initialization complete. Entering main loop");
+    sixlowpan_dummy::sixlowpan_dummy_test(rf233_debug);
     kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
 }
 
