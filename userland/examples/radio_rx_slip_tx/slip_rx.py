@@ -35,7 +35,7 @@ if not os.path.exists(log_dir):
 if not os.path.exists(packet_dir):
     os.makedirs(packet_dir)
 
-with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f, open(directory + '/log.txt', fmode) as f_cur:
+with serial.Serial(addr, baud) as ser, open(log_dir + '/' + fname, fmode) as f, open(log_dir + '/log.txt', fmode) as f_cur:
     while (1):
 
         packet = []
