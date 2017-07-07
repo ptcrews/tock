@@ -38,9 +38,9 @@ int main(void) {
   while (1) {
     led_toggle(0);
     int err = radio_send(0x0802, packet, BUF_SIZE);
-    if (err != TOCK_SUCCESS) {
+    if (err != SUCCESS) {
       gpio_toggle(0);
     }
-    delay_ms(250);
+    delay_ms(2000);
   }
 }
