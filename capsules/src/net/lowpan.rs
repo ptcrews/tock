@@ -769,7 +769,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                             1 => {
                                 let opt_len = next_headers[opt_offset + 1] as usize;
                                 opt_offset + opt_len + 2
-                            }
+                            },
+                            _ => panic!("Unreachable case"),
                         };
                         if new_opt_offset == total_len {
                             if !prev_was_padding {
@@ -786,7 +787,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                         prev_was_padding = false;
                         opt_offset + opt_len + 2
                     },
-                }
+                };
                 opt_offset = new_opt_offset;
             }
         }
