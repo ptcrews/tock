@@ -41,6 +41,6 @@ int main(void) {
     if (err != SUCCESS) {
       gpio_toggle(0);
     }
-    delay_ms(2000);
+    delay_ms(250);
   }
 }
