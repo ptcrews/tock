@@ -93,7 +93,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
         # sys.stdout.write(packet)    # echo packet on-screen as ASCII
         # sys.stdout.flush()          # make sure it actually gets written out
         for file in (f, f_cur):
-            f.write(packet)             # write line of text to file
-            f.flush()                   # make sure it actually gets written out
+            file.write(packet)             # write line of text to file
+            file.flush()                   # make sure it actually gets written out
 
         wrpcap("pkt_" + str(datetime.datetime.now()) + ".cap", packet)
