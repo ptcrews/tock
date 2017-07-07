@@ -1,6 +1,74 @@
 use kernel::ReturnCode;
 use kernel::hil::radio;
 
+pub fn print_buffer(payload: &[u8]) {
+    // All of this is because the debug macro adds a newline, and we don't
+    // have strings. Chunks bytes up into sequences of 8 bytes
+    let payload_full: usize = payload.len() >> 3;
+    let payload_rem: usize = payload.len() & 7;
+    for i in 0..payload_full {
+        let chunk_offset = i << 3;
+        debug!("{} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+               if i == 0 { "hex:" } else { "    " },
+               payload[chunk_offset + 0],
+               payload[chunk_offset + 1],
+               payload[chunk_offset + 2],
+               payload[chunk_offset + 3],
+               payload[chunk_offset + 4],
+               payload[chunk_offset + 5],
+               payload[chunk_offset + 6],
+               payload[chunk_offset + 7]);
+    }
+
+    // Handle remaining < 8 bytes
+    let chunk_offset = payload_full << 3;
+    match payload_rem {
+        7 => debug!("{} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+                    if payload_full == 0 { "hex:" } else { "    " },
+                    payload[chunk_offset + 0],
+                    payload[chunk_offset + 1],
+                    payload[chunk_offset + 2],
+                    payload[chunk_offset + 3],
+                    payload[chunk_offset + 4],
+                    payload[chunk_offset + 5],
+                    payload[chunk_offset + 6]),
+        6 => debug!("{} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+                    if payload_full == 0 { "hex:" } else { "    " },
+                    payload[chunk_offset + 0],
+                    payload[chunk_offset + 1],
+                    payload[chunk_offset + 2],
+                    payload[chunk_offset + 3],
+                    payload[chunk_offset + 4],
+                    payload[chunk_offset + 5]),
+        5 => debug!("{} {:02x} {:02x} {:02x} {:02x} {:02x}",
+                    if payload_full == 0 { "hex:" } else { "    " },
+                    payload[chunk_offset + 0],
+                    payload[chunk_offset + 1],
+                    payload[chunk_offset + 2],
+                    payload[chunk_offset + 3],
+                    payload[chunk_offset + 4]),
+        4 => debug!("{} {:02x} {:02x} {:02x} {:02x}",
+                    if payload_full == 0 { "hex:" } else { "    " },
+                    payload[chunk_offset + 0],
+                    payload[chunk_offset + 1],
+                    payload[chunk_offset + 2],
+                    payload[chunk_offset + 3]),
+        3 => debug!("{} {:02x} {:02x} {:02x}",
+                    if payload_full == 0 { "hex:" } else { "    " },
+                    payload[chunk_offset + 0],
+                    payload[chunk_offset + 1],
+                    payload[chunk_offset + 2]),
+        2 => debug!("{} {:02x} {:02x}",
+                    if payload_full == 0 { "hex:" } else { "    " },
+                    payload[chunk_offset + 0],
+                    payload[chunk_offset + 1]),
+        1 => debug!("{} {:02x}",
+                    if payload_full == 0 { "hex:" } else { "    " },
+                    payload[chunk_offset + 0]),
+        _ => {}
+    };
+}
+
 pub struct RadioDebug<'a, R: radio::Radio + 'a> {
     radio: &'a R
 }
@@ -10,73 +78,6 @@ impl<'a, R: radio::Radio + 'a> RadioDebug<'a, R> {
         RadioDebug { radio: radio }
     }
 
-    fn print_payload(&self, payload: &[u8]) {
-        // All of this is because the debug macro adds a newline, and we don't
-        // have strings. Chunks bytes up into sequences of 8 bytes
-        let payload_full: usize = payload.len() >> 3;
-        let payload_rem: usize = payload.len() & 7;
-        for i in 0..payload_full {
-            let chunk_offset = i << 3;
-            debug!("{} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
-                   if i == 0 { "hex:" } else { "    " },
-                   payload[chunk_offset + 0],
-                   payload[chunk_offset + 1],
-                   payload[chunk_offset + 2],
-                   payload[chunk_offset + 3],
-                   payload[chunk_offset + 4],
-                   payload[chunk_offset + 5],
-                   payload[chunk_offset + 6],
-                   payload[chunk_offset + 7]);
-        }
-
-        // Handle remaining < 8 bytes
-        let chunk_offset = payload_full << 3;
-        match payload_rem {
-            7 => debug!("{} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
-                        if payload_full == 0 { "hex:" } else { "    " },
-                        payload[chunk_offset + 0],
-                        payload[chunk_offset + 1],
-                        payload[chunk_offset + 2],
-                        payload[chunk_offset + 3],
-                        payload[chunk_offset + 4],
-                        payload[chunk_offset + 5],
-                        payload[chunk_offset + 6]),
-            6 => debug!("{} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
-                        if payload_full == 0 { "hex:" } else { "    " },
-                        payload[chunk_offset + 0],
-                        payload[chunk_offset + 1],
-                        payload[chunk_offset + 2],
-                        payload[chunk_offset + 3],
-                        payload[chunk_offset + 4],
-                        payload[chunk_offset + 5]),
-            5 => debug!("{} {:02x} {:02x} {:02x} {:02x} {:02x}",
-                        if payload_full == 0 { "hex:" } else { "    " },
-                        payload[chunk_offset + 0],
-                        payload[chunk_offset + 1],
-                        payload[chunk_offset + 2],
-                        payload[chunk_offset + 3],
-                        payload[chunk_offset + 4]),
-            4 => debug!("{} {:02x} {:02x} {:02x} {:02x}",
-                        if payload_full == 0 { "hex:" } else { "    " },
-                        payload[chunk_offset + 0],
-                        payload[chunk_offset + 1],
-                        payload[chunk_offset + 2],
-                        payload[chunk_offset + 3]),
-            3 => debug!("{} {:02x} {:02x} {:02x}",
-                        if payload_full == 0 { "hex:" } else { "    " },
-                        payload[chunk_offset + 0],
-                        payload[chunk_offset + 1],
-                        payload[chunk_offset + 2]),
-            2 => debug!("{} {:02x} {:02x}",
-                        if payload_full == 0 { "hex:" } else { "    " },
-                        payload[chunk_offset + 0],
-                        payload[chunk_offset + 1]),
-            1 => debug!("{} {:02x}",
-                        if payload_full == 0 { "hex:" } else { "    " },
-                        payload[chunk_offset + 0]),
-            _ => {}
-        };
-    }
 }
 
 impl<'a, R: radio::Radio + 'a> radio::Radio for RadioDebug<'a, R> {}
@@ -232,7 +233,7 @@ impl<'a, R: radio::Radio + 'a> radio::RadioData for RadioDebug<'a, R> {
         debug!("TX packet: (short) dst={:04x}, \
                len={}, src_long={}, payload_len={}",
                dest, len, source_long, payload_len);
-        self.print_payload(&payload[offset..offset + payload_len]);
+        print_buffer(&payload[offset..offset + payload_len]);
 
         self.radio.transmit(dest, payload, len, source_long)
     }
@@ -252,7 +253,7 @@ impl<'a, R: radio::Radio + 'a> radio::RadioData for RadioDebug<'a, R> {
                dest[0], dest[1], dest[2], dest[3],
                dest[4], dest[5], dest[6], dest[7],
                len, source_long, payload_len);
-        self.print_payload(&payload[offset..offset + payload_len]);
+        print_buffer(&payload[offset..offset + payload_len]);
 
         self.radio.transmit_long(dest, payload, len, source_long)
     }
