@@ -1,0 +1,1 @@
+`radio_rx` example, modified to send framed packets over serial using [SLIP](https://www.rfc-editor.org/rfc/rfc1055.txt).
