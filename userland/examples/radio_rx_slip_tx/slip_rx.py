@@ -96,5 +96,7 @@ with serial.Serial(addr, baud) as ser, open(log_dir + '/' + fname, fmode) as f, 
             file.write(packet)        # write line of text to file
             file.flush()              # make sure it actually gets written out
 
-        pkt_name = packet_dir + "/pkt_" + str(datetime.now()) + ".cap"
+        current_time = datetime.now()
+        pname = packet_dir + "/pkt_" + str(current_time) + ".cap"
+        packet.time = current_time
         wrpcap(pkt_name, packet)
