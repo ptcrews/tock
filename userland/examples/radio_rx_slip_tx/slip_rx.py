@@ -42,7 +42,7 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
             if received == 0:
                 print "\nRECEIVING PACKET:"
 
-            print c,
+            print chr(c),
             # sys.stdout.write(c)
             # sys.stdout.flush()
 
