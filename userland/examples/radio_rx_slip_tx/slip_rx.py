@@ -30,9 +30,9 @@ max_packet_len = 100
 
 # Requires wireshark (text2pcap) to be installed.
 def str_to_pcap_file(packet_str, outfile):
-    cmd = 'echo 0000    ' + packet_string + ' >> tmp.txt'
+    cmd = 'echo 0000    ' + packet_str + ' >> tmp.txt'
     os.system(cmd)
-    cmd = 'text2pcap ' + 'tmp.txt ' + output_pcap_file 
+    cmd = 'text2pcap ' + 'tmp.txt ' + outfile 
     os.system(cmd)
     os.system('rm tmp.txt')
 
