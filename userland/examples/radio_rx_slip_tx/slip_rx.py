@@ -10,7 +10,7 @@ import sys
 
 addr      = '/dev/ttyUSB0'                   # serial port to read data from
 baud      = 128000                           # baud rate for serial port
-date      = datetime.datetime.now()
+date      = datetime.now()
 log_dir = 'logs'
 fname     = 'log_' + str(date) + '.txt'      # log file to save data in
 fmode     = 'w'                              # log file mode = APPEND
@@ -96,4 +96,4 @@ with serial.Serial(addr, baud) as ser, open(log_dir + '/' + fname, fmode) as f, 
             file.write(packet)        # write line of text to file
             file.flush()              # make sure it actually gets written out
 
-        wrpcap(packet_dir + "/pkt_" + str(datetime.datetime.now()) + ".cap", packet)
+        wrpcap(packet_dir + "/pkt_" + str(datetime.now()) + ".cap", packet)
