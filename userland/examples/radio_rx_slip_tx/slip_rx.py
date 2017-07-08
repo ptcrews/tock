@@ -5,14 +5,16 @@
 import datetime
 import os
 import serial
+import scapy
 import sys
 
 addr      = '/dev/ttyUSB0'                   # serial port to read data from
 baud      = 128000                           # baud rate for serial port
 date      = datetime.datetime.now()
-directory = 'logs'
+log_dir = 'logs'
 fname     = 'log_' + str(date) + '.txt'      # log file to save data in
 fmode     = 'w'                              # log file mode = APPEND
+packet_dir = 'packets'
 
 # SLIP special character codes, written in octal
 END     = 0300  # 0300 indicates end of packet
@@ -28,10 +30,11 @@ print 'ESC_ESC:', ESC_ESC
 
 max_packet_len = 100
 
-if not os.path.exists(directory):
-    os.makedirs(directory)
+for directory in [log_dir, packet_dir]:
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
-with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f, open(directory + '/log.txt', fmode) as f_cur:
+with serial.Serial(addr, baud) as ser, open(log_dir + '/' + fname, fmode) as f, open(log_dir + '/log.txt', fmode) as f_cur:
     while (1):
 
         packet = []
@@ -89,7 +92,8 @@ with serial.Serial(addr, baud) as ser, open(directory + '/' + fname, fmode) as f
 
         # sys.stdout.write(packet)    # echo packet on-screen as ASCII
         # sys.stdout.flush()          # make sure it actually gets written out
-        f.write(packet)             # write line of text to file
-        f_cur.write(packet)
-        f.flush()                   # make sure it actually gets written out
-        f_cur.flush()
+        for file in [f, f_cur]:
+            file.write(packet)        # write line of text to file
+            file.flush()              # make sure it actually gets written out
+
+        wrpcap(packet_dir + "/pkt_" + str(datetime.datetime.now()) + ".cap", packet)
