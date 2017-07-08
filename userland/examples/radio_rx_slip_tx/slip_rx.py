@@ -110,3 +110,5 @@ with serial.Serial(addr, baud) as ser, open(log_dir + '/' + fname, fmode) as f, 
 
         pkt_fname = packet_dir + '/pkt_' + str(datetime.datetime.now()) + '.pcap'
         str_to_pcap_file(packet, pkt_fname)
+
+        break
