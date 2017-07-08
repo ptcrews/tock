@@ -8,11 +8,11 @@ import serial
 import sys
 
 date_format = '%Y%m%d_%H%M%S'
-addr      = '/dev/ttyUSB0'                                                  # serial port to read data from
-baud      = 128000                                                          # baud rate for serial port
+addr      = '/dev/ttyUSB0'      # serial port to read data from
+baud      = 128000              # baud rate for serial port
 log_dir = 'logs'
-fname     = 'log_' + str(datetime.datetime.strftime(date_format)) + '.txt'  # log file to save data in
-fmode     = 'w'                                                             # log file mode = APPEND
+fname     = 'log_' + str(datetime.datetime.now().strftime(date_format)) + '.txt'
+fmode     = 'w'
 packet_dir = 'packets'
 
 # SLIP special character codes, written in octal
@@ -109,7 +109,7 @@ with serial.Serial(addr, baud) as ser, open(log_dir + '/' + fname, fmode) as f, 
         print '\nHEX ENCODED PACKET:'
         print packet
 
-        pkt_fname = packet_dir + '/pkt_' + str(datetime.datetime.strftime(date_format)) + '.pcap'
+        pkt_fname = packet_dir + '/pkt_' + str(datetime.datetime.now().strftime(date_format)) + '.pcap'
         str_to_pcap_file(packet, pkt_fname)
 
         break
