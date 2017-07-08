@@ -106,5 +106,5 @@ with serial.Serial(addr, baud) as ser, open(log_dir + '/' + fname, fmode) as f, 
             file.write(packet)        # write line of text to file
             file.flush()              # make sure it actually gets written out
 
-        pkt_fname = packet_dir + '/pkt_' + str(datetime.datetime.now()) + '.cap'
+        pkt_fname = packet_dir + '/pkt_' + str(datetime.datetime.now()) + '.pcap'
         str_to_pcap_file(packet, pkt_fname)
