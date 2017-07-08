@@ -92,19 +92,21 @@ with serial.Serial(addr, baud) as ser, open(log_dir + '/' + fname, fmode) as f, 
                     packet.append(chr(c))
                     received += 1
 
+        packet_str = ''.join(packet)
+
         print '\nDECODED PACKET (LENGTH ' + str(received) + '):'
-        print ''.join(packet)
+        print packet_str
+
+        # sys.stdout.write(packet)    # echo packet on-screen as ASCII
+        # sys.stdout.flush()          # make sure it actually gets written out
+        for file in [f, f_cur]:
+            file.write(packet_str)        # write line of text to file
+            file.flush()              # make sure it actually gets written out
 
         packet = ' '.join(map(lambda c: c.encode('hex'), packet))
 
         print '\nHEX ENCODED PACKET:'
         print packet
-
-        # sys.stdout.write(packet)    # echo packet on-screen as ASCII
-        # sys.stdout.flush()          # make sure it actually gets written out
-        for file in [f, f_cur]:
-            file.write(packet)        # write line of text to file
-            file.flush()              # make sure it actually gets written out
 
         pkt_fname = packet_dir + '/pkt_' + str(datetime.datetime.now()) + '.pcap'
         str_to_pcap_file(packet, pkt_fname)
