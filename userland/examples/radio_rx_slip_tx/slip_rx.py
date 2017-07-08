@@ -5,15 +5,13 @@
 import datetime
 import os
 import serial
-from scapy.all import *
 import sys
 
-addr      = '/dev/ttyUSB0'                   # serial port to read data from
-baud      = 128000                           # baud rate for serial port
-date      = datetime.now()
+addr      = '/dev/ttyUSB0'                         # serial port to read data from
+baud      = 128000                                 # baud rate for serial port
 log_dir = 'logs'
-fname     = 'log_' + str(date) + '.txt'      # log file to save data in
-fmode     = 'w'                              # log file mode = APPEND
+fname     = 'log_' + str(datetime.now()) + '.txt'  # log file to save data in
+fmode     = 'w'                                    # log file mode = APPEND
 packet_dir = 'packets'
 
 # SLIP special character codes, written in octal
@@ -22,13 +20,21 @@ ESC     = 0333  # 0333 indicates byte stuffing
 ESC_END = 0334  # 0334 ESC ESC_END means END data byte
 ESC_ESC = 0335  # 0335 ESC ESC_ESC means ESC data byte
 
-print "START SLIP RECEIVE"
+print 'START SLIP RECEIVE'
 print 'END:',     END
 print 'ESC:',     ESC
 print 'ESC_END:', ESC_END
 print 'ESC_ESC:', ESC_ESC
 
 max_packet_len = 100
+
+# Requires text2pcap to be installed.
+def str_to_pcap_file(packet_str, outfile):
+    cmd = 'echo 0000    ' + packet_string + ' >> tmp.txt'
+    os.system(cmd)
+    cmd = 'text2pcap ' + 'tmp.txt ' + output_pcap_file 
+    os.system(cmd)
+    os.system('rm tmp.txt')
 
 for directory in [log_dir, packet_dir]:
     if not os.path.exists(directory):
@@ -43,7 +49,7 @@ with serial.Serial(addr, baud) as ser, open(log_dir + '/' + fname, fmode) as f, 
             c = ord(ser.read())  # read single byte, output is str
 
             if received == 0:
-                print "\nRECEIVING PACKET:"
+                print '\nRECEIVING PACKET:'
 
             print chr(c),
             # sys.stdout.write(c)
@@ -68,7 +74,7 @@ with serial.Serial(addr, baud) as ser, open(log_dir + '/' + fname, fmode) as f, 
             # what to store in the packet based on that.
             elif c == ESC:
                 c = ser.read()
-                # if "c" is not one of these two, then we
+                # if 'c' is not one of these two, then we
                 # have a protocol violation.  The best bet
                 # seems to be to leave the byte alone and
                 # just stuff it into the packet
@@ -85,9 +91,13 @@ with serial.Serial(addr, baud) as ser, open(log_dir + '/' + fname, fmode) as f, 
                 if received < max_packet_len:
                     packet.append(chr(c))
                     received += 1
-        packet = ''.join(packet)
 
-        print "\nDECODED PACKET (LENGTH " + str(received) + "):"
+        print '\nDECODED PACKET (LENGTH ' + str(received) + '):'
+        print ''.join(packet)
+
+        packet = ' '.join(map(lambda c: c.encode('hex'), packet))
+
+        print '\nHEX ENCODED PACKET:'
         print packet
 
         # sys.stdout.write(packet)    # echo packet on-screen as ASCII
@@ -96,7 +106,5 @@ with serial.Serial(addr, baud) as ser, open(log_dir + '/' + fname, fmode) as f, 
             file.write(packet)        # write line of text to file
             file.flush()              # make sure it actually gets written out
 
-        current_time = datetime.now()
-        pname = packet_dir + "/pkt_" + str(current_time) + ".cap"
-        packet.time = current_time
-        wrpcap(pkt_name, packet)
+        pkt_fname = packet_dir + '/pkt_' + str(datetime.now()) + '.cap'
+        str_to_pcap_file(packet, pkt_fname)
