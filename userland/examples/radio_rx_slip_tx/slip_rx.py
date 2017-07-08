@@ -28,7 +28,7 @@ print 'ESC_ESC:', ESC_ESC
 
 max_packet_len = 100
 
-# Requires text2pcap to be installed.
+# Requires wireshark (text2pcap) to be installed.
 def str_to_pcap_file(packet_str, outfile):
     cmd = 'echo 0000    ' + packet_string + ' >> tmp.txt'
     os.system(cmd)
