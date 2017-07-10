@@ -69,9 +69,7 @@ fn reverse_u16_bytes(short: u16) -> u16 {
 }
 
 fn reverse_u32_bytes(long: u32) -> u32 {
-    ((long & 0x000000ff) << 24) |
-    ((long & 0x0000ff00) << 8) |
-    ((long & 0x00ff0000) >> 8) |
+    ((long & 0x000000ff) << 24) | ((long & 0x0000ff00) << 8) | ((long & 0x00ff0000) >> 8) |
     (long >> 24)
 }
 

@@ -11,74 +11,74 @@ use net::util::{ntohs, htons, slice_to_u16, u16_to_slice};
 /// Contains bit masks and constants related to the two-byte header of the
 /// LoWPAN_IPHC encoding format.
 mod iphc {
-    pub const DISPATCH: [u8; 2]    = [0x60, 0x00];
+    pub const DISPATCH: [u8; 2] = [0x60, 0x00];
 
     // First byte masks
 
     pub const TF_TRAFFIC_CLASS: u8 = 0x08;
-    pub const TF_FLOW_LABEL: u8    = 0x10;
+    pub const TF_FLOW_LABEL: u8 = 0x10;
 
-    pub const NH: u8               = 0x04;
+    pub const NH: u8 = 0x04;
 
-    pub const HLIM_MASK: u8        = 0x03;
-    pub const HLIM_INLINE: u8      = 0x00;
-    pub const HLIM_1: u8           = 0x01;
-    pub const HLIM_64: u8          = 0x02;
-    pub const HLIM_255: u8         = 0x03;
+    pub const HLIM_MASK: u8 = 0x03;
+    pub const HLIM_INLINE: u8 = 0x00;
+    pub const HLIM_1: u8 = 0x01;
+    pub const HLIM_64: u8 = 0x02;
+    pub const HLIM_255: u8 = 0x03;
 
     // Second byte masks
 
-    pub const CID: u8              = 0x80;
+    pub const CID: u8 = 0x80;
 
-    pub const SAC: u8              = 0x40;
+    pub const SAC: u8 = 0x40;
 
-    pub const SAM_MASK: u8         = 0x30;
-    pub const SAM_INLINE: u8       = 0x00;
-    pub const SAM_MODE1: u8        = 0x10;
-    pub const SAM_MODE2: u8        = 0x20;
-    pub const SAM_MODE3: u8        = 0x30;
+    pub const SAM_MASK: u8 = 0x30;
+    pub const SAM_INLINE: u8 = 0x00;
+    pub const SAM_MODE1: u8 = 0x10;
+    pub const SAM_MODE2: u8 = 0x20;
+    pub const SAM_MODE3: u8 = 0x30;
 
-    pub const MULTICAST: u8        = 0x08;
+    pub const MULTICAST: u8 = 0x08;
 
-    pub const DAC: u8              = 0x04;
-    pub const DAM_MASK: u8         = 0x03;
-    pub const DAM_INLINE: u8       = 0x00;
-    pub const DAM_MODE1: u8        = 0x01;
-    pub const DAM_MODE2: u8        = 0x02;
-    pub const DAM_MODE3: u8        = 0x03;
+    pub const DAC: u8 = 0x04;
+    pub const DAM_MASK: u8 = 0x03;
+    pub const DAM_INLINE: u8 = 0x00;
+    pub const DAM_MODE1: u8 = 0x01;
+    pub const DAM_MODE2: u8 = 0x02;
+    pub const DAM_MODE3: u8 = 0x03;
 
     // Address compression
-    pub const MAC_BASE: [u8; 8]    = [0, 0, 0, 0xff, 0xfe, 0, 0, 0];
-    pub const MAC_UL: u8           = 0x02;
+    pub const MAC_BASE: [u8; 8] = [0, 0, 0, 0xff, 0xfe, 0, 0, 0];
+    pub const MAC_UL: u8 = 0x02;
 }
 
 /// Contains bit masks and constants related to LoWPAN_NHC encoding,
 /// including some specific to UDP header encoding
 mod nhc {
-    pub const DISPATCH_NHC: u8           = 0xe0;
-    pub const DISPATCH_UDP: u8           = 0xf0;
-    pub const DISPATCH_MASK: u8          = 0xf0;
+    pub const DISPATCH_NHC: u8 = 0xe0;
+    pub const DISPATCH_UDP: u8 = 0xf0;
+    pub const DISPATCH_MASK: u8 = 0xf0;
 
-    pub const EID_MASK: u8               = 0x0e;
-    pub const HOP_OPTS: u8               = 0 << 1;
-    pub const ROUTING: u8                = 1 << 1;
-    pub const FRAGMENT: u8               = 2 << 1;
-    pub const DST_OPTS: u8               = 3 << 1;
-    pub const MOBILITY: u8               = 4 << 1;
-    pub const IP6: u8                    = 7 << 1;
+    pub const EID_MASK: u8 = 0x0e;
+    pub const HOP_OPTS: u8 = 0 << 1;
+    pub const ROUTING: u8 = 1 << 1;
+    pub const FRAGMENT: u8 = 2 << 1;
+    pub const DST_OPTS: u8 = 3 << 1;
+    pub const MOBILITY: u8 = 4 << 1;
+    pub const IP6: u8 = 7 << 1;
 
-    pub const NH: u8                     = 0x01;
+    pub const NH: u8 = 0x01;
 
     // UDP header compression
 
-    pub const UDP_4BIT_PORT: u16         = 0xf0b0;
-    pub const UDP_4BIT_PORT_MASK: u16    = 0xfff0;
-    pub const UDP_8BIT_PORT: u16         = 0xf000;
-    pub const UDP_8BIT_PORT_MASK: u16    = 0xff00;
+    pub const UDP_4BIT_PORT: u16 = 0xf0b0;
+    pub const UDP_4BIT_PORT_MASK: u16 = 0xfff0;
+    pub const UDP_8BIT_PORT: u16 = 0xf000;
+    pub const UDP_8BIT_PORT_MASK: u16 = 0xff00;
 
-    pub const UDP_CHECKSUM_FLAG: u8      = 0b100;
-    pub const UDP_SRC_PORT_FLAG: u8      = 0b010;
-    pub const UDP_DST_PORT_FLAG: u8      = 0b001;
+    pub const UDP_CHECKSUM_FLAG: u8 = 0b100;
+    pub const UDP_SRC_PORT_FLAG: u8 = 0b010;
+    pub const UDP_DST_PORT_FLAG: u8 = 0b001;
 }
 
 #[derive(Copy,Clone,Debug)]
@@ -98,7 +98,7 @@ pub trait ContextStore<'a> {
     fn get_context_0(&self) -> Context<'a> {
         match self.get_context_from_id(0) {
             Some(ctx) => ctx,
-            None      => panic!("Context 0 not found"),
+            None => panic!("Context 0 not found"),
         }
     }
     fn get_context_from_prefix(&self, prefix: &[u8], prefix_len: u8) -> Option<Context<'a>>;
@@ -114,7 +114,7 @@ pub fn compute_iid(mac_addr: &MacAddr) -> [u8; 8] {
             iid[6] = (short_addr >> 1) as u8;
             iid[7] = (short_addr & 0xff) as u8;
             iid
-        },
+        }
         &MacAddr::LongAddr(long_addr) => {
             // IID is IEEE EUI-64 with universal/local bit inverted
             let mut iid: [u8; 8] = long_addr;
@@ -131,18 +131,14 @@ pub fn compute_iid(mac_addr: &MacAddr) -> [u8; 8] {
 /// is an IPv6 next header extension, in which case it is the number of bytes
 /// after the first two bytes in the IPv6 next header extension. Returns
 /// `Err(())` in the case of an invalid IPv6 packet.
-fn is_ip6_nh_compressible(next_header: u8,
-                          next_headers: &[u8]) -> Result<(bool, u8), ()> {
+fn is_ip6_nh_compressible(next_header: u8, next_headers: &[u8]) -> Result<(bool, u8), ()> {
     match next_header {
         // IP6 encapsulated headers are always compressed
         ip6_nh::IP6 => Ok((true, 0)),
         // UDP headers are always compresed
         ip6_nh::UDP => Ok((true, 0)),
-        ip6_nh::FRAGMENT
-        | ip6_nh::HOP_OPTS
-        | ip6_nh::ROUTING
-        | ip6_nh::DST_OPTS
-        | ip6_nh::MOBILITY => {
+        ip6_nh::FRAGMENT | ip6_nh::HOP_OPTS | ip6_nh::ROUTING | ip6_nh::DST_OPTS |
+        ip6_nh::MOBILITY => {
             let mut header_len: u32 = 6;
             if next_header != ip6_nh::FRAGMENT {
                 // All compressible next header extensions except
@@ -160,7 +156,7 @@ fn is_ip6_nh_compressible(next_header: u8,
             } else {
                 Ok((false, 0))
             }
-        },
+        }
         _ => Ok((false, 0)),
     }
 }
@@ -173,11 +169,7 @@ trait OnesComplement {
 impl OnesComplement for u16 {
     fn ones_complement_add(self, other: u16) -> u16 {
         let (sum, overflow) = self.overflowing_add(other);
-        if overflow {
-            sum + 1
-        } else {
-            sum
-        }
+        if overflow { sum + 1 } else { sum }
     }
 }
 
@@ -186,7 +178,8 @@ impl OnesComplement for u16 {
 fn compute_udp_checksum(ip6_header: &IP6Header,
                         udp_header: &[u8],
                         udp_length: u16,
-                        payload: &[u8]) -> u16 {
+                        payload: &[u8])
+                        -> u16 {
     // The UDP checksum is computed on the IPv6 pseudo-header concatenated
     // with the UDP header and payload, but with the UDP checksum field
     // zeroed out. Hence, this function assumes that `udp_header` has already
@@ -226,22 +219,16 @@ fn compute_udp_checksum(ip6_header: &IP6Header,
 
     // UDP payload
     for bytes in payload.chunks(2) {
-        checksum = checksum.ones_complement_add(
-            if bytes.len() == 2 {
-                slice_to_u16(bytes)
-            } else {
-                htons(bytes[0] as u16)
-            }
-        );
+        checksum = checksum.ones_complement_add(if bytes.len() == 2 {
+            slice_to_u16(bytes)
+        } else {
+            htons(bytes[0] as u16)
+        });
     }
 
     // Return the complement of the checksum, unless it is 0, in which case we
     // the checksum is one's complement -0 for a non-zero binary representation
-    if !checksum != 0 {
-        !checksum
-    } else {
-        checksum
-    }
+    if !checksum != 0 { !checksum } else { checksum }
 }
 
 /// Maps values of a IPv6 next header field to a corresponding LoWPAN
@@ -249,11 +236,11 @@ fn compute_udp_checksum(ip6_header: &IP6Header,
 fn ip6_nh_to_nhc_eid(next_header: u8) -> Option<u8> {
     match next_header {
         ip6_nh::HOP_OPTS => Some(nhc::HOP_OPTS),
-        ip6_nh::ROUTING  => Some(nhc::ROUTING),
+        ip6_nh::ROUTING => Some(nhc::ROUTING),
         ip6_nh::FRAGMENT => Some(nhc::FRAGMENT),
         ip6_nh::DST_OPTS => Some(nhc::DST_OPTS),
         ip6_nh::MOBILITY => Some(nhc::MOBILITY),
-        ip6_nh::IP6      => Some(nhc::IP6),
+        ip6_nh::IP6 => Some(nhc::IP6),
         _ => None,
     }
 }
@@ -262,15 +249,17 @@ fn ip6_nh_to_nhc_eid(next_header: u8) -> Option<u8> {
 /// or an error if the NHC header is invalid
 fn nhc_to_ip6_nh(nhc: u8) -> Result<u8, ()> {
     match nhc & nhc::DISPATCH_MASK {
-        nhc::DISPATCH_NHC => match nhc & nhc::EID_MASK {
-            nhc::HOP_OPTS => Ok(ip6_nh::HOP_OPTS),
-            nhc::ROUTING  => Ok(ip6_nh::ROUTING),
-            nhc::FRAGMENT => Ok(ip6_nh::FRAGMENT),
-            nhc::DST_OPTS => Ok(ip6_nh::DST_OPTS),
-            nhc::MOBILITY => Ok(ip6_nh::MOBILITY),
-            nhc::IP6      => Ok(ip6_nh::IP6),
-            _ => Err(()),
-        },
+        nhc::DISPATCH_NHC => {
+            match nhc & nhc::EID_MASK {
+                nhc::HOP_OPTS => Ok(ip6_nh::HOP_OPTS),
+                nhc::ROUTING => Ok(ip6_nh::ROUTING),
+                nhc::FRAGMENT => Ok(ip6_nh::FRAGMENT),
+                nhc::DST_OPTS => Ok(ip6_nh::DST_OPTS),
+                nhc::MOBILITY => Ok(ip6_nh::MOBILITY),
+                nhc::IP6 => Ok(ip6_nh::IP6),
+                _ => Err(()),
+            }
+        }
         nhc::DISPATCH_UDP => Ok(ip6_nh::UDP),
         _ => Err(()),
     }
@@ -298,9 +287,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                     dst_mac_addr: MacAddr,
                     mut buf: &mut [u8])
                     -> Result<(usize, usize), ()> {
-        let ip6_header: &IP6Header = unsafe {
-            mem::transmute(ip6_datagram.as_ptr())
-        };
+        let ip6_header: &IP6Header = unsafe { mem::transmute(ip6_datagram.as_ptr()) };
         let mut consumed: usize = mem::size_of::<IP6Header>();
         let mut next_headers: &[u8] = &ip6_datagram[consumed..];
 
@@ -336,8 +323,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         self.compress_tf(ip6_header, &mut buf, &mut written);
 
         // Next Header
-        let (mut is_nhc, mut nh_len): (bool, u8) =
-            is_ip6_nh_compressible(ip6_header.next_header, next_headers)?;
+        let (mut is_nhc, mut nh_len): (bool, u8) = is_ip6_nh_compressible(ip6_header.next_header,
+                                                                          next_headers)?;
         self.compress_nh(ip6_header, is_nhc, &mut buf, &mut written);
 
         // Hop Limit
@@ -352,10 +339,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
 
         // Destination Address
         if ip6_header.dst_addr.is_multicast() {
-            self.compress_multicast(&ip6_header.dst_addr,
-                                    &dst_ctx,
-                                    &mut buf,
-                                    &mut written);
+            self.compress_multicast(&ip6_header.dst_addr, &dst_ctx, &mut buf, &mut written);
         } else {
             self.compress_dst(&ip6_header.dst_addr,
                               &dst_mac_addr,
@@ -377,18 +361,17 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                     written += 1;
 
                     // Recursively place IPHC-encoded IPv6 after the NHC ID
-                    let (encap_consumed, encap_written) =
-                        self.compress(next_headers,
-                                      src_mac_addr,
-                                      dst_mac_addr,
-                                      &mut buf[written..])?;
+                    let (encap_consumed, encap_written) = self.compress(next_headers,
+                                  src_mac_addr,
+                                  dst_mac_addr,
+                                  &mut buf[written..])?;
                     consumed += encap_consumed;
                     written += encap_written;
 
                     // The above recursion handles the rest of the packet
                     // headers, so we are done
                     break;
-                },
+                }
                 ip6_nh::UDP => {
                     let mut nhc_header = nhc::DISPATCH_UDP;
 
@@ -398,12 +381,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
 
                     // Compress ports and checksum
                     let udp_header = &next_headers[0..8];
-                    nhc_header |= self.compress_udp_ports(udp_header,
-                                                          &mut buf,
-                                                          &mut written);
-                    nhc_header |= self.compress_udp_checksum(udp_header,
-                                                             &mut buf,
-                                                             &mut written);
+                    nhc_header |= self.compress_udp_ports(udp_header, &mut buf, &mut written);
+                    nhc_header |= self.compress_udp_checksum(udp_header, &mut buf, &mut written);
 
                     // Write the UDP LoWPAN_NHC byte
                     buf[udp_nh_offset] = nhc_header;
@@ -411,19 +390,16 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
 
                     // There cannot be any more next headers after UDP
                     break;
-                },
-                ip6_nh::FRAGMENT
-                | ip6_nh::HOP_OPTS
-                | ip6_nh::ROUTING
-                | ip6_nh::DST_OPTS
-                | ip6_nh::MOBILITY => {
+                }
+                ip6_nh::FRAGMENT | ip6_nh::HOP_OPTS | ip6_nh::ROUTING | ip6_nh::DST_OPTS |
+                ip6_nh::MOBILITY => {
                     // is_ip6_nh_compressible guarantees that the IPv6 next
                     // header corresponds to a valid LoWPAN_NHC EID
-                    let mut nhc_header = nhc::DISPATCH_NHC
-                        | match ip6_nh_to_nhc_eid(ip6_nh_type) {
-                            Some(eid) => eid,
-                            None      => panic!("Unreachable case"),
-                        };
+                    let mut nhc_header = nhc::DISPATCH_NHC |
+                                         match ip6_nh_to_nhc_eid(ip6_nh_type) {
+                        Some(eid) => eid,
+                        None => panic!("Unreachable case"),
+                    };
 
                     // next_nh_offset includes the next header field and the
                     // length byte, while nh_len does not
@@ -431,8 +407,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
 
                     // Determine if the next header is compressible
                     let (next_is_nhc, next_nh_len) =
-                        is_ip6_nh_compressible(next_headers[0],
-                                               &next_headers[next_nh_offset..])?;
+                        is_ip6_nh_compressible(next_headers[0], &next_headers[next_nh_offset..])?;
                     if next_is_nhc {
                         nhc_header |= nhc::NH;
                     }
@@ -456,7 +431,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                     nh_len = next_nh_len;
                     next_headers = &next_headers[next_nh_offset..];
                     consumed += next_nh_offset;
-                },
+                }
                 // This case should not be reachable because
                 // is_ip6_nh_compressible guarantees that is_nhc is true
                 // only if ip6_nh_type is one of the types matched above
@@ -487,10 +462,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         }
     }
 
-    fn compress_tf(&self,
-                   ip6_header: &IP6Header,
-                   buf: &mut [u8],
-                   written: &mut usize) {
+    fn compress_tf(&self, ip6_header: &IP6Header, buf: &mut [u8], written: &mut usize) {
         let ecn = ip6_header.get_ecn();
         let dscp = ip6_header.get_dscp();
         let flow = ip6_header.get_flow_label();
@@ -511,7 +483,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         if flow == 0 {
             tf_encoding |= iphc::TF_FLOW_LABEL;
         } else {
-            buf[*written]     = ((flow >> 16) & 0x0f) as u8;
+            buf[*written] = ((flow >> 16) & 0x0f) as u8;
             buf[*written + 1] = (flow >> 8) as u8;
             buf[*written + 2] = flow as u8;
             *written += 3;
@@ -536,15 +508,12 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         }
     }
 
-    fn compress_hl(&self,
-                   ip6_header: &IP6Header,
-                   buf: &mut [u8],
-                   written: &mut usize) {
+    fn compress_hl(&self, ip6_header: &IP6Header, buf: &mut [u8], written: &mut usize) {
         let hop_limit_flag = match ip6_header.hop_limit {
-            1   => iphc::HLIM_1,
-            64  => iphc::HLIM_64,
+            1 => iphc::HLIM_1,
+            64 => iphc::HLIM_64,
             255 => iphc::HLIM_255,
-            _   => {
+            _ => {
                 buf[*written] = ip6_header.hop_limit;
                 *written += 1;
                 iphc::HLIM_INLINE
@@ -689,22 +658,20 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         }
     }
 
-    fn compress_udp_ports(&self,
-                          udp_header: &[u8],
-                          buf: &mut [u8],
-                          written: &mut usize) -> u8 {
+    fn compress_udp_ports(&self, udp_header: &[u8], buf: &mut [u8], written: &mut usize) -> u8 {
         let src_port: u16 = ntohs(slice_to_u16(&udp_header[0..2]));
         let dst_port: u16 = ntohs(slice_to_u16(&udp_header[2..4]));
 
         let mut udp_port_nhc = 0;
-        if (src_port & nhc::UDP_4BIT_PORT_MASK) == nhc::UDP_4BIT_PORT
-            && (dst_port & nhc::UDP_4BIT_PORT_MASK) == nhc::UDP_4BIT_PORT {
+        if (src_port & nhc::UDP_4BIT_PORT_MASK) == nhc::UDP_4BIT_PORT &&
+           (dst_port & nhc::UDP_4BIT_PORT_MASK) == nhc::UDP_4BIT_PORT {
             // Both can be compressed to 4 bits
             udp_port_nhc |= nhc::UDP_SRC_PORT_FLAG | nhc::UDP_DST_PORT_FLAG;
             // This should compress the ports to a single 8-bit value,
             // with the source port before the destination port
-            buf[*written] = (((src_port & !nhc::UDP_4BIT_PORT_MASK) << 4)
-                            | (dst_port & !nhc::UDP_4BIT_PORT_MASK)) as u8;
+            buf[*written] = (((src_port & !nhc::UDP_4BIT_PORT_MASK) << 4) |
+                             (dst_port & !nhc::UDP_4BIT_PORT_MASK)) as
+                            u8;
             *written += 1;
         } else if (src_port & nhc::UDP_8BIT_PORT_MASK) == nhc::UDP_8BIT_PORT {
             // Source port compressed to 8 bits, destination port uncompressed
@@ -724,10 +691,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         return udp_port_nhc;
     }
 
-    fn compress_udp_checksum(&self,
-                             udp_header: &[u8],
-                             buf: &mut [u8],
-                             written: &mut usize) -> u8 {
+    fn compress_udp_checksum(&self, udp_header: &[u8], buf: &mut [u8], written: &mut usize) -> u8 {
         // TODO: Checksum is always inline, elision is currently not supported
         buf[*written] = udp_header[6];
         buf[*written + 1] = udp_header[7];
@@ -745,8 +709,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         let total_len = nh_len + 2;
         // is_multiple is true if the header length is a multiple of 8-octets
         let is_multiple = (total_len % 8) == 0;
-        let correct_type = (nh_type == ip6_nh::HOP_OPTS)
-                        || (nh_type == ip6_nh::DST_OPTS);
+        let correct_type = (nh_type == ip6_nh::HOP_OPTS) || (nh_type == ip6_nh::DST_OPTS);
         let mut opt_offset = 2;
         let mut is_padding = false;
         if correct_type && is_multiple {
@@ -769,7 +732,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                             1 => {
                                 let opt_len = next_headers[opt_offset + 1] as usize;
                                 opt_offset + opt_len + 2
-                            },
+                            }
                             _ => panic!("Unreachable case"),
                         };
                         if new_opt_offset == total_len {
@@ -780,13 +743,13 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                         }
                         prev_was_padding = true;
                         new_opt_offset
-                    },
+                    }
                     // Any other TLV type
                     _ => {
                         let opt_len = next_headers[opt_offset + 1] as usize;
                         prev_was_padding = false;
                         opt_offset + opt_len + 2
-                    },
+                    }
                 };
                 opt_offset = new_opt_offset;
             }
@@ -796,8 +759,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         // of 8 octets in length, 2) the header is either hop options or dest
         // options, and 3) if there is a single Pad1 or PadN trailing padding.
         if is_multiple && correct_type && is_padding {
-            buf[*written..*written + opt_offset - 2]
-                .copy_from_slice(&next_headers[2..opt_offset]);
+            buf[*written..*written + opt_offset - 2].copy_from_slice(&next_headers[2..opt_offset]);
             *written += opt_offset - 2;
         } else {
             // Copy over the remaining packet data
@@ -826,38 +788,44 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         let mut consumed: usize = 2;
 
         // First, reset the IPv6 fixed header to the default values
-        let mut ip6_header: &mut IP6Header = unsafe {
-            mem::transmute(out_buf.as_mut_ptr())
-        };
+        let mut ip6_header: &mut IP6Header = unsafe { mem::transmute(out_buf.as_mut_ptr()) };
         let mut written: usize = mem::size_of::<IP6Header>();
         *ip6_header = IP6Header::new();
 
         // Decompress CID and CIE fields if they exist
-        let (src_ctx, dst_ctx) =
-            self.decompress_cie(iphc_header_1, &buf, &mut consumed)?;
+        let (src_ctx, dst_ctx) = self.decompress_cie(iphc_header_1, &buf, &mut consumed)?;
 
         // Traffic Class & Flow Label
         self.decompress_tf(&mut ip6_header, iphc_header_1, &buf, &mut consumed);
 
         // Next Header
-        let (mut is_nhc, mut next_header) = self.decompress_nh(iphc_header_1,
-                                                               &buf,
-                                                               &mut consumed);
+        let (mut is_nhc, mut next_header) = self.decompress_nh(iphc_header_1, &buf, &mut consumed);
 
         // Hop Limit
         self.decompress_hl(&mut ip6_header, iphc_header_1, &buf, &mut consumed)?;
 
         // Source Address
-        self.decompress_src(&mut ip6_header, iphc_header_2,
-                            &src_mac_addr, &src_ctx, &buf, &mut consumed)?;
+        self.decompress_src(&mut ip6_header,
+                            iphc_header_2,
+                            &src_mac_addr,
+                            &src_ctx,
+                            &buf,
+                            &mut consumed)?;
 
         // Destination Address
         if (iphc_header_2 & iphc::MULTICAST) != 0 {
-            self.decompress_multicast(&mut ip6_header, iphc_header_2, &dst_ctx,
-                                      &buf, &mut consumed)?;
+            self.decompress_multicast(&mut ip6_header,
+                                      iphc_header_2,
+                                      &dst_ctx,
+                                      &buf,
+                                      &mut consumed)?;
         } else {
-            self.decompress_dst(&mut ip6_header, iphc_header_2,
-                                &dst_mac_addr, &dst_ctx, &buf, &mut consumed)?;
+            self.decompress_dst(&mut ip6_header,
+                                iphc_header_2,
+                                &dst_mac_addr,
+                                &dst_ctx,
+                                &buf,
+                                &mut consumed)?;
         }
 
         // next_header is already set if is_nhc is false, otherwise it can be
@@ -880,45 +848,38 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
 
             match next_header {
                 ip6_nh::IP6 => {
-                    let (encap_consumed, encap_written) =
-                        self.decompress(&buf[consumed..],
-                                        src_mac_addr,
-                                        dst_mac_addr,
-                                        &mut next_headers)?;
+                    let (encap_consumed, encap_written) = self.decompress(&buf[consumed..],
+                                    src_mac_addr,
+                                    dst_mac_addr,
+                                    &mut next_headers)?;
                     consumed += encap_consumed;
                     written += encap_written;
                     break;
-                },
+                }
                 ip6_nh::UDP => {
                     // UDP length includes UDP header and data in bytes
                     let udp_length = (8 + (buf.len() - consumed)) as u16;
                     // Decompress UDP header fields
                     let (src_port, dst_port) =
-                        self.decompress_udp_ports(nhc_header,
-                                                  &buf,
-                                                  &mut consumed);
+                        self.decompress_udp_ports(nhc_header, &buf, &mut consumed);
                     // Fill in uncompressed UDP header
                     u16_to_slice(htons(src_port), &mut next_headers[0..2]);
                     u16_to_slice(htons(dst_port), &mut next_headers[2..4]);
                     u16_to_slice(htons(udp_length), &mut next_headers[4..6]);
                     // Need to fill in header values before computing the checksum
-                    let udp_checksum =
-                        self.decompress_udp_checksum(nhc_header,
-                                                     &next_headers[0..8],
-                                                     udp_length,
-                                                     &ip6_header,
-                                                     &buf,
-                                                     &mut consumed);
+                    let udp_checksum = self.decompress_udp_checksum(nhc_header,
+                                                                    &next_headers[0..8],
+                                                                    udp_length,
+                                                                    &ip6_header,
+                                                                    &buf,
+                                                                    &mut consumed);
                     u16_to_slice(htons(udp_checksum), &mut next_headers[6..8]);
 
                     written += 8;
                     break;
-                },
-                ip6_nh::FRAGMENT
-                | ip6_nh::HOP_OPTS
-                | ip6_nh::ROUTING
-                | ip6_nh::DST_OPTS
-                | ip6_nh::MOBILITY => {
+                }
+                ip6_nh::FRAGMENT | ip6_nh::HOP_OPTS | ip6_nh::ROUTING | ip6_nh::DST_OPTS |
+                ip6_nh::MOBILITY => {
                     // True if the next header is also compressed
                     is_nhc = (nhc_header & nhc::NH) != 0;
 
@@ -955,8 +916,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                     next_headers[0] = next_header;
                     next_headers[1] = hdr_len_field as u8;
                     // Copies over the remaining options.
-                    next_headers[2..2 + len]
-                        .copy_from_slice(&buf[consumed..consumed + len]);
+                    next_headers[2..2 + len].copy_from_slice(&buf[consumed..consumed + len]);
 
                     // Fill in padding
                     let pad_bytes = hdr_len_field * 8 - len + 6;
@@ -974,7 +934,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
 
                     written += 8 + hdr_len_field * 8;
                     consumed += len;
-                },
+                }
                 _ => panic!("Unreachable case"),
             }
         }
@@ -982,8 +942,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         // The IPv6 header length field is the size of the IPv6 payload,
         // including extension headers. This is thus the uncompressed
         // size of the IPv6 packet - the fixed IPv6 header.
-        let payload_len = written + (buf.len() - consumed)
-                          - mem::size_of::<IP6Header>();
+        let payload_len = written + (buf.len() - consumed) - mem::size_of::<IP6Header>();
         ip6_header.payload_len = htons(payload_len as u16);
         Ok((consumed, written))
     }
@@ -991,7 +950,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     fn decompress_cie(&self,
                       iphc_header: u8,
                       buf: &[u8],
-                      consumed: &mut usize) -> Result<(Context, Context), ()> {
+                      consumed: &mut usize)
+                      -> Result<(Context, Context), ()> {
         let ctx_0 = self.ctx_store.get_context_0();
         let (mut src_ctx, mut dst_ctx) = (ctx_0, ctx_0);
         if iphc_header & iphc::CID != 0 {
@@ -1034,18 +994,15 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         if fl_compressed {
             ip6_header.set_flow_label(0);
         } else {
-            let flow = (((buf[*consumed] & 0x0f) as u32) << 16)
-                      | ((buf[*consumed + 1] as u32) << 8)
-                      |  (buf[*consumed + 2] as u32);
+            let flow = (((buf[*consumed] & 0x0f) as u32) << 16) |
+                       ((buf[*consumed + 1] as u32) << 8) |
+                       (buf[*consumed + 2] as u32);
             *consumed += 3;
             ip6_header.set_flow_label(flow);
         }
     }
 
-    fn decompress_nh(&self,
-                     iphc_header: u8,
-                     buf: &[u8],
-                     consumed: &mut usize) -> (bool, u8) {
+    fn decompress_nh(&self, iphc_header: u8, buf: &[u8], consumed: &mut usize) -> (bool, u8) {
         let is_nhc = (iphc_header & iphc::NH) != 0;
         let mut next_header: u8 = 0;
         if !is_nhc {
@@ -1055,20 +1012,21 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         return (is_nhc, next_header);
     }
 
-    fn decompress_hl(&self, 
+    fn decompress_hl(&self,
                      ip6_header: &mut IP6Header,
                      iphc_header: u8,
                      buf: &[u8],
-                     consumed: &mut usize) -> Result<(), ()> {
+                     consumed: &mut usize)
+                     -> Result<(), ()> {
         let hop_limit = match iphc_header & iphc::HLIM_MASK {
-            iphc::HLIM_1      => 1,
-            iphc::HLIM_64     => 64,
-            iphc::HLIM_255    => 255,
+            iphc::HLIM_1 => 1,
+            iphc::HLIM_64 => 64,
+            iphc::HLIM_255 => 255,
             iphc::HLIM_INLINE => {
                 let hl = buf[*consumed];
                 *consumed += 1;
                 hl
-            },
+            }
             _ => panic!("Unreachable case"),
         };
         ip6_header.set_hop_limit(hop_limit);
@@ -1081,7 +1039,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                       mac_addr: &MacAddr,
                       ctx: &Context,
                       buf: &[u8],
-                      consumed: &mut usize) -> Result<(), ()> {
+                      consumed: &mut usize)
+                      -> Result<(), ()> {
         let uses_context = (iphc_header & iphc::SAC) != 0;
         let sam_mode = iphc_header & iphc::SAM_MASK;
         if uses_context && sam_mode == iphc::SAM_INLINE {
@@ -1111,7 +1070,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                       mac_addr: &MacAddr,
                       ctx: &Context,
                       buf: &[u8],
-                      consumed: &mut usize) -> Result<(), ()> {
+                      consumed: &mut usize)
+                      -> Result<(), ()> {
         let uses_context = (iphc_header & iphc::DAC) != 0;
         let dam_mode = iphc_header & iphc::DAM_MASK;
         if uses_context && dam_mode == iphc::DAM_INLINE {
@@ -1141,7 +1101,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                             iphc_header: u8,
                             ctx: &Context,
                             buf: &[u8],
-                            consumed: &mut usize) -> Result<(), ()> {
+                            consumed: &mut usize)
+                            -> Result<(), ()> {
         let uses_context = (iphc_header & iphc::DAC) != 0;
         let dam_mode = iphc_header & iphc::DAM_MASK;
         let mut ip_addr: &mut IPAddr = &mut ip6_header.dst_addr;
@@ -1161,15 +1122,14 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                     ip_addr.0[1] = buf[*consumed];
                     ip_addr.0[2] = buf[*consumed + 1];
                     ip_addr.0[3] = ctx.prefix_len;
-                    ip_addr.0[4..4 + prefix_bytes]
-                        .copy_from_slice(&ctx.prefix[0..prefix_bytes]);
+                    ip_addr.0[4..4 + prefix_bytes].copy_from_slice(&ctx.prefix[0..prefix_bytes]);
                     ip_addr.0[12..16].copy_from_slice(&buf[*consumed + 2..*consumed + 6]);
                     *consumed += 6;
-                },
+                }
                 _ => {
                     // DAC = 1, DAM = 01, 10, 11: Reserved
                     return Err(());
-                },
+                }
             }
         } else {
             match dam_mode {
@@ -1177,7 +1137,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                 iphc::DAM_INLINE => {
                     ip_addr.0.copy_from_slice(&buf[*consumed..*consumed + 16]);
                     *consumed += 16;
-                },
+                }
                 // DAC = 0, DAM = 01: 48 bits
                 // ffXX::00XX:XXXX:XXXX
                 iphc::DAM_MODE1 => {
@@ -1186,7 +1146,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                     *consumed += 1;
                     ip_addr.0[11..16].copy_from_slice(&buf[*consumed..*consumed + 5]);
                     *consumed += 5;
-                },
+                }
                 // DAC = 0, DAM = 10: 32 bits
                 // ffXX::00XX:XXXX
                 iphc::DAM_MODE2 => {
@@ -1195,7 +1155,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                     *consumed += 1;
                     ip_addr.0[13..16].copy_from_slice(&buf[*consumed..*consumed + 3]);
                     *consumed += 3;
-                },
+                }
                 // DAC = 0, DAM = 11: 8 bits
                 // ff02::00XX
                 iphc::DAM_MODE3 => {
@@ -1203,7 +1163,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                     ip_addr.0[1] = 0x02;
                     ip_addr.0[15] = buf[*consumed];
                     *consumed += 1;
-                },
+                }
                 _ => panic!("Unreachable case"),
             }
         }
@@ -1215,7 +1175,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                                  ip_addr: &mut IPAddr,
                                  mac_addr: &MacAddr,
                                  buf: &[u8],
-                                 consumed: &mut usize) -> Result<(), ()> {
+                                 consumed: &mut usize)
+                                 -> Result<(), ()> {
         let mode = addr_mode & (iphc::SAM_MASK | iphc::DAM_MASK);
         match mode {
             // SAM, DAM = 00: Inline
@@ -1223,14 +1184,14 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                 // SAM_INLINE is equivalent to DAM_INLINE
                 ip_addr.0.copy_from_slice(&buf[*consumed..*consumed + 16]);
                 *consumed += 16;
-            },
+            }
             // SAM, DAM = 01: 64 bits
             // Link-local prefix (64 bits) + 64 bits carried inline
             iphc::SAM_MODE1 | iphc::DAM_MODE1 => {
                 ip_addr.set_unicast_link_local();
                 ip_addr.0[8..16].copy_from_slice(&buf[*consumed..*consumed + 8]);
                 *consumed += 8;
-            },
+            }
             // SAM, DAM = 11: 16 bits
             // Link-local prefix (112 bits) + 0000:00ff:fe00:XXXX
             iphc::SAM_MODE2 | iphc::DAM_MODE2 => {
@@ -1238,13 +1199,13 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                 ip_addr.0[11..13].copy_from_slice(&iphc::MAC_BASE[3..5]);
                 ip_addr.0[14..16].copy_from_slice(&buf[*consumed..*consumed + 2]);
                 *consumed += 2;
-            },
+            }
             // SAM, DAM = 11: 0 bits
             // Linx-local prefix (64 bits) + IID from outer header (64 bits)
             iphc::SAM_MODE3 | iphc::DAM_MODE3 => {
                 ip_addr.set_unicast_link_local();
                 ip_addr.0[8..16].copy_from_slice(&compute_iid(mac_addr));
-            },
+            }
             _ => panic!("Unreachable case"),
         }
         Ok(())
@@ -1256,33 +1217,34 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                               mac_addr: &MacAddr,
                               ctx: &Context,
                               buf: &[u8],
-                              consumed: &mut usize) -> Result<(), ()> {
+                              consumed: &mut usize)
+                              -> Result<(), ()> {
         let mode = addr_mode & (iphc::SAM_MASK | iphc::DAM_MASK);
         match mode {
             // DAM = 00: Reserved
             // SAM = 0 is handled separately outside this method
             iphc::DAM_INLINE => {
                 return Err(());
-            },
+            }
             // SAM, DAM = 01: 64 bits
             // Suffix is the 64 bits carried inline
             iphc::SAM_MODE1 | iphc::DAM_MODE1 => {
                 ip_addr.0[8..16].copy_from_slice(&buf[*consumed..*consumed + 8]);
                 *consumed += 8;
-            },
+            }
             // SAM, DAM = 10: 16 bits
             // Suffix is 0000:00ff:fe00:XXXX
             iphc::SAM_MODE2 | iphc::DAM_MODE2 => {
                 ip_addr.0[8..16].copy_from_slice(&iphc::MAC_BASE);
                 ip_addr.0[14..16].copy_from_slice(&buf[*consumed..*consumed + 2]);
                 *consumed += 2;
-            },
+            }
             // SAM, DAM = 11: 0 bits
             // Suffix is the IID computed from the encapsulating header
             iphc::SAM_MODE3 | iphc::DAM_MODE3 => {
                 let iid = compute_iid(mac_addr);
                 ip_addr.0[8..16].copy_from_slice(&iid[0..8]);
-            },
+            }
             _ => panic!("Unreachable case"),
         }
         // The bits covered by the provided context are always used, so we copy
@@ -1292,10 +1254,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     }
 
     // Returns the UDP ports in host byte-order
-    fn decompress_udp_ports(&self,
-                            udp_nhc: u8,
-                            buf: &[u8],
-                            consumed: &mut usize) -> (u16, u16) {
+    fn decompress_udp_ports(&self, udp_nhc: u8, buf: &[u8], consumed: &mut usize) -> (u16, u16) {
         let src_compressed = (udp_nhc & nhc::UDP_SRC_PORT_FLAG) != 0;
         let dst_compressed = (udp_nhc & nhc::UDP_DST_PORT_FLAG) != 0;
 
@@ -1336,13 +1295,13 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                                udp_length: u16,
                                ip6_header: &IP6Header,
                                buf: &[u8],
-                               consumed: &mut usize) -> u16 {
+                               consumed: &mut usize)
+                               -> u16 {
         if (udp_nhc & nhc::UDP_CHECKSUM_FLAG) != 0 {
             // TODO: Need to verify that the packet was sent with *some* kind
             // of integrity check at a lower level (otherwise, we need to drop
             // the packet)
-            compute_udp_checksum(ip6_header, udp_header, udp_length,
-                                 &buf[*consumed..])
+            compute_udp_checksum(ip6_header, udp_header, udp_length, &buf[*consumed..])
         } else {
             let checksum = ntohs(slice_to_u16(&buf[*consumed..*consumed + 2]));
             *consumed += 2;

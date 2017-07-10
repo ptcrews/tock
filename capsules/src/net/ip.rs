@@ -8,13 +8,13 @@ pub enum MacAddr {
 
 pub mod ip6_nh {
     pub const HOP_OPTS: u8 = 0;
-    pub const TCP: u8      = 6;
-    pub const UDP: u8      = 17;
-    pub const IP6: u8      = 41;
-    pub const ROUTING: u8  = 43;
+    pub const TCP: u8 = 6;
+    pub const UDP: u8 = 17;
+    pub const IP6: u8 = 41;
+    pub const ROUTING: u8 = 43;
     pub const FRAGMENT: u8 = 44;
-    pub const ICMP: u8     = 58;
-    pub const NO_NEXT: u8  = 59;
+    pub const ICMP: u8 = 58;
+    pub const NO_NEXT: u8 = 59;
     pub const DST_OPTS: u8 = 60;
     pub const MOBILITY: u8 = 135;
 }
@@ -33,10 +33,8 @@ impl IPAddr {
     }
 
     pub fn is_unicast_link_local(&self) -> bool {
-        self.0[0] == 0xfe
-        && (self.0[1] & 0xc0) == 0x80
-        && (self.0[1] & 0x3f) == 0
-        && is_zero(&self.0[2..8])
+        self.0[0] == 0xfe && (self.0[1] & 0xc0) == 0x80 && (self.0[1] & 0x3f) == 0 &&
+        is_zero(&self.0[2..8])
     }
 
     pub fn set_unicast_link_local(&mut self) {
@@ -88,7 +86,7 @@ impl Default for IP6Header {
             next_header: ip6_nh::NO_NEXT,
             hop_limit: hop_limit,
             src_addr: IPAddr::new(),
-            dst_addr: IPAddr::new()
+            dst_addr: IPAddr::new(),
         }
     }
 }
@@ -104,8 +102,7 @@ impl IP6Header {
 
     // TODO: Confirm order
     pub fn get_traffic_class(&self) -> u8 {
-        (self.version_class_flow[0] & 0x0f) << 4 |
-        (self.version_class_flow[1] & 0xf0) >> 4
+        (self.version_class_flow[0] & 0x0f) << 4 | (self.version_class_flow[1] & 0xf0) >> 4
     }
 
     pub fn set_traffic_class(&mut self, new_tc: u8) {
