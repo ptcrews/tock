@@ -1,5 +1,3 @@
-use net::util::{is_zero, htons, ntohs};
-
 #[derive(Copy,Clone)]
 pub enum MacAddr {
     ShortAddr(u16),
@@ -29,12 +27,12 @@ impl IPAddr {
     }
 
     pub fn is_unspecified(&self) -> bool {
-        is_zero(&self.0)
+        self.0.iter().all(|&b| b == 0)
     }
 
     pub fn is_unicast_link_local(&self) -> bool {
         self.0[0] == 0xfe && (self.0[1] & 0xc0) == 0x80 && (self.0[1] & 0x3f) == 0 &&
-        is_zero(&self.0[2..8])
+        self.0[2..8].iter().all(|&b| b == 0)
     }
 
     pub fn set_unicast_link_local(&mut self) {
@@ -152,17 +150,17 @@ impl IP6Header {
 
     // TODO: Is this in network byte order?
     pub fn get_payload_len(&self) -> u16 {
-        ntohs(self.payload_len)
+        u16::from_be(self.payload_len)
     }
 
     // TODO: 40 = size of IP6header - find idiomatic way to compute
     pub fn get_total_len(&self) -> u16 {
-        (40 + ntohs(self.payload_len))
+        40 + self.get_payload_len()
     }
 
     // TODO: Is this in network byte order?
     pub fn set_payload_len(&mut self, new_len: u16) {
-        self.payload_len = htons(new_len);
+        self.payload_len = new_len.to_be();
     }
 
     pub fn get_next_header(&self) -> u8 {

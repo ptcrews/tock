@@ -6,7 +6,7 @@ use core::result::Result;
 
 use net::ip::{IP6Header, MacAddr, IPAddr, ip6_nh};
 use net::util;
-use net::util::{ntohs, htons, slice_to_u16, u16_to_slice};
+use net::util::{slice_to_u16, u16_to_slice};
 
 /// Contains bit masks and constants related to the two-byte header of the
 /// LoWPAN_IPHC encoding format.
@@ -209,8 +209,8 @@ fn compute_udp_checksum(ip6_header: &IP6Header,
 
     // UDP length and UDP next header type. Note that we can avoid adding zeros,
     // but the pseudo header must be in network byte-order.
-    checksum = checksum.ones_complement_add(htons(udp_length));
-    checksum = checksum.ones_complement_add(htons(ip6_nh::UDP as u16));
+    checksum = checksum.ones_complement_add(udp_length.to_be());
+    checksum = checksum.ones_complement_add((ip6_nh::UDP as u16).to_be());
 
     // UDP header without the checksum (which is the last two bytes)
     for two_bytes in udp_header[0..6].chunks(2) {
@@ -222,7 +222,7 @@ fn compute_udp_checksum(ip6_header: &IP6Header,
         checksum = checksum.ones_complement_add(if bytes.len() == 2 {
             slice_to_u16(bytes)
         } else {
-            htons(bytes[0] as u16)
+            (bytes[0] as u16).to_be()
         });
     }
 
@@ -630,18 +630,18 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
             *written += 6;
         } else {
             // M = 1, DAC = 0
-            if dst_ip_addr.0[1] == 0x02 && util::is_zero(&dst_ip_addr.0[2..15]) {
+            if dst_ip_addr.0[1] == 0x02 && dst_ip_addr.0[2..15].iter().all(|&b| b == 0) {
                 // DAM = 11
                 buf[1] |= iphc::DAM_MODE3;
                 buf[*written] = dst_ip_addr.0[15];
                 *written += 1;
             } else {
-                if !util::is_zero(&dst_ip_addr.0[2..11]) {
+                if !dst_ip_addr.0[2..11].iter().all(|&b| b == 0) {
                     // DAM = 00
                     buf[1] |= iphc::DAM_INLINE;
                     buf[*written..*written + 16].copy_from_slice(&dst_ip_addr.0);
                     *written += 16;
-                } else if !util::is_zero(&dst_ip_addr.0[11..13]) {
+                } else if !dst_ip_addr.0[11..13].iter().all(|&b| b == 0) {
                     // DAM = 01, ffXX::00XX:XXXX:XXXX
                     buf[1] |= iphc::DAM_MODE1;
                     buf[*written] = dst_ip_addr.0[1];
@@ -659,8 +659,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     }
 
     fn compress_udp_ports(&self, udp_header: &[u8], buf: &mut [u8], written: &mut usize) -> u8 {
-        let src_port: u16 = ntohs(slice_to_u16(&udp_header[0..2]));
-        let dst_port: u16 = ntohs(slice_to_u16(&udp_header[2..4]));
+        let src_port = u16::from_be(slice_to_u16(&udp_header[0..2]));
+        let dst_port = u16::from_be(slice_to_u16(&udp_header[2..4]));
 
         let mut udp_port_nhc = 0;
         if (src_port & nhc::UDP_4BIT_PORT_MASK) == nhc::UDP_4BIT_PORT &&
@@ -677,11 +677,11 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
             // Source port compressed to 8 bits, destination port uncompressed
             udp_port_nhc |= nhc::UDP_SRC_PORT_FLAG;
             buf[*written] = (src_port & !nhc::UDP_8BIT_PORT_MASK) as u8;
-            u16_to_slice(htons(dst_port), &mut buf[*written + 1..*written + 3]);
+            u16_to_slice(dst_port.to_be(), &mut buf[*written + 1..*written + 3]);
             *written += 3;
         } else if (dst_port & nhc::UDP_8BIT_PORT_MASK) == nhc::UDP_8BIT_PORT {
             udp_port_nhc |= nhc::UDP_DST_PORT_FLAG;
-            u16_to_slice(htons(src_port), &mut buf[*written..*written + 2]);
+            u16_to_slice(src_port.to_be(), &mut buf[*written..*written + 2]);
             buf[*written + 3] = (dst_port & !nhc::UDP_8BIT_PORT_MASK) as u8;
             *written += 3;
         } else {
@@ -863,9 +863,9 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                     let (src_port, dst_port) =
                         self.decompress_udp_ports(nhc_header, &buf, &mut consumed);
                     // Fill in uncompressed UDP header
-                    u16_to_slice(htons(src_port), &mut next_headers[0..2]);
-                    u16_to_slice(htons(dst_port), &mut next_headers[2..4]);
-                    u16_to_slice(htons(udp_length), &mut next_headers[4..6]);
+                    u16_to_slice(src_port.to_be(), &mut next_headers[0..2]);
+                    u16_to_slice(dst_port.to_be(), &mut next_headers[2..4]);
+                    u16_to_slice(udp_length.to_be(), &mut next_headers[4..6]);
                     // Need to fill in header values before computing the checksum
                     let udp_checksum = self.decompress_udp_checksum(nhc_header,
                                                                     &next_headers[0..8],
@@ -873,7 +873,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                                                                     &ip6_header,
                                                                     &buf,
                                                                     &mut consumed);
-                    u16_to_slice(htons(udp_checksum), &mut next_headers[6..8]);
+                    u16_to_slice(udp_checksum.to_be(), &mut next_headers[6..8]);
 
                     written += 8;
                     break;
@@ -943,7 +943,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         // including extension headers. This is thus the uncompressed
         // size of the IPv6 packet - the fixed IPv6 header.
         let payload_len = written + (buf.len() - consumed) - mem::size_of::<IP6Header>();
-        ip6_header.payload_len = htons(payload_len as u16);
+        ip6_header.payload_len = (payload_len as u16).to_be();
         Ok((consumed, written))
     }
 
@@ -1258,8 +1258,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         let src_compressed = (udp_nhc & nhc::UDP_SRC_PORT_FLAG) != 0;
         let dst_compressed = (udp_nhc & nhc::UDP_DST_PORT_FLAG) != 0;
 
-        let src_port: u16;
-        let dst_port: u16;
+        let src_port;
+        let dst_port;
         if src_compressed && dst_compressed {
             // Both src and dst are compressed to 4 bits
             let src_short = ((buf[*consumed] >> 4) & 0xf) as u16;
@@ -1271,18 +1271,18 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
             // Source port is compressed to 8 bits
             src_port = nhc::UDP_8BIT_PORT | (buf[*consumed] as u16);
             // Destination port is uncompressed
-            dst_port = ntohs(slice_to_u16(&buf[*consumed + 1..*consumed + 3]));
+            dst_port = u16::from_be(slice_to_u16(&buf[*consumed + 1..*consumed + 3]));
             *consumed += 3;
         } else if dst_compressed {
             // Source port is uncompressed
-            src_port = ntohs(slice_to_u16(&buf[*consumed..*consumed + 2]));
+            src_port = u16::from_be(slice_to_u16(&buf[*consumed..*consumed + 2]));
             // Destination port is compressed to 8 bits
             dst_port = nhc::UDP_8BIT_PORT | (buf[*consumed + 2] as u16);
             *consumed += 3;
         } else {
             // Both ports are uncompressed
-            src_port = ntohs(slice_to_u16(&buf[*consumed..*consumed + 2]));
-            dst_port = ntohs(slice_to_u16(&buf[*consumed + 2..*consumed + 4]));
+            src_port = u16::from_be(slice_to_u16(&buf[*consumed..*consumed + 2]));
+            dst_port = u16::from_be(slice_to_u16(&buf[*consumed + 2..*consumed + 4]));
             *consumed += 4;
         }
         (src_port, dst_port)
@@ -1303,7 +1303,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
             // the packet)
             compute_udp_checksum(ip6_header, udp_header, udp_length, &buf[*consumed..])
         } else {
-            let checksum = ntohs(slice_to_u16(&buf[*consumed..*consumed + 2]));
+            let checksum = u16::from_be(slice_to_u16(&buf[*consumed..*consumed + 2]));
             *consumed += 2;
             checksum
         }
