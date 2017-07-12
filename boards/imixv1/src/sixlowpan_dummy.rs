@@ -5,10 +5,14 @@ use capsules::net::lowpan;
 use capsules::net::lowpan::{ContextStore, Context, LoWPAN};
 use capsules::net::util;
 // use capsules::radio_debug;
+
 use core::mem;
+use core::cell::Cell;
 
 use kernel::hil::radio;
 use kernel::hil::radio::Radio;
+use kernel::hil::time;
+use kernel::hil::time::Frequency;
 
 pub struct DummyStore<'a> {
     context0: Context<'a>,
@@ -62,7 +66,7 @@ pub const PAYLOAD_LEN: usize = 10;
 pub static mut RF233_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_SIZE];
 
 #[derive(Copy,Clone,Debug,PartialEq)]
-enum TrafficFlow {
+enum TF {
     Inline = 0b00,
     Traffic = 0b01,
     Flow = 0b10,
@@ -97,109 +101,104 @@ enum DAC {
     McastCtx,
 }
 
-pub fn sixlowpan_dummy_test(radio: &'static Radio) {
-    // Change TF compression
-    ipv6_packet_test(radio, TrafficFlow::Inline, 255, SAC::Inline, DAC::Inline);
-    ipv6_packet_test(radio, TrafficFlow::Traffic, 255, SAC::Inline, DAC::Inline);
-    ipv6_packet_test(radio, TrafficFlow::Flow, 255, SAC::Inline, DAC::Inline);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     255,
-                     SAC::Inline,
-                     DAC::Inline);
+pub const TEST_DELAY_MS: u32 = 1000;
+pub const TEST_LOOP: bool = false;
 
-    // Change HL compression
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     255,
-                     SAC::Inline,
-                     DAC::Inline);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     64,
-                     SAC::Inline,
-                     DAC::Inline);
-    ipv6_packet_test(radio, TrafficFlow::TrafficFlow, 1, SAC::Inline, DAC::Inline);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::Inline,
-                     DAC::Inline);
-
-    // Change source compression
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::Inline,
-                     DAC::Inline);
-    ipv6_packet_test(radio, TrafficFlow::TrafficFlow, 42, SAC::LLP64, DAC::Inline);
-    ipv6_packet_test(radio, TrafficFlow::TrafficFlow, 42, SAC::LLP16, DAC::Inline);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::LLPIID,
-                     DAC::Inline);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::Unspecified,
-                     DAC::Inline);
-    ipv6_packet_test(radio, TrafficFlow::TrafficFlow, 42, SAC::Ctx64, DAC::Inline);
-    ipv6_packet_test(radio, TrafficFlow::TrafficFlow, 42, SAC::Ctx16, DAC::Inline);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::CtxIID,
-                     DAC::Inline);
-
-    // Change dest compression
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::CtxIID,
-                     DAC::Inline);
-    ipv6_packet_test(radio, TrafficFlow::TrafficFlow, 42, SAC::CtxIID, DAC::LLP64);
-    ipv6_packet_test(radio, TrafficFlow::TrafficFlow, 42, SAC::CtxIID, DAC::LLP16);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::CtxIID,
-                     DAC::LLPIID);
-    ipv6_packet_test(radio, TrafficFlow::TrafficFlow, 42, SAC::CtxIID, DAC::Ctx64);
-    ipv6_packet_test(radio, TrafficFlow::TrafficFlow, 42, SAC::CtxIID, DAC::Ctx16);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::CtxIID,
-                     DAC::CtxIID);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::CtxIID,
-                     DAC::McastInline);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::CtxIID,
-                     DAC::Mcast48);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::CtxIID,
-                     DAC::Mcast32);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::CtxIID,
-                     DAC::Mcast8);
-    ipv6_packet_test(radio,
-                     TrafficFlow::TrafficFlow,
-                     42,
-                     SAC::CtxIID,
-                     DAC::McastCtx);
+pub struct LowpanTest<'a, R: radio::Radio + 'a, A: time::Alarm + 'a> {
+    radio: &'a R,
+    alarm: &'a A,
+    test_counter: Cell<usize>,
 }
 
-fn ipv6_packet_test(radio: &'static Radio, tf: TrafficFlow, hop_limit: u8, sac: SAC, dac: DAC) {
+impl<'a, R: radio::Radio + 'a, A: time::Alarm + 'a>
+LowpanTest<'a, R, A> {
+    pub fn new(radio: &'a R, alarm: &'a A) -> LowpanTest<'a, R, A> {
+        LowpanTest {
+            radio: radio,
+            alarm: alarm,
+            test_counter: Cell::new(0),
+        }
+    }
+
+    pub fn start(&self) {
+        self.schedule_next();
+    }
+
+    fn schedule_next(&self) {
+        let delta = (A::Frequency::frequency() * TEST_DELAY_MS) / 1000;
+        let next = self.alarm.now().wrapping_add(delta);
+        self.alarm.set_alarm(next);
+    }
+
+    fn run_test_and_increment(&self) {
+        let test_counter = self.test_counter.get();
+        self.run_test(test_counter);
+        match TEST_LOOP {
+            true => self.test_counter.set((test_counter + 1) % self.num_tests()),
+            false => self.test_counter.set(test_counter + 1),
+        };
+    }
+
+    fn num_tests(&self) -> usize {
+        28
+    }
+
+    fn run_test(&self, test_id: usize) {
+        let radio = self.radio;
+        debug!("Running test {}:", test_id);
+        match test_id {
+            // Change TF compression
+            0 => ipv6_packet_test(radio, TF::Inline, 255, SAC::Inline, DAC::Inline),
+            1 => ipv6_packet_test(radio, TF::Traffic, 255, SAC::Inline, DAC::Inline),
+            2 => ipv6_packet_test(radio, TF::Flow, 255, SAC::Inline, DAC::Inline),
+            3 => ipv6_packet_test(radio, TF::TrafficFlow, 255, SAC::Inline, DAC::Inline),
+
+            // Change HL compression
+            4 => ipv6_packet_test(radio, TF::TrafficFlow, 255, SAC::Inline, DAC::Inline),
+            5 => ipv6_packet_test(radio, TF::TrafficFlow, 64, SAC::Inline, DAC::Inline),
+            6 => ipv6_packet_test(radio, TF::TrafficFlow, 1, SAC::Inline, DAC::Inline),
+            7 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::Inline, DAC::Inline),
+
+            // Change source compression
+            8 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::Inline, DAC::Inline),
+            9 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::LLP64, DAC::Inline),
+            10 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::LLP16, DAC::Inline),
+            11 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::LLPIID, DAC::Inline),
+            12 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::Unspecified, DAC::Inline),
+            13 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::Ctx64, DAC::Inline),
+            14 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::Ctx16, DAC::Inline),
+            15 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::Inline),
+
+            // Change dest compression
+            16 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::Inline),
+            17 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::LLP64),
+            18 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::LLP16),
+            19 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::LLPIID),
+            20 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::Ctx64),
+            21 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::Ctx16),
+            22 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::CtxIID),
+            23 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::McastInline),
+            24 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::Mcast48),
+            25 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::Mcast32),
+            26 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::Mcast8),
+            27 => ipv6_packet_test(radio, TF::TrafficFlow, 42, SAC::CtxIID, DAC::McastCtx),
+
+            _ => {}
+        }
+    }
+}
+
+impl<'a, R: radio::Radio + 'a, A: time::Alarm + 'a>
+time::Client for LowpanTest<'a, R, A> {
+    fn fired(&self) {
+        self.run_test_and_increment();
+        if self.test_counter.get() < self.num_tests() {
+            self.schedule_next();
+        }
+    }
+}
+
+fn ipv6_packet_test<'a>(radio: &'a Radio, tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
     let mut ip6_datagram = [0 as u8; IP6_HDR_SIZE + PAYLOAD_LEN];
     {
         let mut payload = &mut ip6_datagram[IP6_HDR_SIZE..];
@@ -212,16 +211,16 @@ fn ipv6_packet_test(radio: &'static Radio, tf: TrafficFlow, hop_limit: u8, sac: 
         *ip6_header = IP6Header::new();
         ip6_header.set_payload_len(PAYLOAD_LEN as u16);
 
-        if tf != TrafficFlow::TrafficFlow {
+        if tf != TF::TrafficFlow {
             ip6_header.set_ecn(0b01);
         }
-        if (tf as u8) & (TrafficFlow::Traffic as u8) != 0 {
+        if (tf as u8) & (TF::Traffic as u8) != 0 {
             ip6_header.set_dscp(0b000000);
         } else {
             ip6_header.set_dscp(0b101010);
         }
 
-        if (tf as u8) & (TrafficFlow::Flow as u8) != 0 {
+        if (tf as u8) & (TF::Flow as u8) != 0 {
             ip6_header.set_flow_label(0);
         } else {
             ip6_header.set_flow_label(0xABCDE);
@@ -359,7 +358,7 @@ fn ipv6_packet_test(radio: &'static Radio, tf: TrafficFlow, hop_limit: u8, sac: 
     }
 }
 
-unsafe fn send_ipv6_packet(radio: &'static Radio,
+unsafe fn send_ipv6_packet<'a>(radio: &'a Radio,
                            mesh_local_prefix: &[u8],
                            src_mac_addr: MacAddr,
                            dst_mac_addr: MacAddr,
