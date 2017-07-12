@@ -437,6 +437,20 @@ pub unsafe fn reset_handler() {
 
     rf233.start();
 
+    let dummy_alarm = static_init!(
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        VirtualMuxAlarm::new(mux_alarm),
+        24);
+    let dummy_test = static_init!(
+        sixlowpan_dummy::LowpanTest<'static,
+             RadioDebug<'static, RF233Device>,
+             VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+        sixlowpan_dummy::LowpanTest::new(rf233_debug, dummy_alarm),
+        34);
+
+    dummy_alarm.set_client(dummy_test);
+    dummy_test.start();
+
     debug!("Initialization complete. Entering main loop");
     kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
 }
