@@ -13,6 +13,9 @@ use kernel::hil::radio;
 use kernel::hil::radio::Radio;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
+use kernel::callback::{Callback, AppId};
+use kernel::Driver;
+use kernel::mem::AppSlice;
 
 pub struct DummyStore<'a> {
     context0: Context<'a>,
@@ -443,4 +446,62 @@ unsafe fn send_ipv6_packet<'a>(radio: &'a Radio,
             radio.transmit_long(addr, &mut RF233_BUF, transmit_len, src_long)
         }
     };
+}
+
+pub fn sixlowpan_dummy_recv<R: Driver>(radio_driver: &R, radio: &'static Radio) {
+    radio.config_set_pan(0xABCD);
+    radio.config_commit();
+    // Want the dest to be our source, since we are receiving
+    /*
+    let addr: [u8; 8] = [0x1f, 0x1e, 0x1d, 0x1c, 0x1b, 0x1a, 0x19, 0x18];
+    radio.config_set_address_long(addr);
+    match DST_MAC_ADDR {
+        MacAddr::ShortAddr(addr) => radio.config_set_address(addr),
+        MacAddr::LongAddr(addr) => radio.config_set_address_long(addr),
+    };
+    */
+    // TODO: `kernel_new` doesn't actually give you a kernel app id...
+    let kernel_appid = AppId::kernel_new(122);
+    let callback_ptr = Callback::kernel_new(kernel_appid, sixlowpan_dummy_received_packet);
+    let app_slice = unsafe {
+        AppSlice::new(RF233_BUF.as_mut_ptr(), radio::MAX_BUF_SIZE, kernel_appid)
+    };
+    radio_driver.allow(kernel_appid, 0, app_slice);
+    radio_driver.subscribe(1, callback_ptr);
+}
+
+// arg4: The appdata field of the callback struct (zero initialized for kernel
+//      apps)
+pub fn sixlowpan_dummy_received_packet(arg1: usize, arg2: usize, arg3: usize, arg4: usize) {
+    // TODO: Figure out offset
+    let offset: usize = (/*1 + radio::HEADER_SIZE +*/ 6 + 6) as usize;
+
+    // Compress IPv6 packet into LoWPAN
+    let store = DummyStore {
+        context0: Context {
+            prefix: &MLP,
+            prefix_len: 64,
+            id: 0,
+            compress: true,
+        },
+    };
+    let lowpan = LoWPAN::new(&store);
+
+    // Decompress LoWPAN packet into IPv6
+    let mut out_ip6_datagram = [0 as u8; IP6_HDR_SIZE + PAYLOAD_LEN];
+    unsafe {
+        let (d_consumed, d_written) = lowpan.decompress(&RF233_BUF[offset..],
+                                                        SRC_MAC_ADDR,
+                                                        DST_MAC_ADDR,
+                                                        &mut out_ip6_datagram)
+            .expect("Error decompressing packet");
+        let d_payload_len = radio::MAX_BUF_SIZE - d_consumed;
+        let d_total = d_written + d_payload_len;
+        debug!("Decompress: from lowpan of len={}, consumed={}, payload={}",
+               radio::MAX_BUF_SIZE, d_consumed, d_payload_len);
+        debug!("            into ip6, written={}, payload={}, total={}",
+               d_written, d_payload_len, d_total);
+        out_ip6_datagram[d_written..d_total]
+            .copy_from_slice(&RF233_BUF[offset + d_consumed..offset + d_consumed + d_payload_len]);
+    }
 }

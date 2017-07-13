@@ -432,11 +432,14 @@ pub unsafe fn reset_handler() {
 
     rf233.reset();
     rf233.config_set_pan(0xABCD);
-    rf233.config_set_address(0x1008);
+    // rf233.config_set_address(0x1008);
     //    rf233.config_commit();
+    //rf233.config_set_address_long([0x1f, 0x1e, 0x1d, 0x1c, 0x1b, 0x1a, 0x19, 0x18]);
+    rf233.config_set_address_long([0x19, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f]);
 
     rf233.start();
 
+    /*
     let dummy_alarm = static_init!(
         VirtualMuxAlarm<'static, sam4l::ast::Ast>,
         VirtualMuxAlarm::new(mux_alarm),
@@ -450,8 +453,10 @@ pub unsafe fn reset_handler() {
 
     dummy_alarm.set_client(dummy_test);
     dummy_test.start();
+    */
 
     debug!("Initialization complete. Entering main loop");
+    sixlowpan_dummy::sixlowpan_dummy_recv(radio_capsule, rf233);
     kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
 }
 
