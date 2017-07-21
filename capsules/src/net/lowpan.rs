@@ -269,6 +269,12 @@ pub struct LoWPAN<'a, C: ContextStore<'a> + 'a> {
     ctx_store: &'a C,
 }
 
+// TODO: Make official
+pub trait lowpan {
+    fn compress(&self, ip6_datagram: &[u8], src_mac_addr: MacAddr,
+                dst_mac_addr: MacAddr, buf: &mut [u8]) -> Result<(usize, usize), ()>;
+}
+
 impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     pub fn new(ctx_store: &'a C) -> LoWPAN<'a, C> {
         LoWPAN { ctx_store: ctx_store }
