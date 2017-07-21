@@ -7,8 +7,10 @@ pub mod take_cell;
 pub mod volatile_cell;
 pub mod list;
 pub mod math;
+pub mod stream;
 
 pub use self::list::{List, ListLink, ListNode};
 pub use self::queue::Queue;
 pub use self::ring_buffer::RingBuffer;
+pub use self::stream::SResult;
 pub use self::volatile_cell::VolatileCell;
