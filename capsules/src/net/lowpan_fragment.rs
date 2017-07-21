@@ -8,7 +8,6 @@ use core::cmp::min;
 use net::lowpan::{LoWPAN, ContextStore};
 use net::ip::MacAddr;
 use net::util::{slice_to_u16, u16_to_slice};
-use net::lowpan::lowpan;
 
 const MAX_PAYLOAD_SIZE: usize = 128;
 
@@ -60,7 +59,7 @@ fn is_fragment(packet: &[u8]) -> bool {
         || (packet[0] & lowpan_frag::FRAG1_HDR == lowpan_frag::FRAG1_HDR)
 }
 
-pub struct TxFragState {
+pub struct TxState {
     packet: TakeCell<'static, [u8]>,
     dst_mac_addr: Cell<MacAddr>,
     src_mac_addr: Cell<MacAddr>,
@@ -72,9 +71,9 @@ pub struct TxFragState {
     client: Cell<Option<&'static TxClient>>,
 }
 
-impl TxFragState {
-    fn new() -> TxFragState {
-        TxFragState {
+impl TxState {
+    fn new() -> TxState {
+        TxState {
             packet: TakeCell::empty(),
             dst_mac_addr: Cell::new(MacAddr::ShortAddr(0)),
             src_mac_addr: Cell::new(MacAddr::ShortAddr(0)),
@@ -86,6 +85,11 @@ impl TxFragState {
             client: Cell::new(None),
         }
     }
+
+    fn is_transmit_done(&self) -> bool {
+        self.dgram_size.get() as usize <= self.dgram_offset.get()
+    }
+
 
     fn init_transmit(&self,
                      dst_mac_addr: MacAddr,
@@ -103,36 +107,30 @@ impl TxFragState {
         self.dgram_size.set(packet_len as u16);
     }
 
-    fn end_transmit(&self) -> Result<&'static mut [u8], ()> {
-        self.packet.take().ok_or(())
-    }
-
-    fn is_transmit_done(&self) -> bool {
-        self.dgram_size.get() as usize <= self.dgram_offset.get()
-    }
-
     // To cut down on the number of necessary buffers, we do compression here
     // Takes ownership of frag_buf and gives it to the radio
-    fn start_transmit<'a>(&self,
+    fn start_transmit<'a, C: ContextStore<'a>>(&self,
                           dgram_tag: u16,
                           mut frag_buf: &'static mut [u8],
                           radio: &'a Radio,
-                          lowpan: &'a lowpan) -> Result<ReturnCode, ()> {
+                          lowpan: &'a LoWPAN<'a, C>) -> Result<ReturnCode, ()> {
         self.dgram_tag.set(dgram_tag);
         let ip6_packet = self.packet.take().unwrap(); // TODO
         // Here, we assume that the compressed headers fit in the first MTU
         // fragment. This is consistent with RFC 6282.
+        let mut lowpan_packet = [0 as u8; MAX_PAYLOAD_SIZE]; // TODO: Fix size
         let (consumed, written) = lowpan.compress(&ip6_packet,
                                                   self.src_mac_addr.get(),
                                                   self.dst_mac_addr.get(),
-                                                  &mut frag_buf)?;
+                                                  &mut lowpan_packet)?;
         // This gives the remaining, uncompressed bytes of the packet
         let remaining = ip6_packet.len() - consumed;
-        let dgram_size = ip6_packet.len();
         let lowpan_len = written + remaining;
 
         // We can transmit in a single frame
         if lowpan_len <= MAX_PAYLOAD_SIZE {
+            // Copy over the compressed header
+            frag_buf[0..written].copy_from_slice(&lowpan_packet[0..written]);
             // Copy over the remaining payload
             frag_buf[written..written+remaining]
                 .copy_from_slice(&ip6_packet[consumed..consumed+remaining]);
@@ -143,43 +141,58 @@ impl TxFragState {
         // Otherwise, need to fragment
         } else if self.fragment.get() {
             // TODO: Confirm offset == consumed
-            self.prepare_transmit_fragment(consumed, true, frag_buf, radio)
+            self.prepare_transmit_first_fragment(&lowpan_packet, frag_buf,
+                                                 written, consumed, radio)
         // Otherwise, cannot transmit as packet is too large
         } else {
             Ok(ReturnCode::ESIZE)
         }
     }
 
-    // Assumptions about state: 1) If this is frag1, the field self.tx_datagram_offset == 0
-    //
-    // Note that this will fill in any remaining space with payload in the frag1 frame
-    fn prepare_transmit_fragment(&self,
-                            offset: usize,
-                            is_frag1: bool,
-                            mut frag_buf: &'static mut [u8],
-                            radio: &Radio) -> Result<ReturnCode, ()> {
-        let header_size = if is_frag1 { 
-            lowpan_frag::FRAG1_HDR_SIZE
-        } else { 
-            lowpan_frag::FRAGN_HDR_SIZE
-        };
+    // TODO: Should we copy over additional payload for frag1 as well?
+    fn prepare_transmit_first_fragment(&self,
+                                       lowpan_packet: &[u8],
+                                       mut frag_buf: &'static mut [u8],
+                                       lowpan_len: usize,
+                                       offset: usize,
+                                       radio: &Radio) -> Result<ReturnCode, ()> {
+        let (radio_header_len, max_payload_len) = /*radio.construct_header(..)*/ (0, 0);
+        // This gives the offset to the start of the payload
+        let header_len = lowpan_frag::FRAG1_HDR_SIZE + radio_header_len;
+        // Assumes dgram_size and dgram_tag fields are properly set, and that
+        // dgram_offset == 0
+        set_frag_hdr(self.dgram_size.get(), self.dgram_tag.get(),
+                     self.dgram_offset.get(), &mut frag_buf[radio_header_len..header_len], true);
+        // Copy over the 'payload' (compressed lowpan header)
+        frag_buf[header_len..header_len + lowpan_len]
+            .copy_from_slice(&lowpan_packet[0..lowpan_len]);
+        self.dgram_offset.set(offset);
+        self.transmit_frame(frag_buf, (lowpan_len + header_len) as u8, radio)
+    }
 
-        // TODO: This should round max_payload_len down to the nearest mutiple of 8
-        let max_payload_len = (MAX_PAYLOAD_SIZE - header_size) & !0b111;
+    fn prepare_transmit_next_fragment(&self,
+                                      mut frag_buf: &'static mut [u8],
+                                      radio: &Radio) -> Result<ReturnCode, ()> {
+        let (radio_header_len, max_payload_len) = /*radio.construct_header(..)*/ (0, 0);
+        // This gives the offset to the start of the payload
+        let header_len = lowpan_frag::FRAGN_HDR_SIZE + radio_header_len;
+        let dgram_offset = self.dgram_offset.get();
+
+        // TODO: This should round payload_len down to the nearest mutiple of 8
         let payload_len = min(max_payload_len,
-                              (self.dgram_size.get() as usize) - offset);
+                              (self.dgram_size.get() as usize) - dgram_offset) & !0b111;
 
         let mut packet = self.packet.take().ok_or(())?;
         set_frag_hdr(self.dgram_size.get(), self.dgram_tag.get(),
-                     self.dgram_offset.get(), &mut frag_buf[0..5], is_frag1);
-        frag_buf[header_size..payload_len+header_size]
-            .copy_from_slice(&packet[offset..offset+payload_len]);
-
+                     dgram_offset, &mut frag_buf[radio_header_len..header_len], false);
+        frag_buf[header_len..header_len + payload_len]
+            .copy_from_slice(&packet[dgram_offset..dgram_offset+payload_len]);
         self.packet.replace(packet);
 
         // Update the offset to be used for the next fragment
-        self.dgram_offset.set(self.dgram_offset.get() + payload_len);
-        self.transmit_frame(frag_buf, payload_len as u8, radio)
+        self.dgram_offset.set(dgram_offset + payload_len);
+        // TODO: Include full header_size here? Or only lowpan_frag::FRAGN_HDR_SIZE?
+        self.transmit_frame(frag_buf, (header_len + payload_len) as u8, radio)
     }
 
     fn transmit_frame(&self, mut frame: &'static mut [u8], len: u8,
@@ -193,6 +206,10 @@ impl TxFragState {
                                        len, self.source_long.get()),
         })
     }
+
+    fn end_transmit(&self) -> Result<&'static mut [u8], ()> {
+        self.packet.take().ok_or(())
+    }
 }
 
 pub struct LoWPANFragState <'a, R: Radio + 'a, C: ContextStore<'a> + 'a,
@@ -202,19 +219,10 @@ pub struct LoWPANFragState <'a, R: Radio + 'a, C: ContextStore<'a> + 'a,
     alarm: &'a A,
 
     // Transmit state
-    tx_state: MapCell<TxFragState>,
+    tx_state: MapCell<TxState>,
     tx_dgram_tag: Cell<u16>,
-
-    tx_packet: TakeCell<'static, [u8]>,
-    tx_frag_buf: TakeCell<'static, [u8]>,
-    tx_dst_mac_addr: Cell<MacAddr>,
-    tx_source_long: Cell<bool>,
-    tx_datagram_tag: Cell<u16>,
-    tx_datagram_size: Cell<u16>,
-    tx_datagram_offset: Cell<usize>,
     tx_busy: Cell<bool>,
- //   tx_abort: Cell<bool>,
-    tx_client: Cell<Option<&'static TxClient>>,
+    tx_buf: TakeCell<'static, [u8]>,
 
     // Receive state
     rx_packet: TakeCell<'static, [u8]>,
@@ -227,34 +235,27 @@ pub struct LoWPANFragState <'a, R: Radio + 'a, C: ContextStore<'a> + 'a,
     rx_client: Cell<Option<&'static RxClient>>,
 }
 
-/*
-pub trait AbortReceive {
-    fn rx_abort(&self) {
-        self.tx_abort.set(true);
-        // TODO: Clean up stuff
-    }
-}
-*/
-
-// TODO: how to id transmit?
-/*
-pub trait AbortTransmit {
-    fn tx_abort(&self, 
-}
-*/
-
 impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> TxClient for LoWPANFragState<'a, R, C, A> {
     // TODO: Handle abort bool, ReturnCode stuff
     fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
-        self.tx_frag_buf.replace(buf);
+        self.tx_buf.replace(buf);
+        // If we are done
+        // TODO: Fix unwraps
         if self.tx_state.map(|state| state.is_transmit_done()).unwrap() {
-            let mut ret_buf = self.end_fragment_transmit().unwrap(); // TODO: Fix
+            let mut ret_buf = self.end_fragment_transmit().unwrap();
             // TODO: Be careful here, as need to transmit next fragment stuff
             // before callback
-            self.tx_client.get().map(move |client| client.send_done(ret_buf, acked, result));
+            // TODO: Need to pass the tx_state struct back as well
+            // if exists pending tx_state:
+            //      self.tx_state.replace(pending state)
+            //      self.tx_state.map(|state| state.start_transmit(..)
+            //TODO: Callback
+            //self.tx_state.get().map(move |client| client.send_done(ret_buf, acked, result));
         } else {
-            //self.tx_state.map(|state| state.prepare_transmit_fragment(self.tx_datagram_offset.get(), 
-             //                                      false).unwrap(); // TODO: Fix this
+            // TODO: Handle returncode
+            let tx_buf = self.tx_buf.take().unwrap();
+            self.tx_state.map(move |state|
+                              state.prepare_transmit_next_fragment(tx_buf, self.radio));
         }
     }
 }
@@ -267,7 +268,8 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> RxClient for LoWPANFrag
         // the desired offset.
         let offset = self.radio.payload_offset(false, false);
         // TODO: Impl
-        let (src_mac_addr, dst_mac_addr) = (MacAddr::ShortAddr(0), MacAddr::ShortAddr(0)); //self.radio.get_mac_addrs();
+        let (src_mac_addr, dst_mac_addr) = (MacAddr::ShortAddr(0), MacAddr::ShortAddr(0)); 
+        //self.radio.get_mac_addrs();
         let retbuf = self.receive_packet(&buf[offset as usize..],
                                          len - offset as u8,
                                          src_mac_addr, dst_mac_addr);
@@ -277,10 +279,12 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> RxClient for LoWPANFrag
 }
 
 // TODO: Need to implement config client?
+/*
 impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> ConfigClient for LoWPANFragState<'a, R, C, A> {
     fn config_done(&self, result: ReturnCode) {
     }
 }
+*/
 
 // TODO: Should we have one timer that marks every rx context, or one timer for each
 // rx context? The latter seems wasteful, the former inaccurate (since we are operating on the
@@ -291,25 +295,17 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> time::Client for LoWPAN
 }
 
 impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, C, A> {
-    pub fn new(radio: &'a R, lowpan: &'a LoWPAN<'a, C>, tx_frag_buf: &'static mut [u8],
+    pub fn new(radio: &'a R, lowpan: &'a LoWPAN<'a, C>, tx_buf: &'static mut [u8],
                alarm: &'a A) -> LoWPANFragState<'a, R, C, A> {
         LoWPANFragState {
             radio: radio,
             lowpan: lowpan,
             alarm: alarm,
 
-            tx_state: MapCell::new(TxFragState::new()),
+            tx_state: MapCell::new(TxState::new()),
             tx_dgram_tag: Cell::new(0),
-
-            tx_packet: TakeCell::empty(),
-            tx_frag_buf: TakeCell::new(tx_frag_buf),
-            tx_dst_mac_addr: Cell::new(MacAddr::ShortAddr(0)),
-            tx_source_long: Cell::new(false),
-            tx_datagram_tag: Cell::new(0),
-            tx_datagram_size: Cell::new(0),
-            tx_datagram_offset: Cell::new(0), // This should always be a multiple of 8
             tx_busy: Cell::new(false),
-            tx_client: Cell::new(None), // TODO: Where to set tx_client?
+            tx_buf: TakeCell::new(tx_buf),
 
             rx_packet: TakeCell::empty(),
             rx_src_mac_addr: Cell::new(MacAddr::ShortAddr(0)),
@@ -321,7 +317,7 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
         }
     }
 
-    // TODO: We assumed ip6_packet.len() == ip6_packet_len
+    // TODO: We assume ip6_packet.len() == ip6_packet_len
     // TODO: Where to get src_mac_addr from?
     pub fn transmit_packet(&self,
                            dst_mac_addr: MacAddr,
@@ -329,42 +325,34 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
                            ip6_packet: &'static mut [u8],
                            source_long: bool,
                            fragment: bool) -> Result<ReturnCode, ()> {
-        // If we're already transmitting, return
-        // TODO: In this case, we perminantly lose the packet buffer
-        // TODO: no longer correct handling
-        if self.tx_busy.get() {
-            return Ok(ReturnCode::EBUSY);
-        }
-
-        self.init_packet_transmit(dst_mac_addr, src_mac_addr, ip6_packet,
-                                    source_long, fragment);
-        Ok(ReturnCode::SUCCESS)
-        //TODO
-        //let mut tx_frag_buf = self.tx_frag_buf.take().ok_or(())?;
-    }
-
-    fn init_packet_transmit(&self,
-                              dst_mac_addr: MacAddr,
-                              src_mac_addr: MacAddr,
-                              mut packet: &'static mut [u8],
-                              source_long: bool,
-                              fragment: bool) {
         // TODO: Throw error if tx_state not there
         self.tx_state.map(move |state| state.init_transmit(dst_mac_addr,
                                                            src_mac_addr,
-                                                           packet,
+                                                           ip6_packet,
                                                            source_long,
                                                            fragment));
+        if self.tx_busy.get() {
+            // Queue tx_state
+        } else {
+            // Start transmit
+            self.start_packet_transmit();
+        }
+        Ok(ReturnCode::SUCCESS)
     }
 
     fn start_packet_transmit(&self) {
         // Apparently, a dgram_tag of 0 is invalid; therefore, we avoid it
         let dgram_tag = self.tx_dgram_tag.get() + 1;
+        let mut frag_buf = self.tx_buf.take().unwrap(); // TODO
+        self.tx_busy.set(true);
         self.tx_dgram_tag.set( if dgram_tag == 0 { 1 } else { dgram_tag });
-        //self.tx_state.map( TODO
+        self.tx_state.map(move |state| state.start_transmit(dgram_tag, frag_buf,
+                                                            self.radio,
+                                                            self.lowpan));
     }
 
     fn end_fragment_transmit(&self) -> Result<&'static mut [u8], ()> {
+        self.tx_busy.set(false);
         self.tx_state.map(|state| state.end_transmit()).ok_or(())?
     }
 
