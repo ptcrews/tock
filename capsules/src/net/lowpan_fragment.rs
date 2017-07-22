@@ -1,6 +1,7 @@
 extern crate kernel;
 use kernel::ReturnCode;
 use kernel::common::take_cell::{TakeCell, MapCell};
+use kernel::common::list::{List, ListLink, ListNode};
 use kernel::hil::radio::{Radio, TxClient, RxClient, ConfigClient};
 use kernel::hil::time;
 use core::cell::Cell;
@@ -59,7 +60,71 @@ fn is_fragment(packet: &[u8]) -> bool {
         || (packet[0] & lowpan_frag::FRAG1_HDR == lowpan_frag::FRAG1_HDR)
 }
 
-pub struct TxState {
+pub struct Bitmap {
+    map: [u8; 20],
+}
+
+impl Bitmap {
+    pub fn new() -> Bitmap {
+        Bitmap {
+            map: [0; 20]
+        }
+    }
+
+    fn clear(&mut self) {
+        for i in 0..self.map.len() {
+            self.map[i] = 0;
+        }
+    }
+
+    fn clear_bit(&mut self, idx: usize) {
+        let map_idx = idx / 8;
+        self.map[map_idx] &= !(1 << (idx % 8));
+    }
+
+    fn set_bit(&mut self, idx: usize) {
+        let map_idx = idx / 8;
+        self.map[map_idx] |= 1 << (idx % 8);
+    }
+
+    // Returns true if successfully set bits, returns false if the bits
+    // overlapped with already set bits
+    fn set_bits(&mut self, start_idx: usize, end_idx: usize) -> bool {
+        if start_idx > end_idx {
+            return false;
+        }
+        let start_map_idx = start_idx / 8;
+        let end_map_idx = end_idx / 8;
+        let first = 0xffff << (start_idx % 8);
+        let second = 0xffff >> (end_idx % 8);
+        // TODO: Confirm this is correct
+        if start_map_idx == end_map_idx {
+            let result = (self.map[start_map_idx] & (first & second)) == 0;
+            self.map[start_map_idx] |= first & second;
+            result
+        } else {
+            let mut result = (self.map[start_map_idx] & first) == 0;
+            result = result && ((self.map[end_map_idx] & second) == 0);
+            self.map[start_map_idx] |= first;
+            self.map[end_map_idx] |= second;
+            for i in 1..end_map_idx - start_map_idx - 1 {
+                result = result && (self.map[i] == 0);
+                self.map[i] = 0xffff;
+            }
+            result
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        let mut result = true;
+        for i in 0..20 {
+            result = result && (self.map[i] == 0xffff);
+        }
+        result
+    }
+}
+
+pub struct TxState<'a> {
     packet: TakeCell<'static, [u8]>,
     dst_mac_addr: Cell<MacAddr>,
     src_mac_addr: Cell<MacAddr>,
@@ -69,10 +134,18 @@ pub struct TxState {
     dgram_offset: Cell<usize>,
     fragment: Cell<bool>,
     client: Cell<Option<&'static TxClient>>,
+
+    next: ListLink<'a, TxState<'a>>,
 }
 
-impl TxState {
-    fn new() -> TxState {
+impl<'a> ListNode<'a, TxState<'a>> for TxState<'a> {
+    fn next(&'a self) -> &'a ListLink<TxState<'a>> {
+        &self.next
+    }
+}
+
+impl<'a> TxState<'a> {
+    fn new() -> TxState<'a> {
         TxState {
             packet: TakeCell::empty(),
             dst_mac_addr: Cell::new(MacAddr::ShortAddr(0)),
@@ -83,6 +156,7 @@ impl TxState {
             dgram_offset: Cell::new(0),
             fragment: Cell::new(false),
             client: Cell::new(None),
+            next: ListLink::empty(),
         }
     }
 
@@ -109,11 +183,11 @@ impl TxState {
 
     // To cut down on the number of necessary buffers, we do compression here
     // Takes ownership of frag_buf and gives it to the radio
-    fn start_transmit<'a, C: ContextStore<'a>>(&self,
+    fn start_transmit<'b, C: ContextStore<'b>>(&self,
                           dgram_tag: u16,
                           mut frag_buf: &'static mut [u8],
-                          radio: &'a Radio,
-                          lowpan: &'a LoWPAN<'a, C>) -> Result<ReturnCode, ()> {
+                          radio: &'b Radio,
+                          lowpan: &'b LoWPAN<'b, C>) -> Result<ReturnCode, ()> {
         self.dgram_tag.set(dgram_tag);
         let ip6_packet = self.packet.take().unwrap(); // TODO
         // Here, we assume that the compressed headers fit in the first MTU
@@ -212,6 +286,81 @@ impl TxState {
     }
 }
 
+pub struct RxState<'a> {
+    packet: TakeCell<'static, [u8]>,
+    bitmap: TakeCell<'a, Bitmap>,
+    dst_mac_addr: Cell<MacAddr>,
+    src_mac_addr: Cell<MacAddr>,
+    dgram_tag: Cell<u16>,
+    dgram_size: Cell<u16>,
+    client: Cell<Option<&'static RxClient>>,
+    busy: Cell<bool>,
+    timeout_counter: Cell<usize>,
+
+    next: ListLink<'a, RxState<'a>>,
+}
+
+impl<'a> ListNode<'a, RxState<'a>> for RxState<'a> {
+    fn next(&'a self) -> &'a ListLink<RxState<'a>> {
+        &self.next
+    }
+}
+
+impl<'a> RxState<'a> {
+    fn new(packet: &'static mut [u8]) -> RxState<'a> {
+        RxState {
+            packet: TakeCell::new(packet),
+            bitmap: TakeCell::new(Bitmap::new()),
+            dst_mac_addr: Cell::new(MacAddr::ShortAddr(0)),
+            src_mac_addr: Cell::new(MacAddr::ShortAddr(0)),
+            dgram_tag: Cell::new(0),
+            dgram_size: Cell::new(0),
+            client: Cell::new(None), //TODO: Do individual clients make sense?
+            busy: Cell::new(false),
+            timeout_counter: Cell::new(0),
+            next: ListLink::empty(),
+        }
+    }
+
+    fn is_my_fragment(&self, dst_mac_addr: MacAddr, src_mac_addr: MacAddr,
+                      dgram_tag: u16, dgram_size: u16) -> bool {
+        self.busy.get() && self.dgram_tag.get() == dgram_tag
+            && self.dgram_size.get() == dgram_size
+            //&& TODO: Mac addrs match
+    }
+
+    fn start_receive(&self, dst_mac_addr: MacAddr, src_mac_addr: MacAddr,
+                     dgram_tag: u16, dgram_size: u16) {
+        self.dst_mac_addr.set(dst_mac_addr);
+        self.src_mac_addr.set(src_mac_addr);
+        self.dgram_tag.set(dgram_tag);
+        self.dgram_size.set(dgram_size);
+        self.busy.set(true);
+    }
+
+    // TODO: Assumes payload a slice starting from the actual payload
+    // (no 802.15.4 headers, no fragmentation headers)
+    fn receive_next_frame(&self,
+                          payload: &[u8],
+                          payload_len: usize,
+                          dgram_offset: usize) {
+        // TODO: Unwrap
+        let mut packet = self.packet.take().unwrap();
+        let mut bitmap = self.bitmap.take().unwrap();
+        packet[dgram_offset..dgram_offset+payload_len]
+            .copy_from_slice(&payload[0..payload_len]);
+        self.packet.replace(packet);
+        if !bitmap.set_bits(dgram_offset, dgram_offset+payload_len) {
+            // If this fails, we found an overlapping fragment; reset
+            // everything minus this fragment
+            // TODO
+        }
+        if bitmap.is_complete() {
+            // TODO: If complete, return
+        }
+    }
+}
+
 pub struct LoWPANFragState <'a, R: Radio + 'a, C: ContextStore<'a> + 'a,
                             A: time::Alarm + 'a> {
     radio: &'a R,
@@ -219,7 +368,8 @@ pub struct LoWPANFragState <'a, R: Radio + 'a, C: ContextStore<'a> + 'a,
     alarm: &'a A,
 
     // Transmit state
-    tx_state: MapCell<TxState>,
+    tx_states: List<'a, TxState<'a>>,
+    //tx_state: MapCell<TxState>,
     tx_dgram_tag: Cell<u16>,
     tx_busy: Cell<bool>,
     tx_buf: TakeCell<'static, [u8]>,
@@ -241,7 +391,8 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> TxClient for LoWPANFrag
         self.tx_buf.replace(buf);
         // If we are done
         // TODO: Fix unwraps
-        if self.tx_state.map(|state| state.is_transmit_done()).unwrap() {
+        //if self.tx_state.map(|state| state.is_transmit_done()).unwrap() {
+        if self.tx_states.head().unwrap().is_transmit_done() {
             let mut ret_buf = self.end_fragment_transmit().unwrap();
             // TODO: Be careful here, as need to transmit next fragment stuff
             // before callback
@@ -254,8 +405,7 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> TxClient for LoWPANFrag
         } else {
             // TODO: Handle returncode
             let tx_buf = self.tx_buf.take().unwrap();
-            self.tx_state.map(move |state|
-                              state.prepare_transmit_next_fragment(tx_buf, self.radio));
+            self.tx_states.head().unwrap().prepare_transmit_next_fragment(tx_buf, self.radio);
         }
     }
 }
@@ -302,9 +452,13 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
             lowpan: lowpan,
             alarm: alarm,
 
-            tx_state: MapCell::new(TxState::new()),
+            tx_states: List::new(),
+            //tx_state: MapCell::new(TxState::new()),
             tx_dgram_tag: Cell::new(0),
-            tx_busy: Cell::new(false),
+            tx_busy: Cell::new(false), // TODO: This can be elided if we can 
+                                       // remove elements from the tx_states
+                                       // list, and check if busy by seeing if
+                                       // list is empty.
             tx_buf: TakeCell::new(tx_buf),
 
             rx_packet: TakeCell::empty(),
@@ -319,41 +473,49 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
 
     // TODO: We assume ip6_packet.len() == ip6_packet_len
     // TODO: Where to get src_mac_addr from?
+    // TODO: Need to keep track of additional state: encryption bool, etc.
     pub fn transmit_packet(&self,
                            dst_mac_addr: MacAddr,
                            src_mac_addr: MacAddr,
                            ip6_packet: &'static mut [u8],
+                           tx_state: &'a TxState<'a>,
                            source_long: bool,
                            fragment: bool) -> Result<ReturnCode, ()> {
-        // TODO: Throw error if tx_state not there
-        self.tx_state.map(move |state| state.init_transmit(dst_mac_addr,
-                                                           src_mac_addr,
-                                                           ip6_packet,
-                                                           source_long,
-                                                           fragment));
+        tx_state.init_transmit(dst_mac_addr, src_mac_addr, ip6_packet, 
+                               source_long, fragment);
+
         if self.tx_busy.get() {
             // Queue tx_state
+            // TODO: Need to enqueue this element as not the head element
+            self.tx_states.push_head(tx_state);
         } else {
-            // Start transmit
+            // Set as current state and start transmit
+            self.tx_states.push_head(tx_state);
+            //self.tx_state.replace(tx_state);
             self.start_packet_transmit();
         }
         Ok(ReturnCode::SUCCESS)
     }
 
     fn start_packet_transmit(&self) {
-        // Apparently, a dgram_tag of 0 is invalid; therefore, we avoid it
-        let dgram_tag = self.tx_dgram_tag.get() + 1;
         let mut frag_buf = self.tx_buf.take().unwrap(); // TODO
         self.tx_busy.set(true);
+        // Apparently, a dgram_tag of 0 is invalid; therefore, we avoid it
+        let dgram_tag = self.tx_dgram_tag.get() + 1;
         self.tx_dgram_tag.set( if dgram_tag == 0 { 1 } else { dgram_tag });
+        /*
         self.tx_state.map(move |state| state.start_transmit(dgram_tag, frag_buf,
                                                             self.radio,
                                                             self.lowpan));
+                                                            */
+        self.tx_states.head().unwrap().start_transmit(dgram_tag, frag_buf,
+                                                      self.radio, self.lowpan);
     }
 
     fn end_fragment_transmit(&self) -> Result<&'static mut [u8], ()> {
         self.tx_busy.set(false);
-        self.tx_state.map(|state| state.end_transmit()).ok_or(())?
+        //self.tx_state.map(|state| state.end_transmit()).ok_or(())?
+        self.tx_states.head().unwrap().end_transmit()
     }
 
     fn receive_packet(&self,
