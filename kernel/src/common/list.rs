@@ -58,6 +58,15 @@ impl<'a, T: ListNode<'a, T>> List<'a, T> {
         }
     }
 
+    pub fn pop_head(&self) -> Option<&'a T> {
+        let remove = self.head.0.get();
+        match remove {
+            Some(node) => self.head.0.set(node.next().0.get()),
+            None => self.head.0.set(None),
+        }
+        remove
+    }
+
     pub fn iter(&self) -> ListIterator<'a, T> {
         ListIterator { cur: self.head.0.get() }
     }
