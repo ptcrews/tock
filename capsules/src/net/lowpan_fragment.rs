@@ -18,7 +18,7 @@ pub trait RecieveClient {
 }
 
 pub trait TransmitClient {
-    fn send_done(&self, buf: &'static mut [u8], len: u8, state: TxState, result: ReturnCode);
+    fn send_done(&self, buf: &'static mut [u8], state: &TxState, acked: bool, result: ReturnCode);
 }
 
 // TODO: Where to put these constants?
@@ -145,7 +145,7 @@ pub struct TxState<'a> {
     dgram_size: Cell<u16>,
     dgram_offset: Cell<usize>,
     fragment: Cell<bool>,
-    client: Cell<Option<&'static TxClient>>,
+    client: Cell<Option<&'static TransmitClient>>,
 
     next: ListLink<'a, TxState<'a>>,
 }
@@ -403,7 +403,6 @@ pub struct LoWPANFragState <'a, R: Radio + 'a, C: ContextStore<'a> + 'a,
 
     // Transmit state
     tx_states: List<'a, TxState<'a>>,
-    tx_current: MapCell<&'a TxState<'a>>,
     //tx_state: MapCell<TxState>,
     tx_dgram_tag: Cell<u16>,
     tx_busy: Cell<bool>,
@@ -424,15 +423,12 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> TxClient for LoWPANFrag
         // TODO: Fix unwraps
         //if self.tx_state.map(|state| state.is_transmit_done()).unwrap() {
         if self.tx_states.head().unwrap().is_transmit_done() {
-            let mut ret_buf = self.end_fragment_transmit().unwrap();
-            // TODO: Be careful here, as need to transmit next fragment stuff
-            // before callback
-            // TODO: Need to pass the tx_state struct back as well
-            // if exists pending tx_state:
-            //      self.tx_state.replace(pending state)
-            //      self.tx_state.map(|state| state.start_transmit(..)
-            //TODO: Callback
-            //self.tx_state.get().map(move |client| client.send_done(ret_buf, acked, result));
+            let tx_state = self.end_fragment_transmit().unwrap();
+            let mut ret_buf = tx_state.packet.take().unwrap();
+            let returncode = self.start_packet_transmit();
+            tx_state.client.get().map(
+                move |client| client.send_done(ret_buf, tx_state, acked, result)
+            );
         } else {
             // TODO: Handle returncode
             let tx_buf = self.tx_buf.take().unwrap();
@@ -497,7 +493,6 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
             alarm: alarm,
 
             tx_states: List::new(),
-            tx_current: MapCell::empty(),
             //tx_state: MapCell::new(TxState::new()),
             tx_dgram_tag: Cell::new(0),
             tx_busy: Cell::new(false), // TODO: This can be elided if we can 
@@ -523,14 +518,12 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
 
         tx_state.init_transmit(src_mac_addr, dst_mac_addr, ip6_packet, 
                                source_long, fragment);
-        self.tx_states.push_head(tx_state);
+        // Queue tx_state
+        self.tx_states.push_tail(tx_state);
         if self.tx_busy.get() {
-            // Queue tx_state
-            // TODO: Need to enqueue this element as not the head element
             Ok(ReturnCode::SUCCESS)
         } else {
             // Set as current state and start transmit
-            self.tx_current.replace(tx_state);
             self.start_packet_transmit()
         }
     }
@@ -548,9 +541,10 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
             .unwrap_or(Ok(ReturnCode::SUCCESS))
     }
 
-    fn end_fragment_transmit(&self) -> Result<&'static mut [u8], ReturnCode> {
+    fn end_fragment_transmit(&self) -> Option<&'a TxState<'a>> {
         self.tx_busy.set(false);
-        self.tx_states.head().ok_or(ReturnCode::ENOMEM)?.end_transmit()
+        self.tx_states.pop_head()
+        //self.tx_states.head().ok_or(ReturnCode::ENOMEM)?.end_transmit()
     }
 
     fn receive_frame(&self,
