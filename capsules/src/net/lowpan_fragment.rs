@@ -12,7 +12,7 @@ use net::util::{slice_to_u16, u16_to_slice};
 
 const MAX_PAYLOAD_SIZE: usize = 128;
 
-pub trait RecieveClient {
+pub trait ReceiveClient {
     fn receive(&self, buf: Option<&'static mut [u8]>, len: u8, result: ReturnCode)
         -> &'static mut [u8];
 }
@@ -157,7 +157,7 @@ impl<'a> ListNode<'a, TxState<'a>> for TxState<'a> {
 }
 
 impl<'a> TxState<'a> {
-    fn new() -> TxState<'a> {
+    pub fn new(client: &'static TransmitClient) -> TxState<'a> {
         TxState {
             packet: TakeCell::empty(),
             src_mac_addr: Cell::new(MacAddr::ShortAddr(0)),
@@ -167,9 +167,13 @@ impl<'a> TxState<'a> {
             dgram_size: Cell::new(0),
             dgram_offset: Cell::new(0),
             fragment: Cell::new(false),
-            client: Cell::new(None),
+            client: Cell::new(Some(client)),
             next: ListLink::empty(),
         }
+    }
+
+    pub fn set_transmit_client(&self, client: &'static TransmitClient) {
+        self.client.set(Some(client));
     }
 
     fn is_transmit_done(&self) -> bool {
@@ -309,7 +313,8 @@ pub struct RxState<'a> {
     src_mac_addr: Cell<MacAddr>,
     dgram_tag: Cell<u16>,
     dgram_size: Cell<u16>,
-    client: Cell<Option<&'static RecieveClient>>,
+    // TODO: Client here doesn't really make sense..
+    //client: Cell<Option<&'static ReceiveClient>>,
     busy: Cell<bool>,
     timeout_counter: Cell<usize>,
 
@@ -331,7 +336,6 @@ impl<'a> RxState<'a> {
             src_mac_addr: Cell::new(MacAddr::ShortAddr(0)),
             dgram_tag: Cell::new(0),
             dgram_size: Cell::new(0),
-            client: Cell::new(None), //TODO: Do individual clients make sense?
             busy: Cell::new(false),
             timeout_counter: Cell::new(0),
             next: ListLink::empty(),
@@ -404,20 +408,17 @@ pub struct LoWPANFragState <'a, R: Radio + 'a, C: ContextStore<'a> + 'a,
 
     // Transmit state
     tx_states: List<'a, TxState<'a>>,
-    //tx_state: MapCell<TxState>,
     tx_dgram_tag: Cell<u16>,
     tx_busy: Cell<bool>,
     tx_buf: TakeCell<'static, [u8]>,
 
     // Receive state
     rx_states: List<'a, RxState<'a>>,
-
-    //rx_abort: Cell<bool>,
-    rx_client: Cell<Option<&'static RecieveClient>>,
+    rx_client: Cell<Option<&'static ReceiveClient>>,
 }
 
 impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> TxClient for LoWPANFragState<'a, R, C, A> {
-    // TODO: Handle abort bool, ReturnCode stuff
+    // TODO: ReturnCode stuff
     fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         self.tx_buf.replace(buf);
         // TODO: Fix unwraps
@@ -505,6 +506,10 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
             rx_states: List::new(),
             rx_client: Cell::new(None),
         }
+    }
+
+    pub fn set_receive_client(&self, client: &'static ReceiveClient) {
+        self.rx_client.set(Some(client));
     }
 
     // TODO: We assume ip6_packet.len() == ip6_packet_len
@@ -622,7 +627,9 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
         rx_state.map(|state| {
             state.start_receive(src_mac_addr, dst_mac_addr,
                                 payload_len as u16, 0);
-            let mut packet = state.packet.take().unwrap(); // TODO
+            // The packet buffer should *always* be there, so we can panic if
+            // unwrap fails
+            let mut packet = state.packet.take().unwrap();
             packet[0..payload_len as usize].copy_from_slice(&payload[0..payload_len as usize]);
             state.packet.replace(packet);
             (Some(state), ReturnCode::SUCCESS)
