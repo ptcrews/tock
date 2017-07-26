@@ -244,7 +244,7 @@ impl<'a> TxState<'a> {
                                        offset: usize,
                                        radio: &Radio) 
                                         -> Result<ReturnCode, ReturnCode> {
-        let (radio_header_len, max_payload_len) = /*radio.construct_header(..)*/ (0, 0);
+        let (radio_header_len, _) = /*radio.construct_header(..)*/ (0, 0);
         // This gives the offset to the start of the payload
         let header_len = lowpan_frag::FRAG1_HDR_SIZE + radio_header_len;
         set_frag_hdr(self.dgram_size.get(), self.dgram_tag.get(),
@@ -342,7 +342,8 @@ impl<'a> RxState<'a> {
                       dgram_size: u16, dgram_tag: u16) -> bool {
         self.busy.get() && self.dgram_tag.get() == dgram_tag
             && self.dgram_size.get() == dgram_size
-            //&& TODO: Mac addrs match
+            && self.src_mac_addr.get() == src_mac_addr
+            && self.dst_mac_addr.get() == dst_mac_addr
     }
 
     fn start_receive(&self, src_mac_addr: MacAddr, dst_mac_addr: MacAddr,
@@ -419,24 +420,24 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> TxClient for LoWPANFrag
     // TODO: Handle abort bool, ReturnCode stuff
     fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         self.tx_buf.replace(buf);
-        // If we are done
         // TODO: Fix unwraps
-        //if self.tx_state.map(|state| state.is_transmit_done()).unwrap() {
-        if self.tx_states.head().unwrap().is_transmit_done() {
-            let tx_state = self.end_fragment_transmit().unwrap();
-            let mut ret_buf = tx_state.packet.take().unwrap();
-            let returncode = self.start_packet_transmit();
-            tx_state.client.get().map(
-                move |client| client.send_done(ret_buf, tx_state, acked, result)
-            );
-        } else {
-            // TODO: Handle returncode
-            let tx_buf = self.tx_buf.take().unwrap();
-            let mut retval = self.tx_states.head()
-                .unwrap().prepare_transmit_next_fragment(tx_buf, self.radio)
-                .unwrap_or(ReturnCode::FAIL);
-            // TODO: Call abort
+        if result != ReturnCode::SUCCESS {
+            self.end_packet_transmit(acked, result);
+            return;
         }
+        self.tx_states.head().map(move |head| {
+            if head.is_transmit_done() {
+                // This must return Some if we are in the closure - in particular,
+                // tx_state == head
+                self.end_packet_transmit(acked, result);
+            } else {
+                let tx_buf = self.tx_buf.take().unwrap();
+                let retcode = head.prepare_transmit_next_fragment(tx_buf, self.radio);
+                if retcode.is_err() {
+                    self.end_packet_transmit(acked, retcode.unwrap_err());
+                }
+            }
+        });
     }
 }
 
@@ -524,27 +525,68 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
             Ok(ReturnCode::SUCCESS)
         } else {
             // Set as current state and start transmit
-            self.start_packet_transmit()
+            self.start_packet_transmit();
+            Ok(ReturnCode::SUCCESS)
         }
     }
 
-    fn start_packet_transmit(&self) -> Result<ReturnCode, ReturnCode> {
-        let mut frag_buf = self.tx_buf.take().ok_or(ReturnCode::ENOMEM)?;
-        self.tx_busy.set(true);
+    fn start_packet_transmit(&self) {
+        // We panic here, as it should never be the case that we start
+        // transmitting without the tx_buf
+        let mut frag_buf = self.tx_buf.take().unwrap();
         // Apparently, a dgram_tag of 0 is invalid; therefore, we avoid it
         let dgram_tag = self.tx_dgram_tag.get() + 1;
         self.tx_dgram_tag.set( if dgram_tag == 0 { 1 } else { dgram_tag });
+        // TODO: Below will not work until we retrieve the buffer from the
+        // radio on error - any iteration > 2 will not have the buffer anymore
+        // as it was lost in the transmit call
+        /*
+        let mut tx_state = self.tx_states.head();
+        while tx_state.is_some() {
+            let result = tx_state.map(move |state|
+                state.start_transmit(dgram_tag, frag_buf, self.radio, self.lowpan)
+            ).unwrap();
+            // Successfully started transmitting
+            if result.is_ok() {
+                self.tx_busy.set(true);
+                break;
+            }
+            // Failed to start transmitting; issue error callbacks and remove
+            // TxState from the list
+            self.tx_states.pop_head().map(|head| {
+                let ret_buf = head.end_transmit().expect("TODO");
+                head.client.get().map(move |client|
+                    client.send_done(ret_buf, head, false, result.unwrap_err())
+                );
+            });
+            // TODO: Get frag_buf back -- requires modifying the radio
+            // This will *not* compile until frag_buf is updated (as the value
+            // moved)
+            // frag_buf = ...
+            // Updates tx_state
+            tx_state = self.tx_states.head();
+        }
+        */
         self.tx_states.head().map(move |state| state.start_transmit(dgram_tag,
                                                                     frag_buf,
                                                                     self.radio,
                                                                     self.lowpan))
-            .unwrap_or(Ok(ReturnCode::SUCCESS))
+            .unwrap_or(Ok(ReturnCode::SUCCESS));
+        self.tx_busy.set(true);
     }
 
-    fn end_fragment_transmit(&self) -> Option<&'a TxState<'a>> {
+    // This function ends the current packet transmission state, and starts
+    // sending the next queued packet before calling the current callback.
+    fn end_packet_transmit(&self, acked: bool, returncode: ReturnCode) {
         self.tx_busy.set(false);
-        self.tx_states.pop_head()
-        //self.tx_states.head().ok_or(ReturnCode::ENOMEM)?.end_transmit()
+        self.tx_states.pop_head().map(|tx_state| {
+            let mut ret_buf = tx_state.end_transmit().expect("TODO");
+            self.start_packet_transmit();
+            tx_state.client.get().map(
+                move |client| client.send_done(ret_buf, tx_state, acked,
+                                               returncode)
+            )
+        });
     }
 
     fn receive_frame(&self,
@@ -567,9 +609,24 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
                                   dgram_tag,
                                   dgram_offset)
         } else {
-            (None, ReturnCode::ENOSUPPORT)
-            //self.receive_single_packet();
+            self.receive_single_packet(&packet, packet_len, src_mac_addr, dst_mac_addr)
         }
+    }
+
+    fn receive_single_packet(&self,
+                             payload: &[u8],
+                             payload_len: u8,
+                             src_mac_addr: MacAddr,
+                             dst_mac_addr: MacAddr) -> (Option<&RxState<'a>>, ReturnCode) {
+        let rx_state = self.rx_states.iter().find(|state| !state.busy.get());
+        rx_state.map(|state| {
+            state.start_receive(src_mac_addr, dst_mac_addr,
+                                payload_len as u16, 0);
+            let mut packet = state.packet.take().unwrap(); // TODO
+            packet[0..payload_len as usize].copy_from_slice(&payload[0..payload_len as usize]);
+            state.packet.replace(packet);
+            (Some(state), ReturnCode::SUCCESS)
+        }).unwrap_or((None, ReturnCode::ENOMEM))
     }
 
     // TODO: Bounds check everything
