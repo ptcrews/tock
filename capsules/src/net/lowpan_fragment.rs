@@ -29,7 +29,6 @@ pub mod lowpan_frag {
     pub const FRAGN_HDR_SIZE: usize = 5;
 }
 
-// TODO: Network byte order stuff
 fn set_frag_hdr(dgram_size: u16, dgram_tag: u16, dgram_offset: usize, hdr: &mut [u8],
                 is_frag1: bool) {
     let mask = if is_frag1 {
@@ -45,7 +44,6 @@ fn set_frag_hdr(dgram_size: u16, dgram_tag: u16, dgram_offset: usize, hdr: &mut 
     }
 }
 
-// TODO: Network byte order stuff
 fn get_frag_hdr(hdr: &[u8]) -> (bool, u16, u16, usize) {
     let is_frag1 = match hdr[0] & lowpan_frag::FRAGN_HDR {
         lowpan_frag::FRAG1_HDR => true,
@@ -219,7 +217,7 @@ impl<'a> TxState<'a> {
         let lowpan_len = written + remaining;
 
         // We can transmit in a single frame
-        if lowpan_len <= MAX_PAYLOAD_SIZE {
+        let result = if lowpan_len <= MAX_PAYLOAD_SIZE {
             // Copy over the compressed header
             frag_buf[0..written].copy_from_slice(&lowpan_packet[0..written]);
             // Copy over the remaining payload
@@ -237,7 +235,9 @@ impl<'a> TxState<'a> {
         // Otherwise, cannot transmit as packet is too large
         } else {
             Err(ReturnCode::ESIZE)
-        }
+        };
+        self.packet.replace(ip6_packet);
+        result
     }
 
     // TODO: Should we copy over additional payload for frag1 as well?
@@ -248,7 +248,8 @@ impl<'a> TxState<'a> {
                                        offset: usize,
                                        radio: &Radio) 
                                         -> Result<ReturnCode, ReturnCode> {
-        let (radio_header_len, _) = /*radio.construct_header(..)*/ (0, 0);
+        let (radio_header_len, _) = /*radio.construct_header(..)*/ 
+            (radio.payload_offset(true, true) as usize, 0);
         // This gives the offset to the start of the payload
         let header_len = lowpan_frag::FRAG1_HDR_SIZE + radio_header_len;
         set_frag_hdr(self.dgram_size.get(), self.dgram_tag.get(),
@@ -263,7 +264,8 @@ impl<'a> TxState<'a> {
     fn prepare_transmit_next_fragment(&self,
                                       mut frag_buf: &'static mut [u8],
                                       radio: &Radio) -> Result<ReturnCode, ReturnCode> {
-        let (radio_header_len, max_payload_len) = /*radio.construct_header(..)*/ (0, 0);
+        let (radio_header_len, max_payload_len) = /*radio.construct_header(..)*/ 
+            (radio.payload_offset(true, true) as usize, 40);
         // This gives the offset to the start of the payload
         let header_len = lowpan_frag::FRAGN_HDR_SIZE + radio_header_len;
         let dgram_offset = self.dgram_offset.get();
@@ -400,9 +402,9 @@ impl<'a> RxState<'a> {
     }
 }
 
-pub struct LoWPANFragState <'a, R: Radio + 'a, C: ContextStore<'a> + 'a,
+pub struct FragState <'a, R: Radio + 'a, C: ContextStore<'a> + 'a,
                             A: time::Alarm + 'a> {
-    radio: &'a R,
+    pub radio: &'a R,
     lowpan: &'a LoWPAN<'a, C>,
     alarm: &'a A,
 
@@ -417,7 +419,7 @@ pub struct LoWPANFragState <'a, R: Radio + 'a, C: ContextStore<'a> + 'a,
     rx_client: Cell<Option<&'static ReceiveClient>>,
 }
 
-impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> TxClient for LoWPANFragState<'a, R, C, A> {
+impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> TxClient for FragState<'a, R, C, A> {
     // TODO: ReturnCode stuff
     fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         self.tx_buf.replace(buf);
@@ -443,7 +445,7 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> TxClient for LoWPANFrag
 }
 
 impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm>
-RxClient for LoWPANFragState<'a, R, C, A> {
+RxClient for FragState<'a, R, C, A> {
     fn receive(&self, buf: &'static mut [u8], len: u8, result: ReturnCode) {
         // TODO: Generalize this
         let offset = self.radio.payload_offset(false, false);
@@ -471,7 +473,7 @@ RxClient for LoWPANFragState<'a, R, C, A> {
 
 // TODO: Need to implement config client?
 /*
-impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> ConfigClient for LoWPANFragState<'a, R, C, A> {
+impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> ConfigClient for FragState<'a, R, C, A> {
     fn config_done(&self, result: ReturnCode) {
     }
 }
@@ -481,15 +483,15 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> ConfigClient for LoWPAN
 // rx context? The latter seems wasteful, the former inaccurate (since we are operating on the
 // order of 60s)
 impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> 
-time::Client for LoWPANFragState<'a, R, C, A> {
+time::Client for FragState<'a, R, C, A> {
     fn fired(&self) {
     }
 }
 
-impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, C, A> {
+impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
     pub fn new(radio: &'a R, lowpan: &'a LoWPAN<'a, C>, tx_buf: &'static mut [u8],
-               alarm: &'a A) -> LoWPANFragState<'a, R, C, A> {
-        LoWPANFragState {
+               alarm: &'a A) -> FragState<'a, R, C, A> {
+        FragState {
             radio: radio,
             lowpan: lowpan,
             alarm: alarm,
@@ -517,7 +519,7 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
     pub fn transmit_packet(&self,
                            src_mac_addr: MacAddr, // TODO: Can get this from radio
                            dst_mac_addr: MacAddr,
-                           ip6_packet: &'static mut [u8],
+                           mut ip6_packet: &'static mut [u8],
                            tx_state: &'a TxState<'a>,
                            source_long: bool,
                            fragment: bool) -> Result<ReturnCode, ReturnCode> {
@@ -584,6 +586,12 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
     // sending the next queued packet before calling the current callback.
     fn end_packet_transmit(&self, acked: bool, returncode: ReturnCode) {
         self.tx_busy.set(false);
+        let tx_state = self.tx_states.pop_head().unwrap();
+        let mut ret_buf = tx_state.end_transmit().expect("TODO");
+        self.start_packet_transmit();
+        let client = tx_state.client.get().unwrap();
+        client.send_done(ret_buf, tx_state, acked, returncode);
+        /*
         self.tx_states.pop_head().map(|tx_state| {
             let mut ret_buf = tx_state.end_transmit().expect("TODO");
             self.start_packet_transmit();
@@ -592,6 +600,7 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> LoWPANFragState<'a, R, 
                                                returncode)
             )
         });
+        */
     }
 
     fn receive_frame(&self,
