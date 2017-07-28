@@ -623,6 +623,7 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
                                   dgram_tag,
                                   dgram_offset)
         } else {
+            // TODO: Handle single 6LoWPAN packet
             self.receive_single_packet(&packet, packet_len, src_mac_addr, dst_mac_addr)
         }
     }

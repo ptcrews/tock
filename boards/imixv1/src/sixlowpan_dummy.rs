@@ -3,6 +3,7 @@
 use capsules::net::ip::{IP6Header, MacAddr, IPAddr, ip6_nh};
 use capsules::net::lowpan;
 use capsules::net::lowpan::{ContextStore, Context, LoWPAN};
+use capsules::net::lowpan_fragment::{FragState, TxState};
 use capsules::net::util;
 // use capsules::radio_debug;
 
@@ -13,6 +14,8 @@ use kernel::hil::radio;
 use kernel::hil::radio::Radio;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
+
+static TX_BUF: [u8; 128] = [0; 128];
 
 pub struct DummyStore<'a> {
     context0: Context<'a>,
@@ -389,6 +392,7 @@ unsafe fn send_ipv6_packet<'a>(radio: &'a Radio,
         },
     };
     let lowpan = LoWPAN::new(&store);
+    //let frag_state = FragState::new(radio, &lowpan, TX_BUF, &self.alarm);
     let (consumed, written) = lowpan.compress(&ip6_datagram,
                   src_mac_addr,
                   dst_mac_addr,

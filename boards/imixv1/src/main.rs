@@ -10,6 +10,7 @@ extern crate sam4l;
 
 use capsules::rf233::RF233;
 use capsules::timer::TimerDriver;
+use capsules::net::lowpan;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use capsules::virtual_i2c::{I2CDevice, MuxI2C};
 use capsules::virtual_spi::{VirtualSpiMasterDevice, MuxSpiMaster};
@@ -31,6 +32,8 @@ mod i2c_dummy;
 mod spi_dummy;
 #[allow(dead_code)]
 mod sixlowpan_dummy;
+#[allow(dead_code)]
+mod lowpan_frag_dummy;
 
 struct Imixv1 {
     console: &'static capsules::console::Console<'static, sam4l::usart::USART>,
@@ -47,9 +50,15 @@ struct Imixv1 {
     spi: &'static capsules::spi::Spi<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
     ipc: kernel::ipc::IPC,
     ninedof: &'static capsules::ninedof::NineDof<'static>,
+    /*
     radio: &'static capsules::radio::RadioDriver<'static,
                                                  capsules::rf233::RF233<'static,
                                                  VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>>,
+                                                 */
+    radio: &'static capsules::net::lowpan_fragment::FragState<'static,
+        capsules::rf233::RF233<'static, capsules::virtual_spi::VirtualSpiMasterDevice<'static,
+        sam4l::spi::Spi>>, sixlowpan_dummy::DummyStore<'static>,
+        capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>>,
     crc: &'static capsules::crc::Crc<'static, sam4l::crccu::Crccu<'static>>,
 }
 
@@ -71,6 +80,8 @@ static mut RF233_REG_READ: [u8; 2] = [0x00; 2];
 // for reception.
 static mut RADIO_BUF: [u8; radio::MAX_BUF_SIZE] = [0x00; radio::MAX_BUF_SIZE];
 
+static DEFAULT_CTX_PREFIX: [u8; 2] = [0; 2];
+
 impl kernel::Platform for Imixv1 {
     fn with_driver<F, R>(&self, driver_num: usize, f: F) -> R
         where F: FnOnce(Option<&kernel::Driver>) -> R
@@ -88,7 +99,7 @@ impl kernel::Platform for Imixv1 {
             10 => f(Some(self.si7021)),
             11 => f(Some(self.ninedof)),
             16 => f(Some(self.crc)),
-            154 => f(Some(self.radio)),
+            //154 => f(Some(self.radio)),
             0xff => f(Some(&self.ipc)),
             _ => f(None),
         }
@@ -387,16 +398,62 @@ pub unsafe fn reset_handler() {
     rf233_spi.set_client(rf233);
     rf233.initialize(&mut RF233_BUF, &mut RF233_REG_WRITE, &mut RF233_REG_READ);
 
+    let dummy_alarm = static_init!(
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        VirtualMuxAlarm::new(mux_alarm),
+        24);
+
+    let default_context = static_init!(
+        lowpan::Context<'static>,
+        lowpan::Context {
+            prefix: &DEFAULT_CTX_PREFIX,
+            prefix_len: DEFAULT_CTX_PREFIX.len() as u8,
+            id: 0,
+            compress: true,
+        });
+
+    let dummy_store = static_init!(
+        sixlowpan_dummy::DummyStore<'static>,
+        sixlowpan_dummy::DummyStore::new(*default_context));
+
+    let lowpan = static_init!(
+        lowpan::LoWPAN<'static, sixlowpan_dummy::DummyStore<'static>>,
+        lowpan::LoWPAN::new(dummy_store));
+
+    let radio_capsule = static_init!(
+        capsules::net::lowpan_fragment::FragState<'static,
+            RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
+            //capsules::net::lowpan::ContextStore<'static>,
+            sixlowpan_dummy::DummyStore<'static>,
+            VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+        capsules::net::lowpan_fragment::FragState::new(rf233, lowpan, &mut RADIO_BUF, dummy_alarm),
+        438/8);
+    dummy_alarm.set_client(radio_capsule);
+
+    let lowpan_dummy = static_init!(
+        lowpan_frag_dummy::LowpanTest<'static,
+            RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
+            VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+        lowpan_frag_dummy::LowpanTest::new(rf233, dummy_alarm),
+        180/8);
+
+    let tx_state = static_init!(
+        capsules::net::lowpan_fragment::TxState<'static>,
+        capsules::net::lowpan_fragment::TxState::new(lowpan_dummy));
+            
+    //execute radio test
+    /*
     let radio_capsule = static_init!(
         capsules::radio::RadioDriver<'static,
                                      RF233<'static,
                                            VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>>,
         capsules::radio::RadioDriver::new(rf233),
         832/8);
-    radio_capsule.config_buffer(&mut RADIO_BUF);
+        */
+    //radio_capsule.config_buffer(&mut RADIO_BUF);
     rf233.set_transmit_client(radio_capsule);
     rf233.set_receive_client(radio_capsule, &mut RF233_RX_BUF);
-    rf233.set_config_client(radio_capsule);
+    //rf233.set_config_client(radio_capsule);
 
     let imixv1 = Imixv1 {
         console: console,
@@ -426,7 +483,13 @@ pub unsafe fn reset_handler() {
     rf233.start();
 
     debug!("Initialization complete. Entering main loop");
-    kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
+    for i in 0..1000 {
+        kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
+    }
+    lowpan_frag_dummy::simple_frag_test(radio_capsule, tx_state);
+    loop {
+        kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
+    }
 }
 
 unsafe fn load_processes() -> &'static mut [Option<kernel::Process<'static>>] {

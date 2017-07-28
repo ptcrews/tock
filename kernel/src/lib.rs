@@ -46,7 +46,7 @@ pub fn main<P: Platform, C: Chip>(platform: &P,
         &mut process::PROCS
     };
 
-    loop {
+    //loop {
         unsafe {
             chip.service_pending_interrupts();
 
@@ -63,5 +63,5 @@ pub fn main<P: Platform, C: Chip>(platform: &P,
                 support::wfi();
             })
         };
-    }
+    //}
 }
