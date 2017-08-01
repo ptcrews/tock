@@ -279,8 +279,6 @@ impl<'a> RxState<'a> {
 
     fn is_my_fragment(&self, src_mac_addr: MacAddr, dst_mac_addr: MacAddr,
                       dgram_size: u16, dgram_tag: u16) -> bool {
-        // TODO
-        return true;
         self.busy.get() && (self.dgram_tag.get() == dgram_tag)
             && (self.dgram_size.get() == dgram_size)
             && (self.src_mac_addr.get() == src_mac_addr)
@@ -599,7 +597,8 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
                     .copy_from_slice(&payload[consumed..consumed+remaining]);
 
             } else {
-                packet[0..payload_len as usize].copy_from_slice(&payload[0..payload_len as usize]);
+                packet[0..payload_len as usize]
+                    .copy_from_slice(&payload[0..payload_len as usize]);
             }
             state.packet.replace(packet);
             (Some(state), ReturnCode::SUCCESS)
@@ -619,7 +618,7 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
                         dgram_tag: u16,
                         dgram_offset: usize) -> (Option<&RxState<'a>>, ReturnCode) {
         let mut rx_state = self.rx_states.iter().find(
-            |state| state.is_my_fragment(src_mac_addr, dst_mac_addr, dgram_tag, dgram_size)
+            |state| state.is_my_fragment(src_mac_addr, dst_mac_addr, dgram_size, dgram_tag)
         );
 
         if rx_state.is_none() { 
