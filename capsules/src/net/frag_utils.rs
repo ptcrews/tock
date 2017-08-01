@@ -52,7 +52,7 @@ impl Bitmap {
             result = result && ((self.map[end_map_idx] & second) == 0);
             self.map[start_map_idx] |= first;
             self.map[end_map_idx] |= second;
-            for i in 1..end_map_idx {
+            for i in start_map_idx + 1..end_map_idx {
                 result = result && (self.map[i] == 0);
                 self.map[i] = 0xff;
             }
