@@ -9,6 +9,7 @@ use core::cmp::min;
 use net::lowpan::{LoWPAN, ContextStore};
 use net::ip::MacAddr;
 use net::util::{slice_to_u16, u16_to_slice};
+use net::frag_utils::Bitmap;
 
 const MAX_PAYLOAD_SIZE: usize = 128;
 
@@ -61,84 +62,9 @@ fn get_frag_hdr(hdr: &[u8]) -> (bool, u16, u16, usize) {
     (is_frag1, dgram_size, dgram_tag, (dgram_offset as usize) * 8)
 }
 
-// TODO: Correct? No lol
 fn is_fragment(packet: &[u8]) -> bool {
     let mask = packet[0] & lowpan_frag::FRAGN_HDR;
-    let first = (mask == lowpan_frag::FRAGN_HDR);
-    let second = (mask == lowpan_frag::FRAG1_HDR);
-    first || second
-    /*
-    (packet[0] & lowpan_frag::FRAGN_HDR == lowpan_frag::FRAGN_HDR) 
-        || (packet[0] & lowpan_frag::FRAG1_HDR == lowpan_frag::FRAG1_HDR)
-        */
-}
-
-pub struct Bitmap {
-    map: [u8; 20],
-}
-
-impl Bitmap {
-    pub fn new() -> Bitmap {
-        Bitmap {
-            map: [0; 20]
-        }
-    }
-
-    fn clear(&mut self) {
-        for i in 0..self.map.len() {
-            self.map[i] = 0;
-        }
-    }
-
-    fn clear_bit(&mut self, idx: usize) {
-        let map_idx = idx / 8;
-        self.map[map_idx] &= !(1 << (idx % 8));
-    }
-
-    fn set_bit(&mut self, idx: usize) {
-        let map_idx = idx / 8;
-        self.map[map_idx] |= 1 << (idx % 8);
-    }
-
-    // Returns true if successfully set bits, returns false if the bits
-    // overlapped with already set bits
-    // Note that each bit represents a multiple of 8 bytes (as everything
-    // must be in 8-byte groups), and thus we can store 8*8 = 64 "bytes" per
-    // byte in the bitmap.
-    fn set_bits(&mut self, start_idx: usize, end_idx: usize) -> bool {
-        if start_idx > end_idx {
-            return false;
-        }
-        let start_map_idx = start_idx / 8;
-        let end_map_idx = end_idx / 8;
-        let first = 0xff << (start_idx % 8);
-        let second = 0xff >> (8 - (end_idx % 8));
-        if start_map_idx == end_map_idx {
-            let result = (self.map[start_map_idx] & (first & second)) == 0;
-            self.map[start_map_idx] |= (first & second);
-            result
-        } else {
-            let mut result = (self.map[start_map_idx] & first) == 0;
-            result = result && ((self.map[end_map_idx] & second) == 0);
-            self.map[start_map_idx] |= first;
-            self.map[end_map_idx] |= second;
-            for i in 1..end_map_idx {
-                result = result && (self.map[i] == 0);
-                self.map[i] = 0xff;
-            }
-            result
-        }
-    }
-
-    fn is_complete(&self, total_length: usize) -> bool {
-        let mut result = true;
-        for i in 0..total_length / 8 {
-            result = result && (self.map[i] == 0xff);
-        }
-        let mask = 0xff >> (8 - (total_length % 8));
-        result = result && (self.map[total_length / 8] == mask);
-        result
-    }
+    (mask == lowpan_frag::FRAGN_HDR) || (mask == lowpan_frag::FRAG1_HDR)
 }
 
 pub struct TxState<'a> {
@@ -306,7 +232,7 @@ impl<'a> TxState<'a> {
         };
         match res {
             ReturnCode::SUCCESS => Ok(res),
-            _                   => Err(res),
+                              _ => Err(res),
         }
     }
 
@@ -370,9 +296,9 @@ impl<'a> RxState<'a> {
         self.bitmap.map(|bitmap| bitmap.clear());
     }
 
-    // TODO: Assumes payload a slice starting from the actual payload
-    // (no 802.15.4 headers, no fragmentation headers)
-    // Returns true if the packet is completely reassembled
+    // This function assumes that the payload is a slice starting from the
+    // actual payload (no 802.15.4 headers, no fragmentation headers), and
+    // returns true if the packet is completely reassembled.
     fn receive_next_frame<'b, C: ContextStore<'b>>(&self,
                           payload: &[u8],
                           payload_len: usize,
@@ -428,10 +354,9 @@ pub struct FragState <'a, R: Radio + 'a, C: ContextStore<'a> + 'a,
 }
 
 impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> TxClient for FragState<'a, R, C, A> {
-    // TODO: ReturnCode stuff
+    // TODO: ReturnCode stuff, fix unwraps
     fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         self.tx_buf.replace(buf);
-        // TODO: Fix unwraps
         if result != ReturnCode::SUCCESS {
             self.end_packet_transmit(acked, result);
             return;
@@ -705,7 +630,6 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
                 (Some(state), ReturnCode::FAIL)
             } else if res.unwrap() {
                 // Packet fully reassembled
-                //state.end_receive();
                 (Some(state), ReturnCode::SUCCESS)
             } else {
                 // Packet not fully reassembled
