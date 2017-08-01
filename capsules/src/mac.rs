@@ -725,6 +725,7 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                             .iter().eq(buf[t_off..t_off + mic_len].iter());
                     });
                 });
+                self.crypt_busy.set(false);
 
                 // If authentication failed, we drop the frame and return it to
                 // the radio without passing it to the client.
