@@ -491,6 +491,7 @@ pub unsafe fn reset_handler() {
     //    rf233.config_commit();
 
     rf233.start();
+    frag_state.schedule_next_timer();
 
     debug!("Initialization complete. Entering main loop");
     /*

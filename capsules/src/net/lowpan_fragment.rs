@@ -4,6 +4,7 @@ use kernel::common::take_cell::{TakeCell, MapCell};
 use kernel::common::list::{List, ListLink, ListNode};
 use kernel::hil::radio::{Radio, TxClient, RxClient, ConfigClient};
 use kernel::hil::time;
+use kernel::hil::time::Frequency;
 use core::cell::Cell;
 use core::cmp::min;
 use net::lowpan::{LoWPAN, ContextStore, is_lowpan};
@@ -12,6 +13,10 @@ use net::util::{slice_to_u16, u16_to_slice};
 use net::frag_utils::Bitmap;
 
 const MAX_PAYLOAD_SIZE: usize = 128;
+// Timer fire rate in seconds
+const TIMER_RATE: usize = 10;
+// Reassembly timeout in seconds
+const FRAG_TIMEOUT: usize = 60;
 
 pub trait ReceiveClient {
     fn receive(&self, buf: &'static mut [u8], len: u8, result: ReturnCode)
@@ -293,6 +298,7 @@ impl<'a> RxState<'a> {
         self.dgram_size.set(dgram_size);
         self.busy.set(true);
         self.bitmap.map(|bitmap| bitmap.clear());
+        self.timeout_counter.set(0);
     }
 
     // This function assumes that the payload is a slice starting from the
@@ -328,10 +334,16 @@ impl<'a> RxState<'a> {
                                        .ok_or(ReturnCode::FAIL)
     }
 
-    fn end_receive(&self) -> Option<&'static mut [u8]> {
+    fn end_receive(&self, client: Option<&'static ReceiveClient>, result: ReturnCode) {
         self.busy.set(false);
         self.bitmap.map(|bitmap| bitmap.clear());
-        self.packet.take()
+        self.timeout_counter.set(0);
+        if client.is_some() {
+            let mut buffer = self.packet.take().unwrap();
+            self.packet.replace(
+                client.unwrap().receive(buffer, self.dgram_size.get() as u8, result)
+            );
+        }
     }
 }
 
@@ -387,16 +399,7 @@ RxClient for FragState<'a, R, C, A> {
                                           len - offset as u8,
                                           src_mac_addr, dst_mac_addr);
         // Reception completed
-        rx_state.map(|state| {
-            let mut buffer = state.end_receive().unwrap();
-            let rx_client = self.rx_client.get();
-            if rx_client.is_some() {
-                state.packet.replace(rx_client.unwrap().receive(buffer,
-                                                             state.dgram_size.get() as u8,
-                                                             returncode));
-            } else {
-                state.packet.replace(buffer);
-            }
+        //rx_state.map(|state| state.end_receive(self.rx_client.get(), returncode));
             /*
             self.rx_client.get().map(move |client| 
                 // Here we force the client to return the buffer immediately,
@@ -406,7 +409,6 @@ RxClient for FragState<'a, R, C, A> {
                                                     returncode))
             );
             */
-        });
 
         // Give the buffer back
         self.radio.set_receive_buffer(buf);
@@ -427,6 +429,16 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> ConfigClient for FragSt
 impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> 
 time::Client for FragState<'a, R, C, A> {
     fn fired(&self) {
+        // Timeout any expired rx_states
+        for state in self.rx_states.iter() {
+            if state.busy.get() {
+                state.timeout_counter.set(state.timeout_counter.get() + TIMER_RATE);
+                if state.timeout_counter.get() >= FRAG_TIMEOUT {
+                    state.end_receive(self.rx_client.get(), ReturnCode::FAIL);
+                }
+            }
+        }
+        self.schedule_next_timer();
     }
 }
 
@@ -450,6 +462,12 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
             rx_states: List::new(),
             rx_client: Cell::new(None),
         }
+    }
+
+    pub fn schedule_next_timer(&self) {
+        let seconds = A::Frequency::frequency() * (TIMER_RATE as u32);
+        let next = self.alarm.now().wrapping_add(seconds);
+        self.alarm.set_alarm(next);
     }
 
     pub fn add_rx_state(&self, rx_state: &'a RxState<'a>) {
