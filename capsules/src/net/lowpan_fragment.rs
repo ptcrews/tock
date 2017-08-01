@@ -13,7 +13,7 @@ use net::util::{slice_to_u16, u16_to_slice};
 const MAX_PAYLOAD_SIZE: usize = 128;
 
 pub trait ReceiveClient {
-    fn receive(&self, buf: Option<&'static mut [u8]>, len: u8, result: ReturnCode)
+    fn receive(&self, buf: &'static mut [u8], len: u8, result: ReturnCode)
         -> &'static mut [u8];
 }
 
@@ -51,7 +51,7 @@ fn get_frag_hdr(hdr: &[u8]) -> (bool, u16, u16, usize) {
         _ => false,
     };
     // Zero out upper bits
-    let dgram_size = slice_to_u16(&hdr[0..2]) & !(lowpan_frag::FRAGN_HDR as u16) << 8;
+    let dgram_size = slice_to_u16(&hdr[0..2]) & !(0xf << 12);
     let dgram_tag = slice_to_u16(&hdr[2..4]);
     let dgram_offset = if is_frag1 {
         0
@@ -61,10 +61,16 @@ fn get_frag_hdr(hdr: &[u8]) -> (bool, u16, u16, usize) {
     (is_frag1, dgram_size, dgram_tag, (dgram_offset as usize) * 8)
 }
 
-// TODO: Correct?
+// TODO: Correct? No lol
 fn is_fragment(packet: &[u8]) -> bool {
+    let mask = packet[0] & lowpan_frag::FRAGN_HDR;
+    let first = (mask == lowpan_frag::FRAGN_HDR);
+    let second = (mask == lowpan_frag::FRAG1_HDR);
+    first || second
+    /*
     (packet[0] & lowpan_frag::FRAGN_HDR == lowpan_frag::FRAGN_HDR) 
         || (packet[0] & lowpan_frag::FRAG1_HDR == lowpan_frag::FRAG1_HDR)
+        */
 }
 
 pub struct Bitmap {
@@ -96,6 +102,9 @@ impl Bitmap {
 
     // Returns true if successfully set bits, returns false if the bits
     // overlapped with already set bits
+    // Note that each bit represents a multiple of 8 bytes (as everything
+    // must be in 8-byte groups), and thus we can store 8*8 = 64 "bytes" per
+    // byte in the bitmap.
     fn set_bits(&mut self, start_idx: usize, end_idx: usize) -> bool {
         if start_idx > end_idx {
             return false;
@@ -103,18 +112,17 @@ impl Bitmap {
         let start_map_idx = start_idx / 8;
         let end_map_idx = end_idx / 8;
         let first = 0xff << (start_idx % 8);
-        let second = 0xff >> (end_idx % 8);
-        // TODO: Confirm this is correct
+        let second = 0xff >> (8 - (end_idx % 8));
         if start_map_idx == end_map_idx {
             let result = (self.map[start_map_idx] & (first & second)) == 0;
-            self.map[start_map_idx] |= first & second;
+            self.map[start_map_idx] |= (first & second);
             result
         } else {
             let mut result = (self.map[start_map_idx] & first) == 0;
             result = result && ((self.map[end_map_idx] & second) == 0);
             self.map[start_map_idx] |= first;
             self.map[end_map_idx] |= second;
-            for i in 1..end_map_idx - start_map_idx - 1 {
+            for i in 1..end_map_idx {
                 result = result && (self.map[i] == 0);
                 self.map[i] = 0xff;
             }
@@ -127,9 +135,8 @@ impl Bitmap {
         for i in 0..total_length / 8 {
             result = result && (self.map[i] == 0xff);
         }
-        // TODO: Confirm this
-        result = result && (self.map[total_length / 8] == 
-                            (0xff << (8 - total_length % 8)));
+        let mask = 0xff >> (8 - (total_length % 8));
+        result = result && (self.map[total_length / 8] == mask);
         result
     }
 }
@@ -264,7 +271,7 @@ impl<'a> TxState<'a> {
     fn prepare_transmit_next_fragment(&self,
                                       mut frag_buf: &'static mut [u8],
                                       radio: &Radio) -> Result<ReturnCode, ReturnCode> {
-        let (radio_header_len, max_payload_len) = /*radio.construct_header(..)*/ 
+        let (radio_header_len, max_payload_len) = /*TODO: radio.construct_header(..)*/ 
             (radio.payload_offset(true, true) as usize, 40);
         // This gives the offset to the start of the payload
         let header_len = lowpan_frag::FRAGN_HDR_SIZE + radio_header_len;
@@ -330,7 +337,7 @@ impl<'a> ListNode<'a, RxState<'a>> for RxState<'a> {
 }
 
 impl<'a> RxState<'a> {
-    fn new(packet: &'static mut [u8]) -> RxState<'a> {
+    pub fn new(packet: &'static mut [u8]) -> RxState<'a> {
         RxState {
             packet: TakeCell::new(packet),
             bitmap: MapCell::new(Bitmap::new()),
@@ -346,10 +353,11 @@ impl<'a> RxState<'a> {
 
     fn is_my_fragment(&self, src_mac_addr: MacAddr, dst_mac_addr: MacAddr,
                       dgram_size: u16, dgram_tag: u16) -> bool {
-        self.busy.get() && self.dgram_tag.get() == dgram_tag
-            && self.dgram_size.get() == dgram_size
-            && self.src_mac_addr.get() == src_mac_addr
-            && self.dst_mac_addr.get() == dst_mac_addr
+        return true;
+        self.busy.get() && (self.dgram_tag.get() == dgram_tag)
+            && (self.dgram_size.get() == dgram_size)
+            && (self.src_mac_addr.get() == src_mac_addr)
+            && (self.dst_mac_addr.get() == dst_mac_addr)
     }
 
     fn start_receive(&self, src_mac_addr: MacAddr, dst_mac_addr: MacAddr,
@@ -385,13 +393,13 @@ impl<'a> RxState<'a> {
         };
         self.packet.replace(packet);
         if !self.bitmap
-            .map(|bitmap| bitmap.set_bits(dgram_offset, dgram_offset+uncompressed_len))
+            .map(|bitmap| bitmap.set_bits(dgram_offset / 8, (dgram_offset+uncompressed_len) / 8))
             .ok_or(ReturnCode::FAIL)? {
             // If this fails, we found an overlapping fragment; reset
             // everything minus this fragment
             // TODO
         }
-        self.bitmap.map(|bitmap| bitmap.is_complete(dgram_size as usize))
+        self.bitmap.map(|bitmap| bitmap.is_complete((dgram_size as usize) / 8))
                                        .ok_or(ReturnCode::FAIL)
     }
 
@@ -448,7 +456,7 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm>
 RxClient for FragState<'a, R, C, A> {
     fn receive(&self, buf: &'static mut [u8], len: u8, result: ReturnCode) {
         // TODO: Generalize this
-        let offset = self.radio.payload_offset(false, false);
+        let offset = self.radio.payload_offset(true, true);
         let (src_mac_addr, dst_mac_addr) = (MacAddr::ShortAddr(0), MacAddr::ShortAddr(0)); 
         // TODO: self.radio.get_mac_addrs();
         let (rx_state, returncode) = self.receive_frame(&buf[offset as usize..],
@@ -457,13 +465,23 @@ RxClient for FragState<'a, R, C, A> {
         // Reception completed
         rx_state.map(|state| {
             let mut buffer = state.end_receive().unwrap();
+            let rx_client = self.rx_client.get();
+            if rx_client.is_some() {
+                state.packet.replace(rx_client.unwrap().receive(buffer,
+                                                             state.dgram_size.get() as u8,
+                                                             returncode));
+            } else {
+                state.packet.replace(buffer);
+            }
+            /*
             self.rx_client.get().map(move |client| 
                 // Here we force the client to return the buffer immediately,
                 // so that we can receive the next packet(s)
-                state.packet.replace(client.receive(Some(buffer),
+                state.packet.replace(client.receive(buffer,
                                                     state.dgram_size.get() as u8,
                                                     returncode))
             );
+            */
         });
 
         // Give the buffer back
@@ -508,6 +526,10 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
             rx_states: List::new(),
             rx_client: Cell::new(None),
         }
+    }
+
+    pub fn add_rx_state(&self, rx_state: &'a RxState<'a>) {
+        self.rx_states.push_head(rx_state);
     }
 
     pub fn set_receive_client(&self, client: &'static ReceiveClient) {

@@ -3,7 +3,7 @@
 use capsules::net::ip::{IP6Header, MacAddr, IPAddr, ip6_nh};
 use capsules::net::lowpan;
 use capsules::net::lowpan::{ContextStore, Context, LoWPAN};
-use capsules::net::lowpan_fragment::{FragState, TxState, TransmitClient};
+use capsules::net::lowpan_fragment::{FragState, TxState, TransmitClient, ReceiveClient};
 use capsules::net::util;
 // use capsules::radio_debug;
 
@@ -208,6 +208,14 @@ impl<'a, R: Radio + 'a, A: time::Alarm + 'a>
 TransmitClient for LowpanTest<'a, R, A> {
     fn send_done(&self, buf: &'static mut [u8], state: &TxState, acked: bool, result: ReturnCode) {
         debug!("Send completed!");
+    }
+}
+
+impl<'a, R: Radio + 'a, A: time::Alarm + 'a>
+ReceiveClient for LowpanTest<'a, R, A> {
+    fn receive(&self, buf: &'static mut [u8], len: u8, result: ReturnCode) -> &'static mut [u8] {
+        debug!("Receive completed!");
+        buf
     }
 }
 

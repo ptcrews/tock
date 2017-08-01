@@ -79,6 +79,7 @@ static mut RF233_REG_READ: [u8; 2] = [0x00; 2];
 // copies application transmissions into or copies out to application buffers
 // for reception.
 static mut RADIO_BUF: [u8; radio::MAX_BUF_SIZE] = [0x00; radio::MAX_BUF_SIZE];
+static mut RXSTATE_BUF: [u8; 1280] = [0x00; 1280];
 
 static DEFAULT_CTX_PREFIX: [u8; 2] = [0; 2];
 
@@ -420,7 +421,7 @@ pub unsafe fn reset_handler() {
         lowpan::LoWPAN<'static, sixlowpan_dummy::DummyStore<'static>>,
         lowpan::LoWPAN::new(dummy_store));
 
-    let radio_capsule = static_init!(
+    let frag_state = static_init!(
         capsules::net::lowpan_fragment::FragState<'static,
             RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
             //capsules::net::lowpan::ContextStore<'static>,
@@ -428,7 +429,7 @@ pub unsafe fn reset_handler() {
             VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
         capsules::net::lowpan_fragment::FragState::new(rf233, lowpan, &mut RADIO_BUF, dummy_alarm),
         438/8);
-    dummy_alarm.set_client(radio_capsule);
+    dummy_alarm.set_client(frag_state);
 
     let lowpan_dummy = static_init!(
         lowpan_frag_dummy::LowpanTest<'static,
@@ -440,8 +441,14 @@ pub unsafe fn reset_handler() {
     let tx_state = static_init!(
         capsules::net::lowpan_fragment::TxState<'static>,
         capsules::net::lowpan_fragment::TxState::new(lowpan_dummy));
+
+    let rx_state = static_init!(
+        capsules::net::lowpan_fragment::RxState<'static>,
+        capsules::net::lowpan_fragment::RxState::new(&mut RXSTATE_BUF));
+
+    frag_state.add_rx_state(rx_state);
+    frag_state.set_receive_client(lowpan_dummy);
             
-    //execute radio test
     /*
     let radio_capsule = static_init!(
         capsules::radio::RadioDriver<'static,
@@ -451,8 +458,10 @@ pub unsafe fn reset_handler() {
         832/8);
         */
     //radio_capsule.config_buffer(&mut RADIO_BUF);
-    rf233.set_transmit_client(radio_capsule);
-    rf233.set_receive_client(radio_capsule, &mut RF233_RX_BUF);
+    //rf233.set_transmit_client(radio_capsule);
+    rf233.set_transmit_client(frag_state);
+    //rf233.set_receive_client(radio_capsule, &mut RF233_RX_BUF);
+    rf233.set_receive_client(frag_state, &mut RF233_RX_BUF);
     //rf233.set_config_client(radio_capsule);
 
     let imixv1 = Imixv1 {
@@ -468,7 +477,8 @@ pub unsafe fn reset_handler() {
         spi: spi_syscalls,
         ipc: kernel::ipc::IPC::new(),
         ninedof: ninedof,
-        radio: radio_capsule,
+        //radio: radio_capsule,
+        radio: frag_state,
     };
 
     let mut chip = sam4l::chip::Sam4l::new();
@@ -483,10 +493,12 @@ pub unsafe fn reset_handler() {
     rf233.start();
 
     debug!("Initialization complete. Entering main loop");
+    /*
     for i in 0..1000 {
         kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
     }
-    lowpan_frag_dummy::simple_frag_test(radio_capsule, tx_state);
+    lowpan_frag_dummy::simple_frag_test(frag_state, tx_state);
+    */
     loop {
         kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
     }
