@@ -86,8 +86,7 @@ static mut RADIO_BUF: [u8; radio::MAX_BUF_SIZE] = [0; radio::MAX_BUF_SIZE];
 
 // The MAC layer atop the RF233 requires 2 buffers, one for encryption and the
 // other for the initialization vector / counter.
-static mut MAC_CRYPT_BUF: [u8; capsules::mac::CRYPT_BUF_SIZE] =
-    [0; capsules::mac::CRYPT_BUF_SIZE];
+static mut MAC_CRYPT_BUF: [u8; capsules::mac::CRYPT_BUF_SIZE] = [0; capsules::mac::CRYPT_BUF_SIZE];
 static mut MAC_CRYPT_IV: [u8; 16] = [0; 16];
 
 impl kernel::Platform for Imixv1 {

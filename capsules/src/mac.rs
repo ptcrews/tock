@@ -16,20 +16,30 @@ use kernel::ReturnCode;
 use kernel::common::take_cell::TakeCell;
 use kernel::hil::radio;
 use net::ieee802154::*;
-use net::stream::{encode_u8, encode_u16, encode_u32, encode_u64, encode_bytes_be};
+use net::stream::{encode_u8, encode_u16, encode_u32, encode_bytes_be};
 use net::stream::SResult;
 
+/// This is auxiliary data to keep track of the state of a radio buffer (the
+/// buffer that will eventually be sent to the radio). It contains exactly the
+/// information that is needed in the security procedures, both incoming and
+/// outgoing. It also exposes a limited interface for appending the payload in
+/// the right place.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct FrameInfo {
-    // These offsets are relative to buf[radio::PSDU_OFFSET..] so that
-    // the unsecured mac frame length is data_offset + data_len
     frame_type: FrameType,
+
+    // Offsets are relative to buf[radio::PSDU_OFFSET..].
+    // The MAC payload, including Payload IEs
     mac_payload_offset: usize,
+    // The data payload, not including Payload IEs
     data_offset: usize,
+    // The length of the data payload, not including MIC and FCS
     data_len: usize,
+    // The length of the MIC
     mic_len: usize,
-    // Security header, key, nonce
-    security_params: Option<(Security, [u8; 16], [u8; 13])>,
+
+    // Security header, key, and nonce
+    security_params: Option<(SecurityLevel, [u8; 16], [u8; 13])>,
 }
 
 impl FrameInfo {
@@ -56,11 +66,13 @@ impl FrameInfo {
         ReturnCode::SUCCESS
     }
 
-    // Compute the offsets in the buffer for the a data and m data fields
-    // in the CCM* authentication and encryption transformation,
-    // which depends on the frame type and security levels. Returns
-    // (a_offset, m_offset, m_len) relative to the buffer.
-    fn get_ccm_encrypt_ranges(&self, encrypt: bool) -> (usize, usize, usize) {
+    // Compute the offsets in the buffer for the a data and m/c data fields in
+    // the CCM* authentication and encryption procedures which depends on the
+    // frame type and security levels. Returns the (offset, len) of the m/c data
+    // fields, not including the MIC, The a data is always the remaining prefix
+    // of the header, so it can be determined implicitly.
+    fn get_ccm_encrypt_ranges(&self, encrypt: bool) -> (usize, usize) {
+        // IEEE 802.15.4-2015: Table 9-1. Exceptions to Private Payload field
         // The boundary between open and private payload fields depends
         // on the type of frame.
         let private_payload_offset = match self.frame_type {
@@ -78,22 +90,24 @@ impl FrameInfo {
             }
         };
 
+        // IEEE 802.15.4-2015: Table 9-3. a data and m data
         if !encrypt {
             // If only integrity is need, a data is the whole frame
-            (radio::PSDU_OFFSET,
-             radio::PSDU_OFFSET + self.unsecured_frame_length(),
-             0)
+            (radio::PSDU_OFFSET + self.unsecured_frame_length(), 0)
         } else {
             // Otherwise, a data is the header and the open payload, and
             // m data is the private payload field
-            (radio::PSDU_OFFSET,
-             radio::PSDU_OFFSET + private_payload_offset,
+            (radio::PSDU_OFFSET + private_payload_offset,
              self.unsecured_frame_length() - private_payload_offset)
         }
     }
 }
 
-// Buffer size might be bigger than an MTU due to padding
+// The needed buffer size might be bigger than an MTU, because
+// the CCM* authentication procedure
+// - adds an extra 16-byte block in front of the a and m data
+// - prefixes the a data with a length encoding and pads the result
+// - pads the m data to 16-byte blocks
 pub const CRYPT_BUF_SIZE: usize = radio::MAX_MTU + 3 * 16;
 
 pub trait Mac {
@@ -149,6 +163,16 @@ enum TxState {
     ReadyToTransmit,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum RxState {
+    Idle,
+    ReadyToUnsecure,
+    EncMic,
+    Mic1,
+    Mic2,
+    ReadyToReturn,
+}
+
 pub struct MacDevice<'a, R: radio::Radio + 'a> {
     radio: &'a R,
     data_sequence: Cell<u8>,
@@ -157,19 +181,24 @@ pub struct MacDevice<'a, R: radio::Radio + 'a> {
     // State for the transmit pathway
     tx_buf: TakeCell<'static, [u8]>,
     tx_info: Cell<Option<FrameInfo>>,
+    tx_m_off: Cell<usize>,
+    tx_m_len: Cell<usize>,
     tx_state: Cell<TxState>,
     tx_client: Cell<Option<&'static TxClient>>,
 
     // State for the receive pathway
+    rx_buf: TakeCell<'static, [u8]>,
+    rx_info: Cell<Option<FrameInfo>>,
+    rx_c_off: Cell<usize>,
+    rx_c_len: Cell<usize>,
+    rx_state: Cell<RxState>,
     rx_client: Cell<Option<&'static RxClient>>,
 
     // State for CCM* authentication/encryption
     crypt_buf: TakeCell<'static, [u8]>,
     crypt_buf_len: Cell<usize>,
     crypt_iv: TakeCell<'static, [u8]>,
-    tx_a_off: Cell<usize>,
-    tx_m_off: Cell<usize>,
-    tx_m_len: Cell<usize>,
+    crypt_busy: Cell<bool>,
 }
 
 impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
@@ -180,17 +209,25 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
             radio: radio,
             data_sequence: Cell::new(0),
             config_in_progress: Cell::new(false),
+
             tx_buf: TakeCell::empty(),
             tx_info: Cell::new(None),
+            tx_m_off: Cell::new(0),
+            tx_m_len: Cell::new(0),
             tx_state: Cell::new(TxState::Idle),
             tx_client: Cell::new(None),
+
+            rx_buf: TakeCell::empty(),
+            rx_info: Cell::new(None),
+            rx_c_off: Cell::new(0),
+            rx_c_len: Cell::new(0),
+            rx_state: Cell::new(RxState::Idle),
             rx_client: Cell::new(None),
+
             crypt_buf: TakeCell::new(crypt_buf),
             crypt_buf_len: Cell::new(0),
             crypt_iv: TakeCell::new(crypt_iv),
-            tx_a_off: Cell::new(0),
-            tx_m_off: Cell::new(0),
-            tx_m_len: Cell::new(0),
+            crypt_busy: Cell::new(false),
         }
     }
 
@@ -202,31 +239,36 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
         self.rx_client.set(Some(client));
     }
 
+    // TODO: Look up the key in the list of thread neighbors
     fn lookup_key(&self, level: SecurityLevel, key_id: KeyId)
-        -> Option<(Security, [u8; 16])> {
-        let security = Security {
-            level: level,
-            asn_in_nonce: false,
-            frame_counter: None,
-            key_id: key_id,
-        };
-        Some((security, [0; 16]))
+        -> Option<([u8; 16])> {
+        if level == SecurityLevel::None {
+            None
+        } else {
+            Some([0; 16])
+        }
     }
 
-    // Compute the CCM* nonce.
-    fn get_ccm_nonce(&self, security: &Security) -> [u8; 13] {
-        let mut nonce = [0; 13];
-        self.encode_ccm_nonce(&mut nonce, security).done().unwrap();
-        nonce
+    // TODO: Look up the extended device address from a short address
+    // Not sure if more information is needed
+    fn lookup_addr_long(&self, src_addr: Option<MacAddress>) -> Option<([u8; 8])> {
+        src_addr.map_or(None, |addr| {
+            match addr {
+                MacAddress::Short(_) => Some([0; 8]),
+                MacAddress::Long(long_addr) => Some(long_addr),
+            }
+        })
     }
 
-    fn encode_ccm_nonce(&self, buf: &mut [u8], security: &Security) -> SResult {
-        let off = enc_consume!(buf; encode_bytes_be, &self.get_address_long());
-        // TSCH mode, where ASN is used for the nonce, is unsupported
-        stream_cond!(security.frame_counter.is_some());
-        let off = enc_consume!(buf, off; encode_u32,
-                           security.frame_counter.unwrap().to_be());
-        let off = enc_consume!(buf, off; encode_u8, security.level as u8);
+    fn encode_ccm_nonce(&self,
+                        buf: &mut [u8],
+                        addr_long: &[u8; 8],
+                        frame_counter: u32,
+                        level: SecurityLevel) -> SResult {
+        // IEEE 802.15.4-2015: 9.3.4, CCM* nonce
+        let off = enc_consume!(buf; encode_bytes_be, addr_long);
+        let off = enc_consume!(buf, off; encode_u32, frame_counter);
+        let off = enc_consume!(buf, off; encode_u8, level as u8);
         stream_done!(off);
     }
 
@@ -237,7 +279,7 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
             panic!("CCM* nonce must be 13 bytes long");
         }
 
-        // IEEE 802.15.4-2015, Appendix B.4.1.2: CCM* authentication
+        // IEEE 802.15.4-2015: Appendix B.4.1.2, CCM* authentication
         // The authentication tag T is computed with AES128-CBC-MAC on
         // B_0 | AuthData, where
         //   B_0 = Flags (1 byte) | nonce (13 bytes) | m length (2 bytes)
@@ -284,19 +326,27 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                     .done().unwrap();
                 off += 2;
             } else if a_len <= 0xffffffff as usize {
+                // This length encoding branch is defined in the specification
+                // but should never be reached because our MTU is 127.
+                panic!("CCM* authentication data is larger than MTU");
+
                 // L(a) is 0xfffe | l(a) in 4 bytes of little-endian
-                cbuf[off] = 0xff;
-                cbuf[off + 1] = 0xfe;
-                encode_u32(&mut cbuf[off + 2..], (a_len as u32).to_le())
-                    .done().unwrap();
-                off += 6;
+                // cbuf[off] = 0xff;
+                // cbuf[off + 1] = 0xfe;
+                // encode_u32(&mut cbuf[off + 2..], (a_len as u32).to_le())
+                //     .done().unwrap();
+                // off += 6;
             } else {
-                // L(a) is 0xffff | l(a) in 4 bytes of little-endian
-                cbuf[off] = 0xff;
-                cbuf[off + 1] = 0xff;
-                encode_u64(&mut cbuf[off + 2..], (a_len as u64).to_le())
-                    .done().unwrap();
-                off += 10;
+                // This length encoding branch is defined in the specification
+                // but should never be reached because our MTU is 127.
+                panic!("CCM* authentication data is larger than MTU");
+
+                // L(a) is 0xffff | l(a) in 8 bytes of little-endian
+                // cbuf[off] = 0xff;
+                // cbuf[off + 1] = 0xff;
+                // encode_u64(&mut cbuf[off + 2..], (a_len as u64).to_le())
+                //     .done().unwrap();
+                // off += 10;
             }
 
             // Append the auth data and 0-pad to a multiple of 16 bytes
@@ -323,14 +373,15 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
         // TODO: call aes.crypt_cbc
     }
 
-    // Prepares crypt_buf with the input for the CCM* encryption
-    // transformation. Assumes that self.crypt_buf, self.crypt_iv are present.
+    // Prepares crypt_buf with the input for the CCM* encryption transformation.
+    // Assumes that self.crypt_buf, self.crypt_iv are present.  Note that since
+    // the confidentiality mode is CTR, encryption is the same as decryption.
     fn prepare_ccm_encrypt(&self, nonce: &[u8], m_data: &[u8]) {
         if nonce.len() != 13 {
             panic!("CCM* nonce must be 13 bytes long");
         }
 
-        // IEEE 802.15.4-2015, Appendix B.4.1.3, CCM* encryption
+        // IEEE 802.15.4-2015: Appendix B.4.1.3, CCM* encryption
         // Let A_i = flags | nonce | i (2 bytes)
         //     M_1, M_2, ... = m_data 0-padded to 16-byte blocks
         // The CCM* ciphertext is computed with AES128-CTR on the 0-padded
@@ -373,36 +424,49 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
         // TODO: call aes.crypt_ctr
     }
 
-    fn step_transmit_state(&self) -> (ReturnCode, Option<&'static mut [u8]>) {
-        match self.tx_state.get() {
+    // The first step in the procedure to transmit a frame is to perform the
+    // outgoing frame security procedure. Returns the next state to enter.
+    fn outgoing_frame_security(&self,
+                               buf: &'static mut [u8],
+                               frame_info: FrameInfo) -> TxState {
+        self.tx_buf.replace(buf);
+        self.tx_info.set(Some(frame_info));
+
+        // IEEE 802.15.4-2015: 9.2.1, outgoing frame security
+        // Steps a-e have already been performed in the frame preparation step,
+        // so we only need to dispatch on the security parameters in the frame info
+        match frame_info.security_params {
+            Some((level, _, _)) => {
+                if level == SecurityLevel::None {
+                    // This case should never occur if the FrameInfo was
+                    // prepared by prepare_data_frame
+                    TxState::ReadyToTransmit
+                } else {
+                    TxState::ReadyToSecure
+                }
+            }
+            None => TxState::ReadyToTransmit,
+        }
+    }
+
+    fn step_transmit_state(&self, next_state: TxState) -> (ReturnCode, Option<&'static mut [u8]>) {
+        self.tx_state.set(next_state);
+        match next_state {
             TxState::Idle => (ReturnCode::SUCCESS, None),
             TxState::ReadyToSecure => {
                 // If hardware encryption is busy, the callback will continue
                 // this operation when it is done.
-                if self.crypt_buf.is_none() {
+                if self.crypt_busy.get() {
                     return (ReturnCode::SUCCESS, None);
                 }
 
                 let frame_info = self.tx_info.get().unwrap();
-                let (ref security, ref key, ref nonce) =
+                let (ref level, ref key, ref nonce) =
                     frame_info.security_params.unwrap();
-                let encrypt = match security.level {
-                    SecurityLevel::None => {
-                        self.tx_state.set(TxState::ReadyToTransmit);
-                        return self.step_transmit_state();
-                    }
-                    SecurityLevel::Mic32
-                    | SecurityLevel::Mic64
-                    | SecurityLevel::Mic128 => false,
-                    SecurityLevel::EncMic32
-                    | SecurityLevel::EncMic64
-                    | SecurityLevel::EncMic128 => true,
-                };
+                let encrypt = level.encryption_needed();
 
                 // Get positions of a and m data
-                let (a_off, m_off, m_len) =
-                    frame_info.get_ccm_encrypt_ranges(encrypt);
-                self.tx_a_off.set(a_off);
+                let (m_off, m_len) = frame_info.get_ccm_encrypt_ranges(encrypt);
                 self.tx_m_off.set(m_off);
                 self.tx_m_len.set(m_len);
 
@@ -410,7 +474,7 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                 self.tx_buf.map(|buf| {
                     self.prepare_ccm_auth(nonce,
                                           frame_info.mic_len,
-                                          &buf[a_off..m_off],
+                                          &buf[radio::PSDU_OFFSET..m_off],
                                           &buf[m_off..m_off + m_len]);
                 });
 
@@ -422,6 +486,7 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                     self.tx_state.set(TxState::EncMic1);
                 }
                 // TODO: set encryption key to the security key
+                self.crypt_busy.set(true);
                 self.start_ccm_auth();
 
                 // Wait for crypt_done to trigger the next transmit state
@@ -443,8 +508,8 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                     });
                 });
 
-                self.tx_state.set(TxState::ReadyToTransmit);
-                self.step_transmit_state()
+                self.crypt_busy.set(false);
+                self.step_transmit_state(TxState::ReadyToTransmit)
             }
             TxState::EncMic1 => {
                 // The authentication tag T is now the first mic_len bytes of
@@ -499,8 +564,8 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                     });
                 });
 
-                self.tx_state.set(TxState::ReadyToTransmit);
-                self.step_transmit_state()
+                self.crypt_busy.set(false);
+                self.step_transmit_state(TxState::ReadyToTransmit)
             }
             TxState::ReadyToTransmit => {
                 if self.config_in_progress.get() {
@@ -510,10 +575,231 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                     let frame_info = self.tx_info.get().unwrap();
                     let buf = self.tx_buf.take().unwrap();
                     self.tx_state.set(TxState::Idle);
+                    self.tx_info.set(None);
                     self.radio.transmit(buf, frame_info.secured_frame_length())
                 }
             }
         }
+    }
+
+    // The procedure to verify and unsecure incoming frames
+    fn incoming_frame_security(&self, buf: &[u8], frame_len: usize) -> RxState {
+        if let Some((data_offset, (header, mac_payload_offset))) =
+            Header::decode(&buf[radio::PSDU_OFFSET..]).done() {
+            let mic_len = header.security.map_or(0, |sec| sec.level.mic_len());
+            let data_len = frame_len - data_offset - mic_len;
+            if let Some(security) = header.security {
+                // IEEE 802.15.4-2015: 9.2.3, incoming frame security procedure
+                // for security-enabled headers
+                if header.version == FrameVersion::V2003 {
+                    // Legacy frames are not supported
+                    RxState::ReadyToReturn
+                } else {
+                    // Step e: Lookup the key.
+                    let key = match self.lookup_key(security.level, security.key_id) {
+                        Some(key) => key,
+                        None => { return RxState::ReadyToReturn; }
+                    };
+
+                    // Step f: Obtain the extended source address
+                    let device_addr = match self.lookup_addr_long(header.src_addr) {
+                        Some(addr) => addr,
+                        None => { return RxState::ReadyToReturn; }
+                    };
+
+                    // Step g, h: Check frame counter
+                    let frame_counter = match security.frame_counter {
+                        Some(frame_counter) => {
+                            if frame_counter == 0xffffffff {
+                                // Counter error
+                                return RxState::ReadyToReturn;
+                            }
+                            // TODO: Check frame counter against source device
+                            frame_counter
+                        }
+                        // TSCH mode, where ASN is used instead, not supported
+                        None => { return RxState::ReadyToReturn; }
+                    };
+
+                    let mut nonce = [0; 13];
+                    self.encode_ccm_nonce(&mut nonce,
+                                          &device_addr,
+                                          frame_counter,
+                                          security.level).done().unwrap();
+
+                    let mic_len = security.level.mic_len();
+                    self.rx_info.set(Some(FrameInfo {
+                        frame_type: header.frame_type,
+                        mac_payload_offset: mac_payload_offset,
+                        data_offset: data_offset,
+                        data_len: data_len,
+                        mic_len: mic_len,
+                        security_params: Some((security.level, key, nonce)),
+                    }));
+                    RxState::ReadyToUnsecure
+                }
+            } else {
+                // No security needed, can yield the frame immediately
+                self.rx_client.get().map(|client| {
+                    client.receive(&buf,
+                                   header,
+                                   radio::PSDU_OFFSET + data_offset,
+                                   data_len,
+                                   ReturnCode::SUCCESS);
+                });
+                RxState::ReadyToReturn
+            }
+        } else {
+            // Drop frames with invalid headers
+            RxState::ReadyToReturn
+        }
+    }
+
+    fn step_receive_state(&self, next_state: RxState) {
+        self.rx_state.set(next_state);
+        match next_state {
+            RxState::Idle => {}
+            RxState::ReadyToUnsecure => {
+                // If hardware encryption is busy, the callback will continue
+                // this operation when it is done.
+                if self.crypt_busy.get() { return; }
+
+                let frame_info = self.rx_info.get().unwrap();
+                let (ref level, ref key, ref nonce) =
+                    frame_info.security_params.unwrap();
+                let encrypted = level.encryption_needed();
+
+                // Get positions of a and c data
+                let (c_off, c_len) = frame_info.get_ccm_encrypt_ranges(encrypted);
+                self.rx_c_off.set(c_off);
+                self.rx_c_len.set(c_len);
+
+                // Set state before starting CCM*
+                // TODO: set encryption key to the security key
+                self.crypt_busy.set(true);
+                if !encrypted {
+                    self.step_receive_state(RxState::Mic1);
+                } else {
+                    // CCM* decryption (which is the same as encryption)
+                    self.rx_state.set(RxState::EncMic);
+                    self.rx_buf.map(|buf| {
+                        self.prepare_ccm_encrypt(nonce,
+                                                 &buf[c_off..c_off + c_len]);
+                    });
+                    self.start_ccm_encrypt();
+                }
+            }
+            RxState::Mic1 => {
+                // At this point, rx_buf contains the plaintext authentication
+                // data and plaintext payload data, followed by the
+                // authentication tag at the end.
+                let frame_info = self.rx_info.get().unwrap();
+                let (_, _, ref nonce) = frame_info.security_params.unwrap();
+                let c_off = self.rx_c_off.get();
+                let c_len = self.rx_c_len.get();
+                self.rx_buf.map(|buf| {
+                    self.prepare_ccm_auth(nonce,
+                                          frame_info.mic_len,
+                                          &buf[radio::PSDU_OFFSET..c_off],
+                                          &buf[c_off..c_off + c_len]);
+                });
+
+                self.rx_state.set(RxState::Mic2);
+                self.start_ccm_auth();
+            }
+            RxState::Mic2 => {
+                // The recomputed MAC tag T' is the first mic_len bytes of the
+                // last 16-byte block of crypt_buf. Compare that with the
+                // transmitted MAC tag T to verify the integrity of the frame.
+
+                let mut verified = false;
+                let frame_info = self.rx_info.get().unwrap();
+                let mic_len = frame_info.mic_len;
+                let crypt_t_off = self.crypt_buf_len.get() - 16;
+                let t_off = self.rx_c_off.get() + self.rx_c_len.get();
+                self.crypt_buf.map(|cbuf| {
+                    self.rx_buf.map(|buf| {
+                        verified = cbuf[crypt_t_off..crypt_t_off + mic_len]
+                            .iter().eq(buf[t_off..t_off + mic_len].iter());
+                    });
+                });
+
+                // If authentication failed, we drop the frame and return it to
+                // the radio without passing it to the client.
+                if !verified {
+                    self.step_receive_state(RxState::ReadyToReturn);
+                }
+
+                // Otherwise, we continue the incoming frame security procedure
+                // TODO: Steps j-o: In particular, we need to update the frame
+                // counter for the source device
+
+                // Re-parse the now-unsecured frame and expose it to the client.
+                self.rx_buf.map(|buf| {
+                    if let Some((data_offset, (header, _))) =
+                        Header::decode(&buf[radio::PSDU_OFFSET..]).done() {
+                        // Show rx_client the unsecured frame without the MIC
+                        self.rx_client.get().map(|client| {
+                            client.receive(&buf,
+                                           header,
+                                           radio::PSDU_OFFSET
+                                           + frame_info.data_offset,
+                                           frame_info.data_len,
+                                           ReturnCode::SUCCESS);
+                        });
+                    }
+                });
+
+                // Return the buffer to the radio
+                self.step_receive_state(RxState::ReadyToReturn);
+            }
+            RxState::EncMic => {
+                // The first block of crypt_buf is now E(Key, A_0), and U is
+                // already at the end of the frame in rx_buf, so we should xor
+                // the first mic_len bytes of crypt_buf with that to produce the
+                // unencrypted MIC, T = U xor E(key, A_0). Then, we should copy the
+                // decrypted private data payload from the first m_len bytes
+                // of the remaining blocks in crypt_buf over to the frame
+                // payload in rx_buf.
+                let frame_info = self.rx_info.get().unwrap();
+                let mic_len = frame_info.mic_len;
+                let c_off = self.rx_c_off.get();
+                let c_len = self.rx_c_len.get();
+                self.crypt_buf.map(|cbuf| {
+                    self.rx_buf.map(|buf| {
+                        let t_off = c_off + c_len;
+                        for (b, c) in buf[t_off..].iter_mut()
+                            .zip(cbuf.iter()).take(mic_len) {
+                            *b ^= *c;
+                        }
+
+                        buf[c_off..c_off + c_len]
+                            .copy_from_slice(&cbuf[16..16 + c_len]);
+                    });
+                });
+
+                // Now, rx_buf contains the unsecured frame with the unencrypted
+                // MIC at the end. Hence, the procedure for verifying the tag is
+                // exactly the same as if starting from an unencrypted but
+                // integrity-protected frame.
+                self.step_receive_state(RxState::Mic1);
+            }
+            RxState::ReadyToReturn => {
+                self.rx_state.set(RxState::Idle);
+                self.rx_info.set(None);
+                let buf = self.rx_buf.take().unwrap();
+                self.radio.set_receive_buffer(buf);
+            }
+        }
+    }
+
+    fn trigger_states(&self) {
+        let (rval, buf) = self.step_transmit_state(self.tx_state.get());
+        if let Some(buf) = buf {
+            // Return the buffer to the transmit client
+            self.tx_client.get().map(move |client| { client.send_done(buf, false, rval); });
+        }
+        self.step_receive_state(self.rx_state.get());
     }
 }
 
@@ -582,30 +868,36 @@ impl<'a, R: radio::Radio + 'a> Mac for MacDevice<'a, R> {
                           src_addr: MacAddress,
                           security_needed: Option<(SecurityLevel, KeyId)>)
                           -> Result<FrameInfo, ()> {
-        let security_params = security_needed
-            .and_then(|(level, key_id)| self.lookup_key(level, key_id))
-            .map(|(sec, key)| (sec, key, self.get_ccm_nonce(&sec)));
-        if security_needed.is_some() && security_params.is_none() {
+        // IEEE 802.15.4-2015: 9.2.1 outgoing frame security
+        // Steps a-e of the security procedure are implemented here.
+        let src_addr_long = self.get_address_long();
+        let security_desc = security_needed.and_then(|(level, key_id)| {
+            self.lookup_key(level, key_id).map(|key| {
+                // TODO: lookup frame counter for device
+                let frame_counter = 0;
+                let mut nonce = [0; 13];
+                self.encode_ccm_nonce(&mut nonce,
+                                      &src_addr_long,
+                                      frame_counter,
+                                      level).done().unwrap();
+                (Security {
+                    level: level,
+                    asn_in_nonce: false,
+                    frame_counter: Some(frame_counter),
+                    key_id: key_id,
+                 },
+                 key,
+                 nonce)
+            })
+        });
+        if security_needed.is_some() && security_desc.is_none() {
             // If security was requested, fail when desired key was not found.
             return Err(());
         }
 
-        let mic_len = match security_params {
-            Some((security, _, _)) => {
-                match security.level {
-                    SecurityLevel::Mic32
-                    | SecurityLevel::EncMic32 => 4,
-                    SecurityLevel::Mic64
-                    | SecurityLevel::EncMic64 => 8,
-                    SecurityLevel::Mic128
-                    | SecurityLevel::EncMic128 => 16,
-                    _ => 0,
-                }
-            }
-            None => 0,
-        };
-
         // Construct MAC header
+        let security = security_desc.map(|(sec, _, _)| sec);
+        let mic_len = security.map_or(0, |sec| sec.level.mic_len());
         let header = Header {
             frame_type: FrameType::Data,
             /* TODO: determine this by looking at queue */
@@ -618,7 +910,7 @@ impl<'a, R: radio::Radio + 'a> Mac for MacDevice<'a, R> {
             dst_addr: Some(dst_addr),
             src_pan: Some(src_pan),
             src_addr: Some(src_addr),
-            security: security_params.map(|(sec, _, _)| sec),
+            security: security,
             header_ies: Default::default(),
             header_ies_len: 0,
             payload_ies: Default::default(),
@@ -634,7 +926,8 @@ impl<'a, R: radio::Radio + 'a> Mac for MacDevice<'a, R> {
                     data_offset: data_offset,
                     data_len: 0,
                     mic_len: mic_len,
-                    security_params: security_params,
+                    security_params: security_desc
+                        .map(|(sec, key, nonce)| (sec.level, key, nonce)),
                 }
             })
             .ok_or(())
@@ -648,13 +941,8 @@ impl<'a, R: radio::Radio + 'a> Mac for MacDevice<'a, R> {
             return (ReturnCode::EBUSY, Some(buf));
         }
 
-        self.tx_buf.replace(buf);
-        self.tx_info.set(Some(frame_info));
-        match frame_info.security_params {
-            Some(_) => self.tx_state.set(TxState::ReadyToSecure),
-            None => self.tx_state.set(TxState::ReadyToTransmit),
-        }
-        self.step_transmit_state()
+        let next_state = self.outgoing_frame_security(buf, frame_info);
+        self.step_transmit_state(next_state)
     }
 }
 
@@ -674,52 +962,15 @@ impl<'a, R: radio::Radio + 'a> radio::RxClient for MacDevice<'a, R> {
             return;
         }
 
-        // Try to read the MAC headers of the frame to determine if decryption is
-        // needed. Otherwise, dispatch the parsed headers directly to the client
-        let decrypt = if let Some((data_offset, (header, mac_payload_offset))) =
-            Header::decode(&buf[radio::PSDU_OFFSET..]).done() {
-            // 802.15.4 Incoming frame security procedure
-            let buf_data_offset = radio::PSDU_OFFSET + data_offset;
-            let data_len = frame_len - data_offset;
-            if let Some(security) = header.security {
-                if header.version == FrameVersion::V2003 || security.level == SecurityLevel::None {
-                    // Version must not be 2003 (legacy) and the security level must
-                    // not be none, otherwise incoming security is undefined.
-                    // Hence, we drop the frame
-                    false
-                } else {
-                    // TODO: Implement decryption
-                    self.rx_client.get().map(|client| {
-                        client.receive(&buf,
-                                       header,
-                                       buf_data_offset,
-                                       data_len,
-                                       ReturnCode::ENOSUPPORT);
-                    });
-                    false
-                }
-            } else {
-                // No security needed, can yield the frame immediately
-                self.rx_client.get().map(|client| {
-                    client.receive(&buf,
-                                   header,
-                                   buf_data_offset,
-                                   data_len,
-                                   ReturnCode::ENOSUPPORT);
-                });
-                false
-            }
-        } else {
-            false
-        };
-
-        // If decryption is needed, we begin the decryption process, otherwise,
-        // we can return the buffer immediately to the radio.
-        if decrypt {
-            // TODO: Implement decryption
+        if self.rx_state.get() != RxState::Idle {
+            // This should never occur unless something other than this MAC
+            // layer provided a receive buffer to the radio, but if
+            // this occurs then we have no choice but to drop the frame.
             self.radio.set_receive_buffer(buf);
         } else {
-            self.radio.set_receive_buffer(buf);
+            let next_state = self.incoming_frame_security(buf.as_ref(), frame_len);
+            self.rx_buf.replace(buf);
+            self.step_receive_state(next_state);
         }
     }
 }
@@ -728,11 +979,16 @@ impl<'a, R: radio::Radio + 'a> radio::ConfigClient for MacDevice<'a, R> {
     fn config_done(&self, _: ReturnCode) {
         if self.config_in_progress.get() {
             self.config_in_progress.set(false);
-            let (rval, buf) = self.step_transmit_state();
-            if let Some(buf) = buf {
-                // Return the buffer to the transmit client
-                self.tx_client.get().map(move |client| { client.send_done(buf, false, rval); });
-            }
+            self.trigger_states();
         }
     }
 }
+
+// TODO: crypt callback
+// impl<'a, R: radio::Radio + 'a> CryptoClient for MacDevice<'a, R> {
+//     fn crypt_done(&self, buf: &'static mut [u8], iv: &'static mut [u8], result: ReturnCode) {
+//         self.crypt_buf.replace(buf);
+//         self.crypt_iv.replace(buf);
+//         self.trigger_states();
+//     }
+// }
