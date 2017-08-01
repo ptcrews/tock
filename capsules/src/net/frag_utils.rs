@@ -29,6 +29,10 @@ impl Bitmap {
         self.map[map_idx] |= 1 << (idx % 8);
     }
 
+    // Sets bits from start_idx (inclusive) to end_idx (exclusive).
+    // Returns false if any bits set overlap with already set bits,
+    // true otherwise.
+
     // Returns true if successfully set bits, returns false if the bits
     // overlapped with already set bits
     // Note that each bit represents a multiple of 8 bytes (as everything
@@ -39,20 +43,25 @@ impl Bitmap {
         if start_idx > end_idx {
             return false;
         }
-        let start_map_idx = start_idx / 8;
-        let end_map_idx = end_idx / 8;
+        let start_byte_idx = start_idx / 8;
+        let end_byte_idx = end_idx / 8;
         let first = 0xff << (start_idx % 8);
-        let second = 0xff >> (8 - (end_idx % 8));
-        if start_map_idx == end_map_idx {
-            let result = (self.map[start_map_idx] & (first & second)) == 0;
-            self.map[start_map_idx] |= first & second;
+        let second = if end_idx % 8 == 0 {
+            0x00
+        } else {
+            0xff >> (8 - (end_idx % 8))
+        };
+        if start_byte_idx == end_byte_idx {
+            let result = (self.map[start_byte_idx] & (first & second)) == 0;
+            self.map[start_byte_idx] |= first & second;
             result
         } else {
-            let mut result = (self.map[start_map_idx] & first) == 0;
-            result = result && ((self.map[end_map_idx] & second) == 0);
-            self.map[start_map_idx] |= first;
-            self.map[end_map_idx] |= second;
-            for i in start_map_idx + 1..end_map_idx {
+            let mut result = (self.map[start_byte_idx] & first) == 0;
+            result = result && ((self.map[end_byte_idx] & second) == 0);
+            self.map[start_byte_idx] |= first;
+            self.map[end_byte_idx] |= second;
+            // Set all bytes between start and end bytes.
+            for i in start_byte_idx + 1..end_byte_idx {
                 result = result && (self.map[i] == 0);
                 self.map[i] = 0xff;
             }
@@ -65,6 +74,7 @@ impl Bitmap {
         for i in 0..total_length / 8 {
             result = result && (self.map[i] == 0xff);
         }
+        // Check last byte.
         let mask = 0xff >> (8 - (total_length % 8));
         result = result && (self.map[total_length / 8] == mask);
         result
