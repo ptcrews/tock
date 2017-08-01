@@ -6,7 +6,7 @@ use kernel::hil::radio::{Radio, TxClient, RxClient, ConfigClient};
 use kernel::hil::time;
 use core::cell::Cell;
 use core::cmp::min;
-use net::lowpan::{LoWPAN, ContextStore};
+use net::lowpan::{LoWPAN, ContextStore, is_lowpan};
 use net::ip::MacAddr;
 use net::util::{slice_to_u16, u16_to_slice};
 use net::frag_utils::Bitmap;
@@ -279,6 +279,7 @@ impl<'a> RxState<'a> {
 
     fn is_my_fragment(&self, src_mac_addr: MacAddr, dst_mac_addr: MacAddr,
                       dgram_size: u16, dgram_tag: u16) -> bool {
+        // TODO
         return true;
         self.busy.get() && (self.dgram_tag.get() == dgram_tag)
             && (self.dgram_size.get() == dgram_size)
@@ -570,7 +571,6 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
                                   dgram_tag,
                                   dgram_offset)
         } else {
-            // TODO: Handle single 6LoWPAN packet
             self.receive_single_packet(&packet, packet_len, src_mac_addr, dst_mac_addr)
         }
     }
@@ -587,7 +587,20 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
             // The packet buffer should *always* be there, so we can panic if
             // unwrap fails
             let mut packet = state.packet.take().unwrap();
-            packet[0..payload_len as usize].copy_from_slice(&payload[0..payload_len as usize]);
+            if is_lowpan(payload) {
+                let decompressed = self.lowpan.decompress(&payload, src_mac_addr,
+                                                          dst_mac_addr, &mut packet);
+                if decompressed.is_err() {
+                    return (None, ReturnCode::FAIL);
+                }
+                let (consumed, written) = decompressed.unwrap();
+                let remaining = (payload_len as usize) - consumed;
+                packet[written..written+remaining]
+                    .copy_from_slice(&payload[consumed..consumed+remaining]);
+
+            } else {
+                packet[0..payload_len as usize].copy_from_slice(&payload[0..payload_len as usize]);
+            }
             state.packet.replace(packet);
             (Some(state), ReturnCode::SUCCESS)
         }).unwrap_or((None, ReturnCode::ENOMEM))

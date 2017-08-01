@@ -124,6 +124,10 @@ pub fn compute_iid(mac_addr: &MacAddr) -> [u8; 8] {
     }
 }
 
+pub fn is_lowpan(packet: &[u8]) -> bool {
+    (packet[0] == iphc::DISPATCH[0]) && (packet[1] == iphc::DISPATCH[1])
+}
+
 /// Determines if the next header is LoWPAN_NHC compressible, which depends on
 /// both the next header type and the length of the IPv6 next header extensions.
 /// Returns `Ok((false, 0))` if the next header is not compressible or
