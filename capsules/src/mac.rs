@@ -148,6 +148,8 @@ pub trait RxClient {
     fn receive<'a>(&self,
                    buf: &'a [u8],
                    header: Header<'a>,
+                   // This data_offset is relative to the PSDU in the buffer and
+                   // does not include the two bytes before the PSDU.
                    data_offset: usize,
                    data_len: usize,
                    result: ReturnCode);
@@ -643,7 +645,7 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                 self.rx_client.get().map(|client| {
                     client.receive(&buf,
                                    header,
-                                   radio::PSDU_OFFSET + data_offset,
+                                   data_offset,
                                    data_len,
                                    ReturnCode::SUCCESS);
                 });
@@ -736,14 +738,13 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
 
                 // Re-parse the now-unsecured frame and expose it to the client.
                 self.rx_buf.map(|buf| {
-                    if let Some((data_offset, (header, _))) =
+                    if let Some((_, (header, _))) =
                         Header::decode(&buf[radio::PSDU_OFFSET..]).done() {
                         // Show rx_client the unsecured frame without the MIC
                         self.rx_client.get().map(|client| {
                             client.receive(&buf,
                                            header,
-                                           radio::PSDU_OFFSET
-                                           + frame_info.data_offset,
+                                           frame_info.data_offset,
                                            frame_info.data_len,
                                            ReturnCode::SUCCESS);
                         });

@@ -11,8 +11,8 @@ char packet_tx[BUF_SIZE];
 bool toggle = true;
 
 static void callback(__attribute__ ((unused)) int err,
-                     __attribute__ ((unused)) int payload_length,
-                     __attribute__ ((unused)) int unused2,
+                     __attribute__ ((unused)) int data_offset,
+                     __attribute__ ((unused)) int data_len,
                      __attribute__ ((unused)) void* ud) {
   led_toggle(0);
   radio_receive_callback(callback, packet_rx, BUF_SIZE);

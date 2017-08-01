@@ -225,7 +225,7 @@ impl<'a, M: mac::Mac> mac::RxClient for RadioDriver<'a, M> {
                 app.rx_callback
                     .take()
                     .map(|mut cb| {
-                        cb.schedule(usize::from(result), data_offset, data_offset + data_len);
+                        cb.schedule(usize::from(result), data_offset, data_len);
                     });
             });
         }
