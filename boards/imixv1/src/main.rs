@@ -84,6 +84,12 @@ static mut RF233_REG_READ: [u8; 2] = [0; 2];
 // for reception.
 static mut RADIO_BUF: [u8; radio::MAX_BUF_SIZE] = [0; radio::MAX_BUF_SIZE];
 
+// The MAC layer atop the RF233 requires 2 buffers, one for encryption and the
+// other for the initialization vector / counter.
+static mut MAC_CRYPT_BUF: [u8; capsules::mac::CRYPT_BUF_SIZE] =
+    [0; capsules::mac::CRYPT_BUF_SIZE];
+static mut MAC_CRYPT_IV: [u8; 16] = [0; 16];
+
 impl kernel::Platform for Imixv1 {
     fn with_driver<F, R>(&self, driver_num: usize, f: F) -> R
         where F: FnOnce(Option<&kernel::Driver>) -> R
@@ -379,7 +385,7 @@ pub unsafe fn reset_handler() {
 
     let radio_mac = static_init!(
         capsules::mac::MacDevice<'static, RF233Device>,
-        capsules::mac::MacDevice::new(rf233),
+        capsules::mac::MacDevice::new(rf233, &mut MAC_CRYPT_BUF, &mut MAC_CRYPT_IV),
         0);
     let radio_capsule = static_init!(
         capsules::radio::RadioDriver<'static,

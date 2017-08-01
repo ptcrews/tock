@@ -241,6 +241,19 @@ pub fn encode_u32(buf: &mut [u8], b: u32) -> SResult {
     stream_done!(4);
 }
 
+pub fn encode_u64(buf: &mut [u8], b: u64) -> SResult {
+    stream_len_cond!(buf, 8);
+    buf[0] = (b >> 52) as u8;
+    buf[1] = (b >> 48) as u8;
+    buf[2] = (b >> 40) as u8;
+    buf[3] = (b >> 32) as u8;
+    buf[4] = (b >> 24) as u8;
+    buf[5] = (b >> 16) as u8;
+    buf[6] = (b >> 8) as u8;
+    buf[7] = b as u8;
+    stream_done!(8);
+}
+
 pub fn encode_bytes(buf: &mut [u8], bs: &[u8]) -> SResult {
     stream_len_cond!(buf, bs.len());
     buf[..bs.len()].copy_from_slice(bs);
