@@ -155,15 +155,18 @@ impl<'a> TxState<'a> {
 
         // We can transmit in a single frame
         let result = if lowpan_len <= radio::MAX_PACKET_SIZE as usize {
+            let (radio_header_len, _) = /*radio.construct_header(..)*/ 
+                (radio.payload_offset(true, true) as usize, 0);
             // Copy over the compressed header
-            frag_buf[0..written].copy_from_slice(&lowpan_packet[0..written]);
+            frag_buf[radio_header_len..radio_header_len + written]
+                .copy_from_slice(&lowpan_packet[0..written]);
             // Copy over the remaining payload
-            frag_buf[written..written+remaining]
+            frag_buf[radio_header_len+written..radio_header_len+written+remaining]
                 .copy_from_slice(&ip6_packet[consumed..consumed+remaining]);
             // Setting the offset makes it so the callback knows there are no
             // more pending frames.
-            self.dgram_offset.set(lowpan_len);
-            self.transmit_frame(frag_buf, (lowpan_len) as u8, radio)
+            self.dgram_offset.set(ip6_packet.len());
+            self.transmit_frame(frag_buf, (lowpan_len + radio_header_len) as u8, radio)
         // Otherwise, need to fragment
         } else if self.fragment.get() {
             // We assume offset == consumed for the purposes of fragmentation
@@ -311,18 +314,28 @@ impl<'a> RxState<'a> {
                           dgram_size: u16,
                           dgram_offset: usize,
                           lowpan: &'b LoWPAN<'b, C>) -> Result<bool, ReturnCode> {
+        debug!("Payload len: {}\t Offset: {}", payload_len, dgram_offset);
         let mut packet = self.packet.take().ok_or(ReturnCode::ENOMEM)?;
         let uncompressed_len = if dgram_offset == 0 {
-            let (_, written) = lowpan.decompress(&payload, self.src_mac_addr.get(),
-                                                 self.dst_mac_addr.get(), &mut packet)
+            let (consumed, written) = lowpan.decompress(&payload[0..payload_len as usize],
+                                                        self.src_mac_addr.get(),
+                                                        self.dst_mac_addr.get(),
+                                                        &mut packet)
                                      .map_err(|_| ReturnCode::FAIL)?;
-            written
+            let remaining = payload_len - consumed;
+            packet[written..written+remaining]
+                .copy_from_slice(&payload[consumed..consumed+remaining]);
+            written+remaining
                 
         } else {
+            if dgram_offset <= 30 && dgram_offset+payload_len >= 30 {
+                debug!("Hit 30: {}", payload[30]);
+            }
             packet[dgram_offset..dgram_offset+payload_len]
                 .copy_from_slice(&payload[0..payload_len]);
             payload_len
         };
+        debug!("Decompressed len: {}", uncompressed_len);
         self.packet.replace(packet);
         if !self.bitmap
             .map(|bitmap| bitmap.set_bits(dgram_offset / 8, (dgram_offset+uncompressed_len) / 8))
@@ -499,10 +512,16 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
     fn start_packet_transmit(&self) {
         // We panic here, as it should never be the case that we start
         // transmitting without the tx_buf
+        // TODO: At this point, we lose the frag_buf if we have nothing to transmit
+
+        /* START BASIC ATTEMPT
         let mut frag_buf = self.tx_buf.take().unwrap();
         // Apparently, a dgram_tag of 0 is invalid; therefore, we avoid it
         let dgram_tag = self.tx_dgram_tag.get() + 1;
         self.tx_dgram_tag.set( if dgram_tag == 0 { 1 } else { dgram_tag });
+           END BASIC ATTEMPT
+        */
+
         // TODO: Below will not work until we retrieve the buffer from the
         // radio on error - any iteration > 2 will not have the buffer anymore
         // as it was lost in the transmit call
@@ -530,11 +549,14 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
             tx_state = self.tx_states.head();
         }
         */
-        self.tx_states.head().map(move |state| state.start_transmit(dgram_tag,
-                                                                    frag_buf,
-                                                                    self.radio,
-                                                                    self.lowpan))
-            .unwrap_or(Ok(ReturnCode::SUCCESS));
+        self.tx_states.head().map(move |state| {
+            // We panic here, as it should never be the case that we start
+            // transmitting without the tx_buf
+            let mut frag_buf = self.tx_buf.take().unwrap();
+            let dgram_tag = self.tx_dgram_tag.get() + 1;
+            self.tx_dgram_tag.set( if dgram_tag == 0 { 1 } else { dgram_tag});
+            state.start_transmit(dgram_tag, frag_buf, self.radio, self.lowpan)
+        }).unwrap_or(Ok(ReturnCode::SUCCESS));
         self.tx_busy.set(true);
     }
 
@@ -542,16 +564,12 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
     // sending the next queued packet before calling the current callback.
     fn end_packet_transmit(&self, acked: bool, returncode: ReturnCode) {
         self.tx_busy.set(false);
-        let tx_state = self.tx_states.pop_head().unwrap();
-        self.start_packet_transmit();
-        tx_state.end_transmit(acked, returncode);
-
-        /* TODO: What is the code below for?
+        // Note that tx_state can be None if a disassociation event occurred,
+        // in which case end_transmit was already called.
         self.tx_states.pop_head().map(|tx_state| {
             self.start_packet_transmit();
             tx_state.end_transmit(acked, returncode);
         });
-        */
     }
 
     fn receive_frame(&self,
@@ -591,8 +609,10 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
             // unwrap fails
             let mut packet = state.packet.take().unwrap();
             if is_lowpan(payload) {
-                let decompressed = self.lowpan.decompress(&payload, src_mac_addr,
-                                                          dst_mac_addr, &mut packet);
+                let decompressed = self.lowpan.decompress(&payload[0..payload_len as usize],
+                                                          src_mac_addr,
+                                                          dst_mac_addr,
+                                                          &mut packet);
                 if decompressed.is_err() {
                     return (None, ReturnCode::FAIL);
                 }
@@ -600,6 +620,7 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
                 let remaining = (payload_len as usize) - consumed;
                 packet[written..written+remaining]
                     .copy_from_slice(&payload[consumed..consumed+remaining]);
+                // TODO
 
             } else {
                 packet[0..payload_len as usize]

@@ -125,7 +125,7 @@ pub fn compute_iid(mac_addr: &MacAddr) -> [u8; 8] {
 }
 
 pub fn is_lowpan(packet: &[u8]) -> bool {
-    (packet[0] == iphc::DISPATCH[0]) && (packet[1] == iphc::DISPATCH[1])
+    (packet[0] & iphc::DISPATCH[0]) == iphc::DISPATCH[0]
 }
 
 /// Determines if the next header is LoWPAN_NHC compressible, which depends on

@@ -410,7 +410,7 @@ pub unsafe fn reset_handler() {
             prefix: &DEFAULT_CTX_PREFIX,
             prefix_len: DEFAULT_CTX_PREFIX.len() as u8,
             id: 0,
-            compress: true,
+            compress: false,
         });
 
     let dummy_store = static_init!(
@@ -494,12 +494,10 @@ pub unsafe fn reset_handler() {
     frag_state.schedule_next_timer();
 
     debug!("Initialization complete. Entering main loop");
-    /*
     for i in 0..1000 {
         kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
     }
     lowpan_frag_dummy::simple_frag_test(frag_state, tx_state);
-    */
     loop {
         kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
     }

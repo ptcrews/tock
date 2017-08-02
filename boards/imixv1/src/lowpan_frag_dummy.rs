@@ -28,6 +28,7 @@ impl<'a> DummyStore<'a> {
 
 impl<'a> ContextStore<'a> for DummyStore<'a> {
     fn get_context_from_addr(&self, ip_addr: IPAddr) -> Option<Context<'a>> {
+        return None;
         if util::matches_prefix(&ip_addr.0, self.context0.prefix, self.context0.prefix_len) {
             Some(self.context0)
         } else {
@@ -36,6 +37,7 @@ impl<'a> ContextStore<'a> for DummyStore<'a> {
     }
 
     fn get_context_from_id(&self, ctx_id: u8) -> Option<Context<'a>> {
+        return None;
         if ctx_id == 0 {
             Some(self.context0)
         } else {
@@ -44,6 +46,7 @@ impl<'a> ContextStore<'a> for DummyStore<'a> {
     }
 
     fn get_context_from_prefix(&self, prefix: &[u8], prefix_len: u8) -> Option<Context<'a>> {
+        return None;
         if prefix_len == self.context0.prefix_len &&
            util::matches_prefix(prefix, self.context0.prefix, prefix_len) {
             Some(self.context0)
@@ -215,7 +218,8 @@ impl<'a, R: Radio + 'a, A: time::Alarm + 'a>
 ReceiveClient for LowpanTest<'a, R, A> {
     fn receive(&self, buf: &'static mut [u8], len: u8, result: ReturnCode) -> &'static mut [u8] {
         debug!("Receive completed!");
-        buf
+        ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::Inline, DAC::Inline,
+                                  buf, len)
     }
 }
 
@@ -223,12 +227,42 @@ static mut IP6_DGRAM: [u8; IP6_HDR_SIZE + PAYLOAD_LEN] = [0; IP6_HDR_SIZE + PAYL
 
 pub fn simple_frag_test<'a, R: Radio + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
 (frag_state: &FragState<'a, R, C, A>, tx_state: &'static TxState<'a>) {
-    ipv6_packet_test(frag_state, tx_state, TF::TrafficFlow, 42, SAC::Inline, DAC::Inline);
+    ipv6_send_packet_test(frag_state, tx_state, TF::TrafficFlow, 42,
+                     SAC::Inline, DAC::Inline);
+    //ipv6_packet_test(frag_state, tx_state, TF::TrafficFlow, 42, SAC::Inline, DAC::Inline);
 }
 
-fn ipv6_packet_test<'a, R: Radio + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
+fn ipv6_send_packet_test<'a, R: Radio + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
 (frag_state: &FragState<'a, R, C, A>, tx_state: &'static TxState<'a>,
                         tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
+    ipv6_prepare_packet(tf, hop_limit, sac, dac);
+    unsafe {
+        send_ipv6_packet(frag_state,
+        tx_state,
+        &MLP,
+        SRC_MAC_ADDR,
+        DST_MAC_ADDR);
+    }
+}
+
+fn ipv6_check_receive_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC,
+                             recv_packet: &'static mut [u8], len: u8) -> &'static mut [u8]{
+    ipv6_prepare_packet(tf, hop_limit, sac, dac);
+    debug!("Len: {}", len);
+    unsafe {
+        for i in 0..240 {
+            if recv_packet[i] != IP6_DGRAM[i] {
+                debug!("Packets differ at idx: {} where recv = {}, ref = {}",
+                       i, recv_packet[i], IP6_DGRAM[i]);
+            }
+        }
+        debug!("After matching");
+    }
+    recv_packet
+}
+
+
+fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
     let mut ip6_datagram = [0 as u8; IP6_HDR_SIZE + PAYLOAD_LEN];
     {
         let mut payload = unsafe { &mut IP6_DGRAM[IP6_HDR_SIZE..] };
@@ -379,13 +413,6 @@ fn ipv6_packet_test<'a, R: Radio + 'a, C: ContextStore<'a> + 'a, A: time::Alarm 
     }
     debug!("Packet with tf={:?} hl={} sac={:?} dac={:?}",
            tf, hop_limit, sac, dac);
-    unsafe {
-        send_ipv6_packet(frag_state,
-                         tx_state,
-                         &MLP,
-                         SRC_MAC_ADDR,
-                         DST_MAC_ADDR);
-    }
 }
 
 unsafe fn send_ipv6_packet<'a, R: Radio + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
@@ -407,8 +434,8 @@ unsafe fn send_ipv6_packet<'a, R: Radio + 'a, C: ContextStore<'a> + 'a, A: time:
         MacAddr::ShortAddr(_) => false,
         MacAddr::LongAddr(_) => true,
     };
-    frag_state.transmit_packet(src_mac_addr, dst_mac_addr, &mut IP6_DGRAM,
+    let ret_code = frag_state.transmit_packet(src_mac_addr, dst_mac_addr, &mut IP6_DGRAM,
                                tx_state, src_long, true);
-    //let offset = radio.payload_offset(src_long, dst_long) as usize;
+    debug!("Ret code: {:?}", ret_code);
 
 }
