@@ -15,13 +15,11 @@ use capsules::timer::TimerDriver;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use capsules::virtual_i2c::{I2CDevice, MuxI2C};
 use capsules::virtual_spi::{VirtualSpiMasterDevice, MuxSpiMaster};
-use kernel::Chip;
 use kernel::hil;
 use kernel::hil::Controller;
 use kernel::hil::radio;
 use kernel::hil::radio::{RadioConfig, RadioData};
 use kernel::hil::spi::SpiMaster;
-use kernel::mpu::MPU;
 
 #[macro_use]
 pub mod io;
@@ -35,6 +33,21 @@ mod spi_dummy;
 #[allow(dead_code)]
 mod power;
 
+// State for loading apps.
+
+const NUM_PROCS: usize = 2;
+
+// how should the kernel respond when a process faults
+const FAULT_RESPONSE: kernel::process::FaultResponse = kernel::process::FaultResponse::Panic;
+
+#[link_section = ".app_memory"]
+static mut APP_MEMORY: [u8; 16384] = [0; 16384];
+
+static mut PROCESSES: [Option<kernel::Process<'static>>; NUM_PROCS] = [None, None];
+
+// Save some deep nesting
+type RF233Device = capsules::rf233::RF233<'static,
+                                          VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>;
 struct Imix {
     console: &'static capsules::console::Console<'static, sam4l::usart::USART>,
     gpio: &'static capsules::gpio::GPIO<'static, sam4l::gpio::GPIOPin>,
@@ -51,9 +64,10 @@ struct Imix {
     ipc: kernel::ipc::IPC,
     ninedof: &'static capsules::ninedof::NineDof<'static>,
     radio: &'static capsules::radio::RadioDriver<'static,
-                                                 capsules::rf233::RF233<'static,
-                                                 VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>>,
+                                                 capsules::mac::MacDevice<'static, RF233Device>>,
     crc: &'static capsules::crc::Crc<'static, sam4l::crccu::Crccu<'static>>,
+    usb_driver: &'static capsules::usb_user::UsbSyscallDriver<'static,
+                        capsules::usbc_client::Client<'static, sam4l::usbc::Usbc<'static>>>,
 }
 
 // The RF233 radio stack requires our buffers for its SPI operations:
@@ -91,6 +105,7 @@ impl kernel::Platform for Imix {
             10 => f(Some(self.si7021)),
             11 => f(Some(self.ninedof)),
             16 => f(Some(self.crc)),
+            34 => f(Some(self.usb_driver)),
             154 => f(Some(self.radio)),
             0xff => f(Some(&self.ipc)),
             _ => f(None),
@@ -376,15 +391,34 @@ pub unsafe fn reset_handler() {
     rf233_spi.set_client(rf233);
     rf233.initialize(&mut RF233_BUF, &mut RF233_REG_WRITE, &mut RF233_REG_READ);
 
+    let radio_mac = static_init!(
+        capsules::mac::MacDevice<'static, RF233Device>,
+        capsules::mac::MacDevice::new(rf233),
+        0);
     let radio_capsule = static_init!(
         capsules::radio::RadioDriver<'static,
-                                     RF233<'static,
-                                           VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>>,
-        capsules::radio::RadioDriver::new(rf233));
+                                     capsules::mac::MacDevice<'static, RF233Device>>,
+        capsules::radio::RadioDriver::new(radio_mac),
+        0);
     radio_capsule.config_buffer(&mut RADIO_BUF);
-    rf233.set_transmit_client(radio_capsule);
-    rf233.set_receive_client(radio_capsule, &mut RF233_RX_BUF);
-    rf233.set_config_client(radio_capsule);
+    radio_mac.set_transmit_client(radio_capsule);
+    radio_mac.set_receive_client(radio_capsule);
+    rf233.set_transmit_client(radio_mac);
+    rf233.set_receive_client(radio_mac, &mut RF233_RX_BUF);
+    rf233.set_config_client(radio_mac);
+
+    // Configure the USB controller
+    let usb_client = static_init!(
+        capsules::usbc_client::Client<'static, sam4l::usbc::Usbc<'static>>,
+        capsules::usbc_client::Client::new(&sam4l::usbc::USBC));
+    sam4l::usbc::USBC.set_client(usb_client);
+
+    // Configure the USB userspace driver
+    let usb_driver = static_init!(
+        capsules::usb_user::UsbSyscallDriver<'static,
+            capsules::usbc_client::Client<'static, sam4l::usbc::Usbc<'static>>>,
+        capsules::usb_user::UsbSyscallDriver::new(
+            usb_client, kernel::Container::create()));
 
     let imix = Imix {
         console: console,
@@ -400,57 +434,26 @@ pub unsafe fn reset_handler() {
         ipc: kernel::ipc::IPC::new(),
         ninedof: ninedof,
         radio: radio_capsule,
+        usb_driver: usb_driver,
     };
 
     let mut chip = sam4l::chip::Sam4l::new();
 
-    chip.mpu().enable_mpu();
-
     rf233.reset();
-    rf233.config_set_pan(0xABCD);
-    rf233.config_set_address(0x1008);
+    rf233.set_pan(0xABCD);
+    rf233.set_address(0x1008);
     //    rf233.config_commit();
 
     rf233.start();
 
     debug!("Initialization complete. Entering main loop");
-    kernel::main(&imix, &mut chip, load_processes(), &imix.ipc);
-}
-
-unsafe fn load_processes() -> &'static mut [Option<kernel::Process<'static>>] {
     extern "C" {
         /// Beginning of the ROM region containing app images.
         static _sapps: u8;
     }
-
-    const NUM_PROCS: usize = 2;
-
-    // how should the kernel respond when a process faults
-    const FAULT_RESPONSE: kernel::process::FaultResponse = kernel::process::FaultResponse::Panic;
-
-    #[link_section = ".app_memory"]
-    static mut APP_MEMORY: [u8; 16384] = [0; 16384];
-
-    static mut PROCESSES: [Option<kernel::Process<'static>>; NUM_PROCS] = [None, None];
-
-    let mut apps_in_flash_ptr = &_sapps as *const u8;
-    let mut app_memory_ptr = APP_MEMORY.as_mut_ptr();
-    let mut app_memory_size = APP_MEMORY.len();
-    for i in 0..NUM_PROCS {
-        let (process, flash_offset, memory_offset) = kernel::Process::create(apps_in_flash_ptr,
-                                                                             app_memory_ptr,
-                                                                             app_memory_size,
-                                                                             FAULT_RESPONSE);
-
-        if process.is_none() {
-            break;
-        }
-
-        PROCESSES[i] = process;
-        apps_in_flash_ptr = apps_in_flash_ptr.offset(flash_offset as isize);
-        app_memory_ptr = app_memory_ptr.offset(memory_offset as isize);
-        app_memory_size -= memory_offset;
-    }
-
-    &mut PROCESSES
+    kernel::process::load_processes(&_sapps as *const u8,
+                                    &mut APP_MEMORY,
+                                    &mut PROCESSES,
+                                    FAULT_RESPONSE);
+    kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }

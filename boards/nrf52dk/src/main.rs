@@ -80,8 +80,6 @@ extern crate compiler_builtins;
 extern crate kernel;
 extern crate nrf52;
 
-use kernel::{Chip, SysTick};
-
 // The nRF52 DK LEDs (see back of board)
 const LED1_PIN: usize = 17;
 const LED2_PIN: usize = 18;
@@ -99,46 +97,24 @@ const BUTTON_RST_PIN: usize = 21;
 pub mod io;
 
 
-unsafe fn load_process() -> &'static mut [Option<kernel::Process<'static>>] {
-    extern "C" {
-        /// Beginning of the ROM region containing app images.
-        static _sapps: u8;
-    }
+// State for loading and holding applications.
 
-    const NUM_PROCS: usize = 1;
+// How should the kernel respond when a process faults.
+const FAULT_RESPONSE: kernel::process::FaultResponse = kernel::process::FaultResponse::Panic;
 
-    // how should the kernel respond when a process faults
-    const FAULT_RESPONSE: kernel::process::FaultResponse = kernel::process::FaultResponse::Panic;
+// Number of concurrent processes this platform supports.
+const NUM_PROCS: usize = 1;
 
-    #[link_section = ".app_memory"]
-    static mut APP_MEMORY: [u8; 8192] = [0; 8192];
+#[link_section = ".app_memory"]
+static mut APP_MEMORY: [u8; 8192] = [0; 8192];
 
-    static mut PROCESSES: [Option<kernel::Process<'static>>; NUM_PROCS] = [None];
+static mut PROCESSES: [Option<kernel::Process<'static>>; NUM_PROCS] = [None];
 
-    let mut apps_in_flash_ptr = &_sapps as *const u8;
-    let mut app_memory_ptr = APP_MEMORY.as_mut_ptr();
-    let mut app_memory_size = APP_MEMORY.len();
-    for i in 0..NUM_PROCS {
-        let (process, flash_offset, memory_offset) = kernel::Process::create(apps_in_flash_ptr,
-                                                                             app_memory_ptr,
-                                                                             app_memory_size,
-                                                                             FAULT_RESPONSE);
-
-        if process.is_none() {
-            break;
-        }
-
-        PROCESSES[i] = process;
-        apps_in_flash_ptr = apps_in_flash_ptr.offset(flash_offset as isize);
-        app_memory_ptr = app_memory_ptr.offset(memory_offset as isize);
-        app_memory_size -= memory_offset;
-    }
-
-    &mut PROCESSES
-}
 
 pub struct Platform {
-    console: &'static capsules::console::Console<'static, nrf52::uart::UART>,
+    ble_radio: &'static nrf52::ble_advertising_driver::BLE
+        <'static, capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52::rtc::Rtc>>,
+    console: &'static capsules::console::Console<'static, nrf52::uart::UARTE>,
     button: &'static capsules::button::Button<'static, nrf52::gpio::GPIOPin>,
     gpio: &'static capsules::gpio::GPIO<'static, nrf52::gpio::GPIOPin>,
     led: &'static capsules::led::LED<'static, nrf52::gpio::GPIOPin>,
@@ -148,7 +124,6 @@ pub struct Platform {
 
 
 impl kernel::Platform for Platform {
-    #[inline(never)]
     fn with_driver<F, R>(&self, driver_num: usize, f: F) -> R
         where F: FnOnce(Option<&kernel::Driver>) -> R
     {
@@ -158,6 +133,7 @@ impl kernel::Platform for Platform {
             3 => f(Some(self.timer)),
             8 => f(Some(self.led)),
             9 => f(Some(self.button)),
+            33 => f(Some(self.ble_radio)),
             _ => f(None),
         }
     }
@@ -275,13 +251,17 @@ pub unsafe fn reset_handler() {
                          kernel::Container::create()),
                          12);
     virtual_alarm1.set_client(timer);
+    let ble_radio_virtual_alarm = static_init!(
+        capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52::rtc::Rtc>,
+        capsules::virtual_alarm::VirtualMuxAlarm::new(mux_alarm),
+        192/8);
 
     nrf52::uart::UART0.configure(nrf52::pinmux::Pinmux::new(6), // tx
                                  nrf52::pinmux::Pinmux::new(8), // rx
                                  nrf52::pinmux::Pinmux::new(7), // cts
                                  nrf52::pinmux::Pinmux::new(5)); // rts
     let console = static_init!(
-        capsules::console::Console<nrf52::uart::UART>,
+        capsules::console::Console<nrf52::uart::UARTE>,
         capsules::console::Console::new(&nrf52::uart::UART0,
                                         115200,
                                         &mut capsules::console::WRITE_BUF,
@@ -297,6 +277,18 @@ pub unsafe fn reset_handler() {
         480/8);
     kernel::debug::assign_console_driver(Some(console), kc);
 
+    let ble_radio = static_init!(
+     nrf52::ble_advertising_driver::BLE
+     <capsules::virtual_alarm::VirtualMuxAlarm<'static, nrf52::rtc::Rtc>>,
+     nrf52::ble_advertising_driver::BLE::new(
+         &mut nrf52::radio::RADIO,
+         kernel::Container::create(),
+         &mut nrf52::ble_advertising_driver::BUF,
+         ble_radio_virtual_alarm),
+        256/8);
+    nrf52::radio::RADIO.set_client(ble_radio);
+    ble_radio_virtual_alarm.set_client(ble_radio);
+
     // Start all of the clocks. Low power operation will require a better
     // approach than this.
     nrf52::clock::CLOCK.low_stop();
@@ -311,6 +303,7 @@ pub unsafe fn reset_handler() {
 
     let platform = Platform {
         button: button,
+        ble_radio: ble_radio,
         console: console,
         led: led,
         gpio: gpio,
@@ -318,13 +311,18 @@ pub unsafe fn reset_handler() {
     };
 
     let mut chip = nrf52::chip::NRF52::new();
-    chip.systick().reset();
-    chip.systick().enable(true);
-
 
     debug!("Initialization complete. Entering main loop\r");
+    extern "C" {
+        /// Beginning of the ROM region containing app images.
+        static _sapps: u8;
+    }
+    kernel::process::load_processes(&_sapps as *const u8,
+                                    &mut APP_MEMORY,
+                                    &mut PROCESSES,
+                                    FAULT_RESPONSE);
     kernel::main(&platform,
                  &mut chip,
-                 load_process(),
+                 &mut PROCESSES,
                  &kernel::ipc::IPC::new());
 }

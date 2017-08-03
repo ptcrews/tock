@@ -1,8 +1,20 @@
+<<<<<<< HEAD
 use kernel::common::SResult;
 use kernel::common::stream::{decode_u8, decode_u16, decode_u32, decode_bytes_be};
 use kernel::common::stream::{encode_u8, encode_u16, encode_u32, encode_bytes_be};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+=======
+//! Implements IEEE 802.15.4-2015 header encoding and decoding.
+//! Supports the general MAC frame format, which encompasses data frames, beacon
+//! frames, MAC command frames, and the like.
+
+use net::stream::{decode_u8, decode_u16, decode_u32, decode_bytes_be};
+use net::stream::{encode_u8, encode_u16, encode_u32, encode_bytes, encode_bytes_be};
+use net::stream::SResult;
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+>>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
 pub enum MacAddress {
     Short(u16),
     Long([u8; 8]),
@@ -50,13 +62,22 @@ mod frame_control {
 }
 
 #[repr(u16)]
+<<<<<<< HEAD
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum FrameType {
+=======
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum FrameType {
+    // Reserved = 0b100,
+>>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
     Beacon = 0b000,
     Data = 0b001,
     Acknowledgement = 0b010,
     MACCommand = 0b011,
+<<<<<<< HEAD
     // Reserved = 0b100,
+=======
+>>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
     Multipurpose = 0b101,
     Fragment = 0b110,
     Extended = 0b111,
@@ -78,12 +99,21 @@ impl FrameType {
 }
 
 #[repr(u16)]
+<<<<<<< HEAD
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum FrameVersion {
     V2003 = 0x0000,
     V2006 = 0x1000,
     V2015 = 0x2000, 
     // Reserved = 0x3000,
+=======
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum FrameVersion {
+    // Reserved = 0x3000
+    V2003 = 0x0000,
+    V2006 = 0x1000,
+    V2015 = 0x2000,
+>>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
 }
 
 impl FrameVersion {
@@ -98,7 +128,11 @@ impl FrameVersion {
 }
 
 #[repr(u8)]
+<<<<<<< HEAD
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+=======
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+>>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
 pub enum AddressMode {
     NotPresent = 0b00,
     Short = 0b10,
@@ -131,20 +165,33 @@ impl AddressMode {
 }
 
 mod security_control {
+<<<<<<< HEAD
     pub const SECURITY_LEVEL_MASK: u8 = 0b11;
+=======
+    pub const SECURITY_LEVEL_MASK: u8 = 0b111;
+>>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
     pub const KEY_ID_MODE_MASK: u8 = 0b11 << 3;
     pub const FRAME_COUNTER_SUPPRESSION: u8 = 1 << 5;
     pub const ASN_IN_NONCE: u8 = 1 << 6;
 }
 
 #[repr(u8)]
+<<<<<<< HEAD
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SecurityLevel {
+=======
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum SecurityLevel {
+    // Reserved = 0b100,
+>>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
     None = 0b000,
     Mic32 = 0b001,
     Mic64 = 0b010,
     Mic128 = 0b011,
+<<<<<<< HEAD
     // RESERVED = 0b100,
+=======
+>>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
     EncMic32 = 0b101,
     EncMic64 = 0b110,
     EncMic128 = 0b111,
@@ -166,7 +213,7 @@ impl SecurityLevel {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum KeyIdMode {
     Implicit = 0x00,
     Index = 0x08,
@@ -186,7 +233,7 @@ impl KeyIdMode {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum KeyId {
     Implicit,
     Index(u8),
@@ -245,12 +292,12 @@ impl<'a> From<&'a KeyId> for KeyIdMode {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct Security {
-    level: SecurityLevel,
-    asn_in_nonce: bool,
-    frame_counter: Option<u32>,
-    key_id: KeyId,
+    pub level: SecurityLevel,
+    pub asn_in_nonce: bool,
+    pub frame_counter: Option<u32>,
+    pub key_id: KeyId,
 }
 
 impl Security {
@@ -311,22 +358,188 @@ impl Security {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct MacFrameHeader {
-    frame_type: FrameType,
-    frame_pending: bool,
-    ack_requested: bool,
-    version: FrameVersion,
-    seq: Option<u8>,
-    dst_pan: Option<PanID>,
-    dst_addr: Option<MacAddress>,
-    src_pan: Option<PanID>,
-    src_addr: Option<MacAddress>,
-    security: Option<Security>,
+mod ie_control {
+    // Header IE constants
+    pub const HEADER_LEN_MAX: usize = (1 << 7) - 1;
+    pub const HEADER_LEN_MASK: u16 = HEADER_LEN_MAX as u16;
+    pub const HEADER_ID_POS: usize = 7;
+
+    // Payload IE constants
+    pub const PAYLOAD_LEN_MAX: usize = (1 << 11) - 1;
+    pub const PAYLOAD_LEN_MASK: u16 = PAYLOAD_LEN_MAX as u16;
+    pub const PAYLOAD_ID_MASK: u8 = 0xf; // Only 4 bits
+    pub const PAYLOAD_ID_POS: usize = 11;
+
+    pub const TYPE: u16 = 0x8000;
 }
 
-impl MacFrameHeader {
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum HeaderIE<'a> {
+    Undissected { element_id: u8, content: &'a [u8] },
+    Termination1,
+    Termination2,
+}
+
+impl<'a> Default for HeaderIE<'a> {
+    fn default() -> Self {
+        HeaderIE::Termination1
+    }
+}
+
+impl<'a> HeaderIE<'a> {
+    pub fn is_termination(&self) -> bool {
+        match *self {
+            HeaderIE::Termination1 |
+            HeaderIE::Termination2 => true,
+            _ => false,
+        }
+    }
+
     pub fn encode(&self, buf: &mut [u8]) -> SResult {
+        // Append the content field of the IE first
+        use self::HeaderIE::*;
+        let mut off = 2;
+        let element_id: u8 = match *self {
+            Undissected { element_id, content } => {
+                off = enc_consume!(buf, off; encode_bytes, content);
+                element_id
+            }
+            Termination1 => 0x7e,
+            Termination2 => 0x7f,
+        };
+
+        // Write the two octets that begin each header IE
+        let content_len = off - 2;
+        stream_cond!(content_len <= ie_control::HEADER_LEN_MAX);
+        let ie_ctl = ((content_len as u16) & ie_control::HEADER_LEN_MASK) |
+                     ((element_id as u16) << ie_control::HEADER_ID_POS);
+        enc_consume!(buf; encode_u16, ie_ctl.to_be());
+
+        stream_done!(off);
+    }
+
+    pub fn decode<'b>(buf: &'b [u8]) -> SResult<HeaderIE<'b>> {
+        let (off, ie_ctl_be) = dec_try!(buf; decode_u16);
+        let ie_ctl = u16::from_be(ie_ctl_be);
+
+        // Header IEs are type 0
+        stream_cond!(ie_ctl & ie_control::TYPE == 0);
+        let content_len = (ie_ctl & ie_control::HEADER_LEN_MASK) as usize;
+        let element_id = (ie_ctl >> ie_control::HEADER_ID_POS) as u8;
+
+        stream_len_cond!(buf, off + content_len);
+        let content = &buf[off..off + content_len];
+
+        use self::HeaderIE::*;
+        let ie = match element_id {
+            0x7e => Termination1,
+            0x7f => Termination2,
+            element_id => {
+                Undissected {
+                    element_id: element_id,
+                    content: content,
+                }
+            }
+        };
+
+        stream_done!(off + content_len, ie);
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum PayloadIE<'a> {
+    Undissected { group_id: u8, content: &'a [u8] },
+    Termination,
+}
+
+impl<'a> Default for PayloadIE<'a> {
+    fn default() -> Self {
+        PayloadIE::Termination
+    }
+}
+
+impl<'a> PayloadIE<'a> {
+    pub fn is_termination(&self) -> bool {
+        match *self {
+            PayloadIE::Termination => true,
+            _ => false,
+        }
+    }
+
+    pub fn encode(&self, buf: &mut [u8]) -> SResult {
+        // Append the content field of the IE first
+        use self::PayloadIE::*;
+        let mut off = 2;
+        let group_id: u8 = match *self {
+            Undissected { group_id, content } => {
+                off = enc_consume!(buf, off; encode_bytes, content);
+                group_id
+            }
+            Termination => 0xf,
+        };
+
+        // Write the two octets that begin each payload IE
+        let content_len = off - 2;
+        stream_cond!(content_len <= ie_control::PAYLOAD_LEN_MAX);
+        let ie_ctl = ((content_len as u16) & ie_control::PAYLOAD_LEN_MASK) |
+                     ((group_id & ie_control::PAYLOAD_ID_MASK) as u16) <<
+                     ie_control::PAYLOAD_ID_POS;
+        enc_consume!(buf; encode_u16, ie_ctl.to_be());
+
+        stream_done!(off);
+    }
+
+    pub fn decode<'b>(buf: &'b [u8]) -> SResult<PayloadIE<'b>> {
+        let (off, ie_ctl_be) = dec_try!(buf; decode_u16);
+        let ie_ctl = u16::from_be(ie_ctl_be);
+
+        // Payload IEs are type 1
+        stream_cond!(ie_ctl & ie_control::TYPE != 0);
+        let content_len = (ie_ctl & ie_control::PAYLOAD_LEN_MASK) as usize;
+        let element_id = ((ie_ctl >> ie_control::PAYLOAD_ID_POS) as u8) &
+                         ie_control::PAYLOAD_ID_MASK;
+
+        stream_len_cond!(buf, off + content_len);
+        let content = &buf[off..off + content_len];
+
+        use self::PayloadIE::*;
+        let ie = match element_id {
+            0xf => Termination,
+            group_id => {
+                Undissected {
+                    group_id: group_id,
+                    content: content,
+                }
+            }
+        };
+
+        stream_done!(off + content_len, ie);
+    }
+}
+
+pub const MAX_HEADER_IES: usize = 5;
+pub const MAX_PAYLOAD_IES: usize = 5;
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct Header<'a> {
+    pub frame_type: FrameType,
+    pub frame_pending: bool,
+    pub ack_requested: bool,
+    pub version: FrameVersion,
+    pub seq: Option<u8>,
+    pub dst_pan: Option<PanID>,
+    pub dst_addr: Option<MacAddress>,
+    pub src_pan: Option<PanID>,
+    pub src_addr: Option<MacAddress>,
+    pub security: Option<Security>,
+    pub header_ies: [HeaderIE<'a>; MAX_HEADER_IES],
+    pub header_ies_len: usize,
+    pub payload_ies: [PayloadIE<'a>; MAX_PAYLOAD_IES],
+    pub payload_ies_len: usize,
+}
+
+impl<'a> Header<'a> {
+    pub fn encode(&self, buf: &mut [u8], has_payload: bool) -> SResult<usize> {
         // The frame control field is collected in the course of encoding the
         // various other fields of the header and then written only at the end
         stream_len_cond!(buf, 2);
@@ -351,13 +564,41 @@ impl MacFrameHeader {
 
         // Auxiliary security header
         // Note: security can be enabled with security level 0 (None)
-        let (off, security_enabled) = match self.security {
+        let (mut off, security_enabled) = match self.security {
             None => (off, false),
             Some(ref security) => (enc_consume!(buf, off; security; encode), true),
         };
 
-        // TODO: IEs
-        let ie_present = false;
+        // Information elements
+        // IE list termination is implicit and handled by encoding/decoding
+        // procedures. Hence, we ensure that there are no termination headers
+        // in our lists.
+        let has_header_ies = self.header_ies_len != 0;
+        let has_payload_ies = self.payload_ies_len != 0;
+        stream_cond!(self.header_ies_len <= MAX_HEADER_IES);
+        stream_cond!(self.payload_ies_len <= MAX_PAYLOAD_IES);
+        for ie in self.header_ies[..self.header_ies_len].iter() {
+            stream_cond!(!ie.is_termination());
+            off = enc_consume!(buf, off; ie; encode);
+        }
+        if has_payload_ies {
+            // terminate with header termination 1
+            off = enc_consume!(buf, off; HeaderIE::Termination1; encode);
+        } else if has_header_ies && has_payload {
+            // terminate with header termination 2
+            off = enc_consume!(buf, off; HeaderIE::Termination2; encode);
+        }
+        // The MAC payload includes payload IEs
+        let mac_payload_off = off;
+        for ie in self.payload_ies[..self.payload_ies_len].iter() {
+            stream_cond!(!ie.is_termination());
+            off = enc_consume!(buf, off; ie; encode);
+        }
+        if has_payload_ies && has_payload {
+            // terminate with payload termination
+            off = enc_consume!(buf, off; PayloadIE::Termination; encode);
+        }
+        let ie_present = has_header_ies || has_payload_ies;
 
         // Flags that can be independently determined
         let mut fcf = self.frame_type as u16;
@@ -385,7 +626,7 @@ impl MacFrameHeader {
 
         // Put the frame control field in front
         enc_try!(buf; encode_u16, fcf.to_be());
-        stream_done!(off);
+        stream_done!(off, mac_payload_off);
     }
 
     pub fn encode_addressing(&self, buf: &mut [u8]) -> SResult<bool> {
@@ -459,7 +700,7 @@ impl MacFrameHeader {
         stream_done!(off, pan_id_compression);
     }
 
-    pub fn decode(buf: &mut [u8]) -> SResult<MacFrameHeader> {
+    pub fn decode<'b>(buf: &'b [u8]) -> SResult<(Header<'b>, usize)> {
         // Frame control field
         let (off, fcf_be) = dec_try!(buf; decode_u16);
         let fcf = u16::from_be(fcf_be);
@@ -496,29 +737,77 @@ impl MacFrameHeader {
                      version, dst_mode, src_mode, pan_id_compression);
 
         // Auxiliary security header
-        let (off, security) = if security_enabled {
+        let (mut off, security) = if security_enabled {
             let (off, security) = dec_try!(buf, off; Security::decode);
             (off, Some(security))
         } else {
             (off, None)
         };
 
-        // TODO: IEs currently not supported
-        stream_cond!(!ie_present);
+        // Information elements
+        let mut header_ies: [HeaderIE<'b>; MAX_HEADER_IES] = Default::default();
+        let mut header_ies_len = 0;
+        let mut payload_ies: [PayloadIE<'b>; MAX_PAYLOAD_IES] = Default::default();
+        let mut payload_ies_len = 0;
+
+        let mut has_payload_ies = false;
+        if ie_present {
+            loop {
+                let (next_off, ie) = dec_try!(buf, off; HeaderIE::decode);
+                off = next_off;
+                match ie {
+                    HeaderIE::Termination1 => {
+                        has_payload_ies = true;
+                        break;
+                    }
+                    HeaderIE::Termination2 => {
+                        break;
+                    }
+                    other_ie => {
+                        stream_cond!(header_ies_len + 1 < MAX_HEADER_IES);
+                        header_ies[header_ies_len] = other_ie;
+                        header_ies_len += 1;
+                    }
+                }
+            }
+        }
+        // The MAC payload includes the payload IEs.
+        let mac_payload_off = off;
+        if has_payload_ies {
+            loop {
+                let (next_off, ie) = dec_try!(buf, off; PayloadIE::decode);
+                off = next_off;
+                match ie {
+                    PayloadIE::Termination => {
+                        break;
+                    }
+                    other_ie => {
+                        stream_cond!(payload_ies_len + 1 < MAX_PAYLOAD_IES);
+                        payload_ies[payload_ies_len] = other_ie;
+                        payload_ies_len += 1;
+                    }
+                }
+            }
+        }
 
         stream_done!(off,
-                     MacFrameHeader {
-                         frame_type: frame_type,
-                         frame_pending: frame_pending,
-                         ack_requested: ack_requested,
-                         version: version,
-                         seq: seq,
-                         dst_pan: dst_pan,
-                         dst_addr: dst_addr,
-                         src_pan: src_pan,
-                         src_addr: src_addr,
-                         security: security,
-                     });
+                     (Header {
+                          frame_type: frame_type,
+                          frame_pending: frame_pending,
+                          ack_requested: ack_requested,
+                          version: version,
+                          seq: seq,
+                          dst_pan: dst_pan,
+                          dst_addr: dst_addr,
+                          src_pan: src_pan,
+                          src_addr: src_addr,
+                          security: security,
+                          header_ies: header_ies,
+                          header_ies_len: header_ies_len,
+                          payload_ies: payload_ies,
+                          payload_ies_len: payload_ies_len,
+                      },
+                      mac_payload_off));
     }
 
     pub fn decode_addressing
