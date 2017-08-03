@@ -2,5 +2,6 @@
 
 pub mod ip;
 pub mod lowpan;
+pub mod lowpan_fragment;
 pub mod util;
 pub mod ieee802154;
