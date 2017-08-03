@@ -1,8 +1,10 @@
 //! Implements Thread Type-Length-Value (TLV) formats
 
+use net::stream::SResult;
+
 pub enum Tlv {
     SourceAddress(u16),   // Sender's 16-bit MAC address
-    Mode(/* TODO */),
+    Mode(u8),
     /*
     Timeout(u32),
     Challenge,            // TODO: constructor will generate random byte string, 4 to 8 bytes in length
@@ -22,11 +24,24 @@ pub enum Tlv {
     */
 }
 
+impl Tlv {
+  pub fn encode(&self, buf: &mut [u8]) -> SResult {
+    match *self {
+      Tlv::SourceAddress(ref macAddress) => {
+        // TODO:
+        // - put this in new branch off of better_mac_headers
+        // - use stream_cond to confirm parameters are as expected
+      }
+    }
+  }
+}
+
+#[repr(u8)]
 pub enum LinkMode {
-  ReceiverOnWhenIdle,
-  SecureDataRequests,
-  FullThreadDevice,         // Vs. Minimal Thread Device
-  FullNetworkDataRequired,  // Required by this sender
+  ReceiverOnWhenIdle      = 0b00001000,
+  SecureDataRequests      = 0b00000100,
+  FullThreadDevice        = 0b00000010,         // Vs. Minimal Thread Device
+  FullNetworkDataRequired = 0b00000001,  // Required by this sender
 }
 
 // TODO: Constructor for link mode that takes variable length array of link mode options
@@ -46,3 +61,9 @@ pub enum ParentPriority {
   // Reserved = 0b10
 }
 */
+
+macro_rules! len_cond {
+    ($buf:expr, $bytes:expr) => $buf.len() >= $bytes
+}
+
+// QUESTION: How are we handling failure? Something like 'SResult'?
