@@ -1,9 +1,9 @@
 //! Implements Thread Type-Length-Value (TLV) formats
 
-/*
 pub enum Tlv {
     SourceAddress(u16),   // Sender's 16-bit MAC address
     Mode(/* TODO */),
+    /*
     Timeout(u32),
     Challenge,            // TODO: constructor will generate random byte string, 4 to 8 bytes in length
     Response([u8; 8]),
@@ -19,6 +19,7 @@ pub enum Tlv {
     TlvRequest,
     ScanMask(/* TODO */),   // Same as mode, neds to take variable number of enum options
     Connectivity { parentPriority: ParentPriority, linkQuality3: u8, linkQuality2: u8, linkQuality1: u8 }
+    */
 }
 
 pub enum LinkMode {
@@ -30,6 +31,7 @@ pub enum LinkMode {
 
 // TODO: Constructor for link mode that takes variable length array of link mode options
 
+/*
 // Used when creating a Scan Mask TLV
 pub enum MulticastResponders {
   Router,
