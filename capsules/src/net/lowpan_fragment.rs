@@ -319,7 +319,9 @@ impl<'a> RxState<'a> {
             let (consumed, written) = lowpan.decompress(&payload[0..payload_len as usize],
                                                         self.src_mac_addr.get(),
                                                         self.dst_mac_addr.get(),
-                                                        &mut packet)
+                                                        &mut packet,
+                                                        dgram_size,
+                                                        true)
                                      .map_err(|_| ReturnCode::FAIL)?;
             let remaining = payload_len - consumed;
             packet[written..written+remaining]
@@ -607,7 +609,9 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
                 let decompressed = self.lowpan.decompress(&payload[0..payload_len as usize],
                                                           src_mac_addr,
                                                           dst_mac_addr,
-                                                          &mut packet);
+                                                          &mut packet,
+                                                          0,
+                                                          false);
                 if decompressed.is_err() {
                     return (None, ReturnCode::FAIL);
                 }

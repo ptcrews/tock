@@ -862,7 +862,9 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
                     let (encap_consumed, encap_written) = self.decompress(&buf[consumed..],
                                     src_mac_addr,
                                     dst_mac_addr,
-                                    &mut next_headers)?;
+                                    &mut next_headers,
+                                    dgram_size,
+                                    is_fragment)?;
                     consumed += encap_consumed;
                     written += encap_written;
                     break;
@@ -954,10 +956,10 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         // including extension headers. This is thus the uncompressed
         // size of the IPv6 packet - the fixed IPv6 header.
         let payload_len = if is_fragment {
-            written + (buf.len() - consumed) - mem::size_of::<IP6Header>()
+            (dgram_size as usize) - mem::size_of::<IP6Header>()
         } else {
-            dgram_size - mem::size_of::<IP6Header>()
-        }
+            written + (buf.len() - consumed) - mem::size_of::<IP6Header>()
+        };
         ip6_header.payload_len = (payload_len as u16).to_be();
         Ok((consumed, written))
     }

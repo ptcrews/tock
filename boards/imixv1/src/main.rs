@@ -506,7 +506,7 @@ pub unsafe fn reset_handler() {
     for i in 0..1000 {
         kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
     }
-    //lowpan_dummy.start();
+//    lowpan_dummy.start();
     loop {
         kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
     }
