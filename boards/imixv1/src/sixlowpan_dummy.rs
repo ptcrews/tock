@@ -3,7 +3,6 @@
 use capsules::net::ip::{IP6Header, MacAddr, IPAddr, ip6_nh};
 use capsules::net::lowpan;
 use capsules::net::lowpan::{ContextStore, Context, LoWPAN};
-use capsules::net::lowpan_fragment::{FragState, TxState};
 use capsules::net::util;
 // use capsules::radio_debug;
 

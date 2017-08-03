@@ -2,7 +2,7 @@ extern crate kernel;
 use kernel::ReturnCode;
 use kernel::common::take_cell::{TakeCell, MapCell};
 use kernel::common::list::{List, ListLink, ListNode};
-use kernel::hil::radio::{Radio, TxClient, RxClient, ConfigClient};
+use kernel::hil::radio::{Radio, TxClient, RxClient/*, ConfigClient */};
 use kernel::hil::radio;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
@@ -19,7 +19,7 @@ const TIMER_RATE: usize = 10;
 const FRAG_TIMEOUT: usize = 60;
 
 pub trait ReceiveClient {
-    fn receive(&self, buf: &'static mut [u8], len: u8, result: ReturnCode)
+    fn receive(&self, buf: &'static mut [u8], len: u16, result: ReturnCode)
         -> &'static mut [u8];
 }
 
@@ -131,7 +131,6 @@ impl<'a> TxState<'a> {
         self.dgram_size.set(packet_len as u16);
     }
 
-    // To cut down on the number of necessary buffers, we do compression here
     // Takes ownership of frag_buf and gives it to the radio
     fn start_transmit<'b, C: ContextStore<'b>>(&self,
                           dgram_tag: u16,
@@ -149,7 +148,7 @@ impl<'a> TxState<'a> {
                                                   self.dst_mac_addr.get(),
                                                   &mut lowpan_packet)
                                         .map_err(|_| ReturnCode::FAIL)?;
-        // This gives the remaining, uncompressed bytes of the packet
+
         let remaining = ip6_packet.len() - consumed;
         let lowpan_len = written + remaining;
 
@@ -157,14 +156,14 @@ impl<'a> TxState<'a> {
         let result = if lowpan_len <= radio::MAX_PACKET_SIZE as usize {
             let (radio_header_len, _) = /*radio.construct_header(..)*/ 
                 (radio.payload_offset(true, true) as usize, 0);
-            // Copy over the compressed header
+
+            // Copy over the compressed header and payload
             frag_buf[radio_header_len..radio_header_len + written]
                 .copy_from_slice(&lowpan_packet[0..written]);
-            // Copy over the remaining payload
             frag_buf[radio_header_len+written..radio_header_len+written+remaining]
                 .copy_from_slice(&ip6_packet[consumed..consumed+remaining]);
-            // Setting the offset makes it so the callback knows there are no
-            // more pending frames.
+
+            // Need to set the offset, to know when the packet completes
             self.dgram_offset.set(ip6_packet.len());
             self.transmit_frame(frag_buf, (lowpan_len + radio_header_len) as u8, radio)
         // Otherwise, need to fragment
@@ -180,7 +179,8 @@ impl<'a> TxState<'a> {
         result
     }
 
-    // TODO: Should we copy over additional payload for frag1 as well?
+    // TODO: We can optionally copy over additional payload for the frag1
+    // header, but we currently do not do this.
     fn prepare_transmit_first_fragment(&self,
                                        lowpan_packet: &[u8],
                                        mut frag_buf: &'static mut [u8],
@@ -223,7 +223,6 @@ impl<'a> TxState<'a> {
 
         // Update the offset to be used for the next fragment
         self.dgram_offset.set(dgram_offset + payload_len);
-        // TODO: Include full header_size here? Or only lowpan_frag::FRAGN_HDR_SIZE?
         self.transmit_frame(frag_buf, (header_len + payload_len) as u8, radio)
     }
 
@@ -246,7 +245,7 @@ impl<'a> TxState<'a> {
     fn end_transmit(&self, acked: bool, result: ReturnCode) {
         // TODO: Error handling
         let mut packet = self.packet.take().unwrap();
-        // TODO: If a null client is valid, then we lose the packet buffer
+        // Note that if a null client is valid, then we lose the packet buffer
         self.client.get().map(move |client|
                               client.send_done(packet, self, acked, result));
     }
@@ -353,7 +352,7 @@ impl<'a> RxState<'a> {
         if client.is_some() {
             let mut buffer = self.packet.take().unwrap();
             self.packet.replace(
-                client.unwrap().receive(buffer, self.dgram_size.get() as u8, result)
+                client.unwrap().receive(buffer, self.dgram_size.get(), result)
             );
         }
     }
@@ -403,7 +402,7 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm>
 RxClient for FragState<'a, R, C, A> {
     // TODO: Handle error (result != SUCCESS). Should we even propogate errors?
     // or just drop packet/frame?
-    fn receive(&self, buf: &'static mut [u8], len: u8, result: ReturnCode) {
+    fn receive(&self, buf: &'static mut [u8], len: u8, _: ReturnCode) {
         // TODO: Generalize this
         let offset = self.radio.payload_offset(true, true);
         let (src_mac_addr, dst_mac_addr) = (MacAddr::ShortAddr(0), MacAddr::ShortAddr(0)); 
@@ -428,9 +427,6 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> ConfigClient for FragSt
 }
 */
 
-// TODO: Should we have one timer that marks every rx context, or one timer for each
-// rx context? The latter seems wasteful, the former inaccurate (since we are operating on the
-// order of 60s)
 impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> 
 time::Client for FragState<'a, R, C, A> {
     fn fired(&self) {
@@ -506,19 +502,9 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
         }
     }
 
+    #[allow(unused_must_use)]
+    // TODO: Handle failure case
     fn start_packet_transmit(&self) {
-        // We panic here, as it should never be the case that we start
-        // transmitting without the tx_buf
-        // TODO: At this point, we lose the frag_buf if we have nothing to transmit
-
-        /* START BASIC ATTEMPT
-        let mut frag_buf = self.tx_buf.take().unwrap();
-        // Apparently, a dgram_tag of 0 is invalid; therefore, we avoid it
-        let dgram_tag = self.tx_dgram_tag.get() + 1;
-        self.tx_dgram_tag.set( if dgram_tag == 0 { 1 } else { dgram_tag });
-           END BASIC ATTEMPT
-        */
-
         // TODO: Below will not work until we retrieve the buffer from the
         // radio on error - any iteration > 2 will not have the buffer anymore
         // as it was lost in the transmit call
@@ -546,6 +532,7 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
             tx_state = self.tx_states.head();
         }
         */
+
         self.tx_states.head().map(move |state| {
             // We panic here, as it should never be the case that we start
             // transmitting without the tx_buf
@@ -619,7 +606,6 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
                 let remaining = (payload_len as usize) - consumed;
                 packet[written..written+remaining]
                     .copy_from_slice(&payload[consumed..consumed+remaining]);
-                // TODO
 
             } else {
                 packet[0..payload_len as usize]
@@ -630,7 +616,6 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
         }).unwrap_or((None, ReturnCode::ENOMEM))
     }
 
-    // TODO: Bounds check everything
     // This function returns an Err if an error occurred, returns Ok(Some(RxState))
     // if the packet has been fully reassembled, or returns Ok(None) if there
     // are still pending fragments
@@ -663,6 +648,7 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
                                                dgram_offset,
                                                &self.lowpan);
             if res.is_err() {
+                // Some error occurred
                 (Some(state), ReturnCode::FAIL)
             } else if res.unwrap() {
                 // Packet fully reassembled
@@ -674,7 +660,9 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
         }).unwrap_or((None, ReturnCode::ENOMEM))
     }
 
-    // This is to be used in the case of a disassociation event
+    #[allow(dead_code)]
+    // This function is called when a disassociation event occurs, as we need
+    // to expire all pending state.
     fn discard_all_state(&self) {
         for rx_state in self.rx_states.iter() {
             rx_state.end_receive(None, ReturnCode::FAIL);

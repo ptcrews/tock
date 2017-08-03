@@ -503,7 +503,7 @@ pub unsafe fn reset_handler() {
     frag_state.schedule_next_timer();
 
     debug!("Initialization complete. Entering main loop");
-    for i in 0..1000 {
+    for _ in 0..1000 {
         kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
     }
 //    lowpan_dummy.start();

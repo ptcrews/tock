@@ -2,16 +2,14 @@
 
 use capsules::net::ip::{IP6Header, MacAddr, IPAddr, ip6_nh};
 use capsules::net::lowpan;
-use capsules::net::lowpan::{ContextStore, Context, LoWPAN};
+use capsules::net::lowpan::{ContextStore, Context};
 use capsules::net::lowpan_fragment::{FragState, TxState, TransmitClient, ReceiveClient};
 use capsules::net::util;
-// use capsules::radio_debug;
 
 use core::mem;
 use core::cell::Cell;
 
 use kernel::hil::radio;
-use kernel::hil::radio::Radio;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
 use kernel::ReturnCode;
@@ -28,28 +26,31 @@ impl<'a> DummyStore<'a> {
 
 impl<'a> ContextStore<'a> for DummyStore<'a> {
     fn get_context_from_addr(&self, ip_addr: IPAddr) -> Option<Context<'a>> {
-        return None;
         if util::matches_prefix(&ip_addr.0, self.context0.prefix, self.context0.prefix_len) {
-            Some(self.context0)
+            // TODO: Context does not work correctly
+            // Some(self.context0)
+            None
         } else {
             None
         }
     }
 
     fn get_context_from_id(&self, ctx_id: u8) -> Option<Context<'a>> {
-        return None;
         if ctx_id == 0 {
-            Some(self.context0)
+            // TODO: Context does not work correctly
+            // Some(self.context0)
+            None
         } else {
             None
         }
     }
 
     fn get_context_from_prefix(&self, prefix: &[u8], prefix_len: u8) -> Option<Context<'a>> {
-        return None;
         if prefix_len == self.context0.prefix_len &&
            util::matches_prefix(prefix, self.context0.prefix, prefix_len) {
-            Some(self.context0)
+            //TODO: Context does not work correctly
+            //Some(self.context0)
+            None
         } else {
             None
         }
@@ -197,7 +198,7 @@ LowpanTest<'a, R, C, A> {
         }
     }
 
-    fn run_check_test(&self, test_id: usize, buf: &'static mut [u8], len: u8) 
+    fn run_check_test(&self, test_id: usize, buf: &'static mut [u8], len: u16)
     -> &'static mut [u8] {
         debug!("Running test {}:", test_id);
         match test_id {
@@ -279,7 +280,7 @@ LowpanTest<'a, R, C, A> {
     }
 
     unsafe fn send_ipv6_packet(&self,
-                               mesh_local_prefix: &[u8],
+                               _: &[u8],
                                src_mac_addr: MacAddr,
                                dst_mac_addr: MacAddr) {
         let frag_state = self.frag_state;
@@ -294,10 +295,12 @@ LowpanTest<'a, R, C, A> {
                 MacAddr::ShortAddr(_) => false,
                 MacAddr::LongAddr(_) => true,
             };
+            /*
             let dst_long = match dst_mac_addr {
                 MacAddr::ShortAddr(_) => false,
                 MacAddr::LongAddr(_) => true,
             };
+            */
             let ret_code = frag_state.transmit_packet(src_mac_addr, dst_mac_addr, &mut IP6_DGRAM,
                                                       tx_state, src_long, true);
             debug!("Ret code: {:?}", ret_code);
@@ -318,16 +321,15 @@ time::Client for LowpanTest<'a, R, C, A> {
 
 impl<'a, R: radio::Radio + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
 TransmitClient for LowpanTest<'a, R, C, A> {
-    fn send_done(&self, buf: &'static mut [u8], state: &TxState, acked: bool, result: ReturnCode) {
+    fn send_done(&self, _: &'static mut [u8], _: &TxState, _: bool, _: ReturnCode) {
         debug!("Send completed!");
         self.schedule_next();
-        //self.run_test_and_increment();
     }
 }
 
 impl<'a, R: radio::Radio + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
 ReceiveClient for LowpanTest<'a, R, C, A> {
-    fn receive(&self, buf: &'static mut [u8], len: u8, result: ReturnCode) -> &'static mut [u8] {
+    fn receive(&self, buf: &'static mut [u8], len: u16, _: ReturnCode) -> &'static mut [u8] {
         debug!("Receive completed");
         let test_num = self.test_counter.get();
         self.test_counter.set((test_num + 1) % self.num_tests());
@@ -337,16 +339,8 @@ ReceiveClient for LowpanTest<'a, R, C, A> {
 
 static mut IP6_DGRAM: [u8; IP6_HDR_SIZE + PAYLOAD_LEN] = [0; IP6_HDR_SIZE + PAYLOAD_LEN];
 
-/*
-pub fn simple_frag_test<'a, R: Radio + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
-(frag_state: &FragState<'a, R, C, A>, tx_state: &'static TxState<'a>) {
-    ipv6_send_packet_test(frag_state, tx_state, TF::TrafficFlow, 42, SAC::Inline, DAC::Inline);
-}
-*/
-
-// TODO: Len cannot be u8; will overflow on full IPv6 packet
 fn ipv6_check_receive_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC,
-                             recv_packet: &'static mut [u8], len: u8) -> &'static mut [u8]{
+                             recv_packet: &'static mut [u8], len: u16) -> &'static mut [u8]{
     ipv6_prepare_packet(tf, hop_limit, sac, dac);
     debug!("Len: {}", len);
     unsafe {
@@ -362,7 +356,6 @@ fn ipv6_check_receive_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC,
 
 
 fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
-    let mut ip6_datagram = [0 as u8; IP6_HDR_SIZE + PAYLOAD_LEN];
     {
         let mut payload = unsafe { &mut IP6_DGRAM[IP6_HDR_SIZE..] };
         for i in 0..PAYLOAD_LEN {
