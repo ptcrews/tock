@@ -92,7 +92,7 @@ impl<'a> ListNode<'a, TxState<'a>> for TxState<'a> {
 }
 
 impl<'a> TxState<'a> {
-    pub fn new(client: &'static TransmitClient) -> TxState<'a> {
+    pub fn new() -> TxState<'a> {
         TxState {
             packet: TakeCell::empty(),
             src_mac_addr: Cell::new(MacAddr::ShortAddr(0)),
@@ -102,7 +102,7 @@ impl<'a> TxState<'a> {
             dgram_size: Cell::new(0),
             dgram_offset: Cell::new(0),
             fragment: Cell::new(false),
-            client: Cell::new(Some(client)),
+            client: Cell::new(None),
             next: ListLink::empty(),
         }
     }
@@ -314,7 +314,6 @@ impl<'a> RxState<'a> {
                           dgram_size: u16,
                           dgram_offset: usize,
                           lowpan: &'b LoWPAN<'b, C>) -> Result<bool, ReturnCode> {
-        debug!("Payload len: {}\t Offset: {}", payload_len, dgram_offset);
         let mut packet = self.packet.take().ok_or(ReturnCode::ENOMEM)?;
         let uncompressed_len = if dgram_offset == 0 {
             let (consumed, written) = lowpan.decompress(&payload[0..payload_len as usize],
@@ -328,14 +327,10 @@ impl<'a> RxState<'a> {
             written+remaining
                 
         } else {
-            if dgram_offset <= 30 && dgram_offset+payload_len >= 30 {
-                debug!("Hit 30: {}", payload[30]);
-            }
             packet[dgram_offset..dgram_offset+payload_len]
                 .copy_from_slice(&payload[0..payload_len]);
             payload_len
         };
-        debug!("Decompressed len: {}", uncompressed_len);
         self.packet.replace(packet);
         if !self.bitmap
             .map(|bitmap| bitmap.set_bits(dgram_offset / 8, (dgram_offset+uncompressed_len) / 8))
@@ -555,19 +550,22 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
             let mut frag_buf = self.tx_buf.take().unwrap();
             let dgram_tag = self.tx_dgram_tag.get() + 1;
             self.tx_dgram_tag.set( if dgram_tag == 0 { 1 } else { dgram_tag});
+            self.tx_busy.set(true);
             state.start_transmit(dgram_tag, frag_buf, self.radio, self.lowpan)
         }).unwrap_or(Ok(ReturnCode::SUCCESS));
-        self.tx_busy.set(true);
     }
 
     // This function ends the current packet transmission state, and starts
     // sending the next queued packet before calling the current callback.
     fn end_packet_transmit(&self, acked: bool, returncode: ReturnCode) {
+        debug!("Transmit ended");
         self.tx_busy.set(false);
         // Note that tx_state can be None if a disassociation event occurred,
         // in which case end_transmit was already called.
         self.tx_states.pop_head().map(|tx_state| {
+            debug!("Popped head. Is some: {}", self.tx_states.head().is_some());
             self.start_packet_transmit();
+            debug!("Is some: {}", self.tx_states.head().is_some());
             tx_state.end_transmit(acked, returncode);
         });
     }

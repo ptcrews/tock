@@ -404,6 +404,11 @@ pub unsafe fn reset_handler() {
         VirtualMuxAlarm::new(mux_alarm),
         24);
 
+    let dummy_alarm_2 = static_init!(
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        VirtualMuxAlarm::new(mux_alarm),
+        24);
+
     let default_context = static_init!(
         lowpan::Context<'static>,
         lowpan::Context {
@@ -431,16 +436,20 @@ pub unsafe fn reset_handler() {
         438/8);
     dummy_alarm.set_client(frag_state);
 
+    let tx_state = static_init!(
+        capsules::net::lowpan_fragment::TxState<'static>,
+        capsules::net::lowpan_fragment::TxState::new());
+
     let lowpan_dummy = static_init!(
         lowpan_frag_dummy::LowpanTest<'static,
             RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
+            sixlowpan_dummy::DummyStore<'static>,
             VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
-        lowpan_frag_dummy::LowpanTest::new(rf233, dummy_alarm),
+        lowpan_frag_dummy::LowpanTest::new(rf233, frag_state, tx_state, dummy_alarm_2),
         180/8);
+    dummy_alarm_2.set_client(lowpan_dummy);
 
-    let tx_state = static_init!(
-        capsules::net::lowpan_fragment::TxState<'static>,
-        capsules::net::lowpan_fragment::TxState::new(lowpan_dummy));
+    tx_state.set_transmit_client(lowpan_dummy);
 
     let rx_state = static_init!(
         capsules::net::lowpan_fragment::RxState<'static>,
@@ -497,7 +506,7 @@ pub unsafe fn reset_handler() {
     for i in 0..1000 {
         kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
     }
-    lowpan_frag_dummy::simple_frag_test(frag_state, tx_state);
+    //lowpan_dummy.start();
     loop {
         kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
     }
