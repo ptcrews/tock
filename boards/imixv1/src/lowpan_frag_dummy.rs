@@ -27,9 +27,7 @@ impl<'a> DummyStore<'a> {
 impl<'a> ContextStore<'a> for DummyStore<'a> {
     fn get_context_from_addr(&self, ip_addr: IPAddr) -> Option<Context<'a>> {
         if util::matches_prefix(&ip_addr.0, self.context0.prefix, self.context0.prefix_len) {
-            // TODO: Context does not work correctly
-            // Some(self.context0)
-            None
+            Some(self.context0)
         } else {
             None
         }
@@ -37,9 +35,7 @@ impl<'a> ContextStore<'a> for DummyStore<'a> {
 
     fn get_context_from_id(&self, ctx_id: u8) -> Option<Context<'a>> {
         if ctx_id == 0 {
-            // TODO: Context does not work correctly
-            // Some(self.context0)
-            None
+            Some(self.context0)
         } else {
             None
         }
@@ -48,9 +44,7 @@ impl<'a> ContextStore<'a> for DummyStore<'a> {
     fn get_context_from_prefix(&self, prefix: &[u8], prefix_len: u8) -> Option<Context<'a>> {
         if prefix_len == self.context0.prefix_len &&
            util::matches_prefix(prefix, self.context0.prefix, prefix_len) {
-            //TODO: Context does not work correctly
-            //Some(self.context0)
-            None
+            Some(self.context0)
         } else {
             None
         }
@@ -322,7 +316,7 @@ time::Client for LowpanTest<'a, R, C, A> {
 impl<'a, R: radio::Radio + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
 TransmitClient for LowpanTest<'a, R, C, A> {
     fn send_done(&self, _: &'static mut [u8], _: &TxState, _: bool, _: ReturnCode) {
-        debug!("Send completed!");
+        debug!("Send completed");
         self.schedule_next();
     }
 }
@@ -342,9 +336,8 @@ static mut IP6_DGRAM: [u8; IP6_HDR_SIZE + PAYLOAD_LEN] = [0; IP6_HDR_SIZE + PAYL
 fn ipv6_check_receive_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC,
                              recv_packet: &'static mut [u8], len: u16) -> &'static mut [u8]{
     ipv6_prepare_packet(tf, hop_limit, sac, dac);
-    debug!("Len: {}", len);
     unsafe {
-        for i in 0..240 {
+        for i in 0..len as usize {
             if recv_packet[i] != IP6_DGRAM[i] {
                 debug!("Packets differ at idx: {} where recv = {}, ref = {}",
                        i, recv_packet[i], IP6_DGRAM[i]);
