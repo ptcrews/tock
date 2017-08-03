@@ -344,6 +344,7 @@ pub fn simple_frag_test<'a, R: Radio + 'a, C: ContextStore<'a> + 'a, A: time::Al
 }
 */
 
+// TODO: Len cannot be u8; will overflow on full IPv6 packet
 fn ipv6_check_receive_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC,
                              recv_packet: &'static mut [u8], len: u8) -> &'static mut [u8]{
     ipv6_prepare_packet(tf, hop_limit, sac, dac);

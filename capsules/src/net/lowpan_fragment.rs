@@ -558,14 +558,11 @@ impl <'a, R: Radio, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> 
     // This function ends the current packet transmission state, and starts
     // sending the next queued packet before calling the current callback.
     fn end_packet_transmit(&self, acked: bool, returncode: ReturnCode) {
-        debug!("Transmit ended");
         self.tx_busy.set(false);
         // Note that tx_state can be None if a disassociation event occurred,
         // in which case end_transmit was already called.
         self.tx_states.pop_head().map(|tx_state| {
-            debug!("Popped head. Is some: {}", self.tx_states.head().is_some());
             self.start_packet_transmit();
-            debug!("Is some: {}", self.tx_states.head().is_some());
             tx_state.end_transmit(acked, returncode);
         });
     }

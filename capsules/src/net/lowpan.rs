@@ -780,11 +780,18 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     /// number of uncompressed header bytes written into `out_buf`. Payload
     /// bytes and non-compressed next headers are not written, so the remaining
     /// `buf.len() - consumed` bytes must still be copied over to `out_buf`.
+    /// Note that in the case of fragmentation, the total length of the IPv6
+    /// packet cannot be inferred from a single frame, and is instead provided
+    /// by the dgram_size field in the fragmentation header. Thus, if we are
+    /// decompressing a fragment, we rely on the dgram_size field; otherwise,
+    /// we infer the length from the size of buf.
     pub fn decompress(&self,
                       buf: &[u8],
                       src_mac_addr: MacAddr,
                       dst_mac_addr: MacAddr,
-                      mut out_buf: &mut [u8])
+                      mut out_buf: &mut [u8],
+                      dgram_size: u16,
+                      is_fragment: bool)
                       -> Result<(usize, usize), ()> {
         // Get the LOWPAN_IPHC header (the first two bytes are the header)
         let iphc_header_1: u8 = buf[0];
@@ -946,7 +953,11 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
         // The IPv6 header length field is the size of the IPv6 payload,
         // including extension headers. This is thus the uncompressed
         // size of the IPv6 packet - the fixed IPv6 header.
-        let payload_len = written + (buf.len() - consumed) - mem::size_of::<IP6Header>();
+        let payload_len = if is_fragment {
+            written + (buf.len() - consumed) - mem::size_of::<IP6Header>()
+        } else {
+            dgram_size - mem::size_of::<IP6Header>()
+        }
         ip6_header.payload_len = (payload_len as u16).to_be();
         Ok((consumed, written))
     }
