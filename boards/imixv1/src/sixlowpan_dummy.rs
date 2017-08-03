@@ -14,6 +14,8 @@ use kernel::hil::radio::Radio;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
 
+static TX_BUF: [u8; 128] = [0; 128];
+
 pub struct DummyStore<'a> {
     context0: Context<'a>,
 }
@@ -389,6 +391,7 @@ unsafe fn send_ipv6_packet<'a>(radio: &'a Radio,
         },
     };
     let lowpan = LoWPAN::new(&store);
+    //let frag_state = FragState::new(radio, &lowpan, TX_BUF, &self.alarm);
     let (consumed, written) = lowpan.compress(&ip6_datagram,
                   src_mac_addr,
                   dst_mac_addr,
@@ -408,7 +411,9 @@ unsafe fn send_ipv6_packet<'a>(radio: &'a Radio,
     let (d_consumed, d_written) = lowpan.decompress(&RF233_BUF[offset..offset + total],
                     src_mac_addr,
                     dst_mac_addr,
-                    &mut out_ip6_datagram)
+                    &mut out_ip6_datagram,
+                    0,
+                    false)
         .expect("Error decompressing packet");
     let d_payload_len = total - d_consumed;
     let d_total = d_written + d_payload_len;
