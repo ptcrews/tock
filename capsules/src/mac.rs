@@ -16,7 +16,7 @@ use kernel::ReturnCode;
 use kernel::common::take_cell::TakeCell;
 use kernel::hil::radio;
 use net::ieee802154::*;
-use net::stream::{encode_u8, encode_u16, encode_u32, encode_bytes_be};
+use net::stream::{encode_u8, encode_u16, encode_u32, encode_bytes};
 use net::stream::SResult;
 
 /// This is auxiliary data to keep track of the state of a radio buffer (the
@@ -71,7 +71,7 @@ impl FrameInfo {
     // frame type and security levels. Returns the (offset, len) of the m/c data
     // fields, not including the MIC, The a data is always the remaining prefix
     // of the header, so it can be determined implicitly.
-    fn get_ccm_encrypt_ranges(&self, encrypt: bool) -> (usize, usize) {
+    fn get_ccm_encrypt_ranges(&self, level: &SecurityLevel) -> (usize, usize) {
         // IEEE 802.15.4-2015: Table 9-1. Exceptions to Private Payload field
         // The boundary between open and private payload fields depends
         // on the type of frame.
@@ -91,7 +91,7 @@ impl FrameInfo {
         };
 
         // IEEE 802.15.4-2015: Table 9-3. a data and m data
-        if !encrypt {
+        if !level.encryption_needed() {
             // If only integrity is need, a data is the whole frame
             (radio::PSDU_OFFSET + self.unsecured_frame_length(), 0)
         } else {
@@ -159,9 +159,8 @@ pub trait RxClient {
 enum TxState {
     Idle,
     ReadyToSecure,
-    Mic,
-    EncMic1,
-    EncMic2,
+    AuthDone,
+    EncDone,
     ReadyToTransmit,
 }
 
@@ -169,9 +168,8 @@ enum TxState {
 enum RxState {
     Idle,
     ReadyToUnsecure,
-    EncMic,
-    Mic1,
-    Mic2,
+    DecDone,
+    AuthDone,
     ReadyToReturn,
 }
 
@@ -244,22 +242,19 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
     // TODO: Look up the key in the list of thread neighbors
     fn lookup_key(&self, level: SecurityLevel, key_id: KeyId)
         -> Option<([u8; 16])> {
+        let fake_key = [0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF];
         if level == SecurityLevel::None {
             None
         } else {
-            Some([0; 16])
+            Some(fake_key)
         }
     }
 
     // TODO: Look up the extended device address from a short address
     // Not sure if more information is needed
     fn lookup_addr_long(&self, src_addr: Option<MacAddress>) -> Option<([u8; 8])> {
-        src_addr.map_or(None, |addr| {
-            match addr {
-                MacAddress::Short(_) => Some([0; 8]),
-                MacAddress::Long(long_addr) => Some(long_addr),
-            }
-        })
+        let fake_addr = [0xac, 0xde, 0x48, 0, 0, 0, 0, 1];
+        Some(fake_addr)
     }
 
     fn encode_ccm_nonce(&self,
@@ -268,7 +263,7 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                         frame_counter: u32,
                         level: SecurityLevel) -> SResult {
         // IEEE 802.15.4-2015: 9.3.4, CCM* nonce
-        let off = enc_consume!(buf; encode_bytes_be, addr_long);
+        let off = enc_consume!(buf; encode_bytes, addr_long);
         let off = enc_consume!(buf, off; encode_u32, frame_counter);
         let off = enc_consume!(buf, off; encode_u8, level as u8);
         stream_done!(off);
@@ -372,7 +367,7 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
     }
 
     fn start_ccm_auth(&self) {
-        // TODO: call aes.crypt_cbc
+        // TODO: call aes_crypt_cbc
     }
 
     // Prepares crypt_buf with the input for the CCM* encryption transformation.
@@ -423,7 +418,7 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
     }
 
     fn start_ccm_encrypt(&self) {
-        // TODO: call aes.crypt_ctr
+        // TODO: call aes_crypt_ctr
     }
 
     // The first step in the procedure to transmit a frame is to perform the
@@ -465,10 +460,9 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                 let frame_info = self.tx_info.get().unwrap();
                 let (ref level, ref key, ref nonce) =
                     frame_info.security_params.unwrap();
-                let encrypt = level.encryption_needed();
 
                 // Get positions of a and m data
-                let (m_off, m_len) = frame_info.get_ccm_encrypt_ranges(encrypt);
+                let (m_off, m_len) = frame_info.get_ccm_encrypt_ranges(level);
                 self.tx_m_off.set(m_off);
                 self.tx_m_len.set(m_len);
 
@@ -482,38 +476,15 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
 
                 // Set state before starting CCM* in case callback
                 // fires immediately
-                if !encrypt {
-                    self.tx_state.set(TxState::Mic);
-                } else {
-                    self.tx_state.set(TxState::EncMic1);
-                }
-                // TODO: set encryption key to the security key
+                self.tx_state.set(TxState::AuthDone);
+                // TODO: self.crypto.set_key(key, 16);
                 self.crypt_busy.set(true);
                 self.start_ccm_auth();
 
                 // Wait for crypt_done to trigger the next transmit state
                 (ReturnCode::SUCCESS, None)
             }
-            TxState::Mic => {
-                // The authentication tag is now the first mic_len bytes of
-                // the last 16-byte block in crypt_buf. Append that to the
-                // frame and it is ready to transmit.
-                let crypt_t_off = self.crypt_buf_len.get() - 16;
-
-                let frame_info = self.tx_info.get().unwrap();
-                let mic_len = frame_info.mic_len;
-                let t_off = self.tx_m_off.get() + self.tx_m_len.get();
-                self.crypt_buf.map(|cbuf| {
-                    self.tx_buf.map(|buf| {
-                        buf[t_off..t_off + mic_len]
-                            .copy_from_slice(&cbuf[crypt_t_off..crypt_t_off + mic_len]);
-                    });
-                });
-
-                self.crypt_busy.set(false);
-                self.step_transmit_state(TxState::ReadyToTransmit)
-            }
-            TxState::EncMic1 => {
+            TxState::AuthDone => {
                 // The authentication tag T is now the first mic_len bytes of
                 // the last 16-byte block in crypt_buf. We append that to the
                 // frame, and then encrypt the message data.
@@ -537,11 +508,12 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                     self.prepare_ccm_encrypt(nonce,
                                              &buf[m_off..m_off + m_len]);
                 });
-                self.tx_state.set(TxState::EncMic2);
+
+                self.tx_state.set(TxState::EncDone);
                 self.start_ccm_encrypt();
                 (ReturnCode::SUCCESS, None)
             }
-            TxState::EncMic2 => {
+            TxState::EncDone => {
                 // The first block of crypt_buf is now E(Key, A_0), and T is
                 // already appended to the frame in tx_buf, so we should xor
                 // the first mic_len bytes of crypt_buf with that to produce the
@@ -669,36 +641,57 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                 let frame_info = self.rx_info.get().unwrap();
                 let (ref level, ref key, ref nonce) =
                     frame_info.security_params.unwrap();
-                let encrypted = level.encryption_needed();
 
                 // Get positions of a and c data
-                let (c_off, c_len) = frame_info.get_ccm_encrypt_ranges(encrypted);
+                let (c_off, c_len) = frame_info.get_ccm_encrypt_ranges(level);
                 self.rx_c_off.set(c_off);
                 self.rx_c_len.set(c_len);
 
+                // CCM* decryption (which is the same as encryption)
+                self.rx_buf.map(|buf| {
+                    self.prepare_ccm_encrypt(nonce,
+                                             &buf[c_off..c_off + c_len]);
+                });
+
                 // Set state before starting CCM*
-                // TODO: set encryption key to the security key
+                self.rx_state.set(RxState::DecDone);
+                // TODO: self.crypto.set_key(key, 16);
                 self.crypt_busy.set(true);
-                if !encrypted {
-                    self.step_receive_state(RxState::Mic1);
-                } else {
-                    // CCM* decryption (which is the same as encryption)
-                    self.rx_state.set(RxState::EncMic);
-                    self.rx_buf.map(|buf| {
-                        self.prepare_ccm_encrypt(nonce,
-                                                 &buf[c_off..c_off + c_len]);
-                    });
-                    self.start_ccm_encrypt();
-                }
+                self.start_ccm_encrypt();
             }
-            RxState::Mic1 => {
+            RxState::DecDone => {
+                // The first block of crypt_buf is now E(Key, A_0), and U is
+                // already at the end of the frame in rx_buf, so we should xor
+                // the first mic_len bytes of crypt_buf with that to produce the
+                // unencrypted MIC, T = U xor E(key, A_0). Then, we should copy the
+                // decrypted private data payload from the first m_len bytes
+                // of the remaining blocks in crypt_buf over to the frame
+                // payload in rx_buf.
+                let frame_info = self.rx_info.get().unwrap();
+                let mic_len = frame_info.mic_len;
+                let c_off = self.rx_c_off.get();
+                let c_len = self.rx_c_len.get();
+                self.crypt_buf.map(|cbuf| {
+                    self.rx_buf.map(|buf| {
+                        let t_off = c_off + c_len;
+                        for (b, c) in buf[t_off..].iter_mut()
+                            .zip(cbuf.iter()).take(mic_len) {
+                            *b ^= *c;
+                        }
+
+                        buf[c_off..c_off + c_len]
+                            .copy_from_slice(&cbuf[16..16 + c_len]);
+                    });
+                });
+
+                // Now, rx_buf contains the unsecured frame with the unencrypted
+                // MIC at the end. Hence, the procedure for verifying the tag is
+                // exactly the same as if starting from an unencrypted but
+                // integrity-protected frame.
                 // At this point, rx_buf contains the plaintext authentication
                 // data and plaintext payload data, followed by the
                 // authentication tag at the end.
-                let frame_info = self.rx_info.get().unwrap();
                 let (_, _, ref nonce) = frame_info.security_params.unwrap();
-                let c_off = self.rx_c_off.get();
-                let c_len = self.rx_c_len.get();
                 self.rx_buf.map(|buf| {
                     self.prepare_ccm_auth(nonce,
                                           frame_info.mic_len,
@@ -706,10 +699,10 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
                                           &buf[c_off..c_off + c_len]);
                 });
 
-                self.rx_state.set(RxState::Mic2);
+                self.rx_state.set(RxState::AuthDone);
                 self.start_ccm_auth();
             }
-            RxState::Mic2 => {
+            RxState::AuthDone => {
                 // The recomputed MAC tag T' is the first mic_len bytes of the
                 // last 16-byte block of crypt_buf. Compare that with the
                 // transmitted MAC tag T to verify the integrity of the frame.
@@ -754,37 +747,6 @@ impl<'a, R: radio::Radio + 'a> MacDevice<'a, R> {
 
                 // Return the buffer to the radio
                 self.step_receive_state(RxState::ReadyToReturn);
-            }
-            RxState::EncMic => {
-                // The first block of crypt_buf is now E(Key, A_0), and U is
-                // already at the end of the frame in rx_buf, so we should xor
-                // the first mic_len bytes of crypt_buf with that to produce the
-                // unencrypted MIC, T = U xor E(key, A_0). Then, we should copy the
-                // decrypted private data payload from the first m_len bytes
-                // of the remaining blocks in crypt_buf over to the frame
-                // payload in rx_buf.
-                let frame_info = self.rx_info.get().unwrap();
-                let mic_len = frame_info.mic_len;
-                let c_off = self.rx_c_off.get();
-                let c_len = self.rx_c_len.get();
-                self.crypt_buf.map(|cbuf| {
-                    self.rx_buf.map(|buf| {
-                        let t_off = c_off + c_len;
-                        for (b, c) in buf[t_off..].iter_mut()
-                            .zip(cbuf.iter()).take(mic_len) {
-                            *b ^= *c;
-                        }
-
-                        buf[c_off..c_off + c_len]
-                            .copy_from_slice(&cbuf[16..16 + c_len]);
-                    });
-                });
-
-                // Now, rx_buf contains the unsecured frame with the unencrypted
-                // MIC at the end. Hence, the procedure for verifying the tag is
-                // exactly the same as if starting from an unencrypted but
-                // integrity-protected frame.
-                self.step_receive_state(RxState::Mic1);
             }
             RxState::ReadyToReturn => {
                 self.rx_state.set(RxState::Idle);
@@ -986,11 +948,12 @@ impl<'a, R: radio::Radio + 'a> radio::ConfigClient for MacDevice<'a, R> {
     }
 }
 
-// TODO: crypt callback
-// impl<'a, R: radio::Radio + 'a> CryptoClient for MacDevice<'a, R> {
-//     fn crypt_done(&self, buf: &'static mut [u8], iv: &'static mut [u8], result: ReturnCode) {
+// impl<'a, R: radio::Radio + 'a, C: SymmetricEncryption + 'a>
+//     symmetric_encryption::Client for MacDevice<'a, R, C> {
+//     fn crypt_done(&self, buf: &'static mut [u8], iv: &'static mut [u8], len: usize) -> ReturnCode {
 //         self.crypt_buf.replace(buf);
-//         self.crypt_iv.replace(buf);
+//         self.crypt_iv.replace(iv);
 //         self.trigger_states();
+//         ReturnCode::SUCCESS
 //     }
 // }
