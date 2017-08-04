@@ -1,10 +1,3 @@
-<<<<<<< HEAD
-use kernel::common::SResult;
-use kernel::common::stream::{decode_u8, decode_u16, decode_u32, decode_bytes_be};
-use kernel::common::stream::{encode_u8, encode_u16, encode_u32, encode_bytes_be};
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-=======
 //! Implements IEEE 802.15.4-2015 header encoding and decoding.
 //! Supports the general MAC frame format, which encompasses data frames, beacon
 //! frames, MAC command frames, and the like.
@@ -14,7 +7,6 @@ use net::stream::{encode_u8, encode_u16, encode_u32, encode_bytes, encode_bytes_
 use net::stream::SResult;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
->>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
 pub enum MacAddress {
     Short(u16),
     Long([u8; 8]),
@@ -62,22 +54,13 @@ mod frame_control {
 }
 
 #[repr(u16)]
-<<<<<<< HEAD
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum FrameType {
-=======
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FrameType {
     // Reserved = 0b100,
->>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
     Beacon = 0b000,
     Data = 0b001,
     Acknowledgement = 0b010,
     MACCommand = 0b011,
-<<<<<<< HEAD
-    // Reserved = 0b100,
-=======
->>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
     Multipurpose = 0b101,
     Fragment = 0b110,
     Extended = 0b111,
@@ -99,21 +82,12 @@ impl FrameType {
 }
 
 #[repr(u16)]
-<<<<<<< HEAD
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum FrameVersion {
-    V2003 = 0x0000,
-    V2006 = 0x1000,
-    V2015 = 0x2000, 
-    // Reserved = 0x3000,
-=======
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FrameVersion {
     // Reserved = 0x3000
     V2003 = 0x0000,
     V2006 = 0x1000,
     V2015 = 0x2000,
->>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
 }
 
 impl FrameVersion {
@@ -128,11 +102,7 @@ impl FrameVersion {
 }
 
 #[repr(u8)]
-<<<<<<< HEAD
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-=======
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
->>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
 pub enum AddressMode {
     NotPresent = 0b00,
     Short = 0b10,
@@ -165,33 +135,20 @@ impl AddressMode {
 }
 
 mod security_control {
-<<<<<<< HEAD
-    pub const SECURITY_LEVEL_MASK: u8 = 0b11;
-=======
     pub const SECURITY_LEVEL_MASK: u8 = 0b111;
->>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
     pub const KEY_ID_MODE_MASK: u8 = 0b11 << 3;
     pub const FRAME_COUNTER_SUPPRESSION: u8 = 1 << 5;
     pub const ASN_IN_NONCE: u8 = 1 << 6;
 }
 
 #[repr(u8)]
-<<<<<<< HEAD
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum SecurityLevel {
-=======
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SecurityLevel {
     // Reserved = 0b100,
->>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
     None = 0b000,
     Mic32 = 0b001,
     Mic64 = 0b010,
     Mic128 = 0b011,
-<<<<<<< HEAD
-    // RESERVED = 0b100,
-=======
->>>>>>> a93ec30b1cf7079425fe732b41a9d9d76649d0b1
     EncMic32 = 0b101,
     EncMic64 = 0b110,
     EncMic128 = 0b111,

@@ -70,10 +70,9 @@ struct Imixv1 {
                                                  VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>>,
                                                  */
     radio: &'static capsules::net::lowpan_fragment::FragState<'static,
-        capsules::rf233::RF233<'static, capsules::virtual_spi::VirtualSpiMasterDevice<'static,
-        sam4l::spi::Spi>>, sixlowpan_dummy::DummyStore<'static>,
+        capsules::mac::MacDevice<'static, RF233Device>, sixlowpan_dummy::DummyStore<'static>,
         capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>>,
-                                                 capsules::mac::MacDevice<'static, RF233Device>>,
+
     crc: &'static capsules::crc::Crc<'static, sam4l::crccu::Crccu<'static>>,
     usb_driver: &'static capsules::usb_user::UsbSyscallDriver<'static,
                         capsules::usbc_client::Client<'static, sam4l::usbc::Usbc<'static>>>,
@@ -393,12 +392,24 @@ pub unsafe fn reset_handler() {
     rf233_spi.set_client(rf233);
     rf233.initialize(&mut RF233_BUF, &mut RF233_REG_WRITE, &mut RF233_REG_READ);
 
-    let dummy_alarm = static_init!(
-        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
-        VirtualMuxAlarm::new(mux_alarm),
-        24);
+    let radio_mac = static_init!(
+        capsules::mac::MacDevice<'static, RF233Device>,
+        capsules::mac::MacDevice::new(rf233),
+        0);
+    /*
+    let radio_capsule = static_init!(
+        capsules::radio::RadioDriver<'static,
+                                     capsules::mac::MacDevice<'static, RF233Device>>,
+        capsules::radio::RadioDriver::new(radio_mac),
+        0);
+        */
+    //radio_capsule.config_buffer(&mut RADIO_BUF);
+    rf233.set_transmit_client(radio_mac);
+    rf233.set_receive_client(radio_mac, &mut RF233_RX_BUF);
+    rf233.set_config_client(radio_mac);
 
-    let dummy_alarm_2 = static_init!(
+
+    let frag_state_alarm = static_init!(
         VirtualMuxAlarm<'static, sam4l::ast::Ast>,
         VirtualMuxAlarm::new(mux_alarm),
         24);
@@ -422,26 +433,32 @@ pub unsafe fn reset_handler() {
 
     let frag_state = static_init!(
         capsules::net::lowpan_fragment::FragState<'static,
-            RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
-            //capsules::net::lowpan::ContextStore<'static>,
+            capsules::mac::MacDevice<'static, RF233Device>>,
+            //RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
             sixlowpan_dummy::DummyStore<'static>,
             VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
-        capsules::net::lowpan_fragment::FragState::new(rf233, lowpan, &mut RADIO_BUF, dummy_alarm),
+        capsules::net::lowpan_fragment::FragState::new(, lowpan, &mut RADIO_BUF,
+                                                       frag_state_alarm),
         438/8);
-    dummy_alarm.set_client(frag_state);
+    frag_state_alarm.set_client(frag_state);
 
     let tx_state = static_init!(
         capsules::net::lowpan_fragment::TxState<'static>,
         capsules::net::lowpan_fragment::TxState::new());
+
+    let lowpan_dummy_alarm = static_init!(
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        VirtualMuxAlarm::new(mux_alarm),
+        24);
 
     let lowpan_dummy = static_init!(
         lowpan_frag_dummy::LowpanTest<'static,
             RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
             sixlowpan_dummy::DummyStore<'static>,
             VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
-        lowpan_frag_dummy::LowpanTest::new(rf233, frag_state, tx_state, dummy_alarm_2),
+        lowpan_frag_dummy::LowpanTest::new(rf233, frag_state, tx_state, lowpan_dummy_alarm),
         180/8);
-    dummy_alarm_2.set_client(lowpan_dummy);
+    lowpan_dummy_alarm.set_client(lowpan_dummy);
 
     tx_state.set_transmit_client(lowpan_dummy);
 
@@ -451,38 +468,10 @@ pub unsafe fn reset_handler() {
 
     frag_state.add_rx_state(rx_state);
     frag_state.set_receive_client(lowpan_dummy);
-            
-    /*
-    let radio_capsule = static_init!(
-        capsules::radio::RadioDriver<'static,
-                                     RF233<'static,
-                                           VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>>,
-        capsules::radio::RadioDriver::new(rf233),
-        832/8);
-        */
-    //radio_capsule.config_buffer(&mut RADIO_BUF);
-    //rf233.set_transmit_client(radio_capsule);
-    rf233.set_transmit_client(frag_state);
-    //rf233.set_receive_client(radio_capsule, &mut RF233_RX_BUF);
-    rf233.set_receive_client(frag_state, &mut RF233_RX_BUF);
-    //rf233.set_config_client(radio_capsule);
 
-    let radio_mac = static_init!(
-        capsules::mac::MacDevice<'static, RF233Device>,
-        capsules::mac::MacDevice::new(rf233),
-        0);
-    let radio_capsule = static_init!(
-        capsules::radio::RadioDriver<'static,
-                                     capsules::mac::MacDevice<'static, RF233Device>>,
-        capsules::radio::RadioDriver::new(radio_mac),
-        0);
-    radio_capsule.config_buffer(&mut RADIO_BUF);
     radio_mac.set_transmit_client(radio_capsule);
-    radio_mac.set_receive_client(radio_capsule);
-    rf233.set_transmit_client(radio_mac);
-    rf233.set_receive_client(radio_mac, &mut RF233_RX_BUF);
-    rf233.set_config_client(radio_mac);
-
+    radio_mac.set_receive_client(radio_capsule, &mut RF233_RX_BUF);
+            
     // Configure the USB controller
     let usb_client = static_init!(
         capsules::usbc_client::Client<'static, sam4l::usbc::Usbc<'static>>,

@@ -7,6 +7,7 @@ use core::result::Result;
 use net::ip::{IP6Header, MacAddr, IPAddr, ip6_nh};
 use net::util;
 use net::util::{slice_to_u16, u16_to_slice};
+use net::ieee802154::MacAddress;
 
 /// Contains bit masks and constants related to the two-byte header of the
 /// LoWPAN_IPHC encoding format.
@@ -106,16 +107,16 @@ pub trait ContextStore<'a> {
 
 /// Computes the LoWPAN Interface Identifier from either the 16-bit short MAC or
 /// the IEEE EUI-64 that is derived from the 48-bit MAC.
-pub fn compute_iid(mac_addr: &MacAddr) -> [u8; 8] {
+pub fn compute_iid(mac_addr: &MacAddress) -> [u8; 8] {
     match mac_addr {
-        &MacAddr::ShortAddr(short_addr) => {
+        &MacAddress::Short(short_addr) => {
             // IID is 0000:00ff:fe00:XXXX, where XXXX is 16-bit MAC
             let mut iid: [u8; 8] = iphc::MAC_BASE;
             iid[6] = (short_addr >> 1) as u8;
             iid[7] = (short_addr & 0xff) as u8;
             iid
         }
-        &MacAddr::LongAddr(long_addr) => {
+        &MacAddress::Long(long_addr) => {
             // IID is IEEE EUI-64 with universal/local bit inverted
             let mut iid: [u8; 8] = long_addr;
             iid[0] ^= iphc::MAC_UL;
@@ -287,8 +288,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     /// - consumed` bytes must still be copied over to `buf`.
     pub fn compress(&self,
                     ip6_datagram: &[u8],
-                    src_mac_addr: MacAddr,
-                    dst_mac_addr: MacAddr,
+                    src_mac_addr: MacAddress,
+                    dst_mac_addr: MacAddress,
                     mut buf: &mut [u8])
                     -> Result<(usize, usize), ()> {
         let ip6_header: &IP6Header = unsafe { mem::transmute(ip6_datagram.as_ptr()) };
@@ -531,7 +532,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     // on link local even if we could get better compression through context.
     fn compress_src(&self,
                     src_ip_addr: &IPAddr,
-                    src_mac_addr: &MacAddr,
+                    src_mac_addr: &MacAddress,
                     src_ctx: &Option<Context>,
                     buf: &mut [u8],
                     written: &mut usize) {
@@ -557,7 +558,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     // IPv6 header address instead of the EUI-64 from the 802.15.4 layer
     fn compress_iid(&self,
                     ip_addr: &IPAddr,
-                    mac_addr: &MacAddr,
+                    mac_addr: &MacAddress,
                     is_src: bool,
                     buf: &mut [u8],
                     written: &mut usize) {
@@ -596,7 +597,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     // on link local even if we could get better compression through context.
     fn compress_dst(&self,
                     dst_ip_addr: &IPAddr,
-                    dst_mac_addr: &MacAddr,
+                    dst_mac_addr: &MacAddress,
                     dst_ctx: &Option<Context>,
                     buf: &mut [u8],
                     written: &mut usize) {
@@ -787,8 +788,8 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     /// we infer the length from the size of buf.
     pub fn decompress(&self,
                       buf: &[u8],
-                      src_mac_addr: MacAddr,
-                      dst_mac_addr: MacAddr,
+                      src_mac_addr: MacAddress,
+                      dst_mac_addr: MacAddress,
                       mut out_buf: &mut [u8],
                       dgram_size: u16,
                       is_fragment: bool)
@@ -1053,7 +1054,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     fn decompress_src(&self,
                       ip6_header: &mut IP6Header,
                       iphc_header: u8,
-                      mac_addr: &MacAddr,
+                      mac_addr: &MacAddress,
                       ctx: &Context,
                       buf: &[u8],
                       consumed: &mut usize)
@@ -1084,7 +1085,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     fn decompress_dst(&self,
                       ip6_header: &mut IP6Header,
                       iphc_header: u8,
-                      mac_addr: &MacAddr,
+                      mac_addr: &MacAddress,
                       ctx: &Context,
                       buf: &[u8],
                       consumed: &mut usize)
@@ -1190,7 +1191,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     fn decompress_iid_link_local(&self,
                                  addr_mode: u8,
                                  ip_addr: &mut IPAddr,
-                                 mac_addr: &MacAddr,
+                                 mac_addr: &MacAddress,
                                  buf: &[u8],
                                  consumed: &mut usize)
                                  -> Result<(), ()> {
@@ -1231,7 +1232,7 @@ impl<'a, C: ContextStore<'a> + 'a> LoWPAN<'a, C> {
     fn decompress_iid_context(&self,
                               addr_mode: u8,
                               ip_addr: &mut IPAddr,
-                              mac_addr: &MacAddr,
+                              mac_addr: &MacAddress,
                               ctx: &Context,
                               buf: &[u8],
                               consumed: &mut usize)
