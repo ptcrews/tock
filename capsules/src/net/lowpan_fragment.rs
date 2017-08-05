@@ -139,37 +139,45 @@ impl<'a> TxState<'a> {
     }
 
     // Takes ownership of frag_buf and gives it to the radio
-    // TODO: May not want to compress
     fn start_transmit<'b, C: ContextStore<'b>>(&self,
                           dgram_tag: u16,
                           mut frag_buf: &'static mut [u8],
                           radio: &'b Mac,
                           lowpan: &'b LoWPAN<'b, C>) 
                           -> Result<ReturnCode,
-                          (ReturnCode, Option<&'static mut [u8]>)> {
+                          (ReturnCode, &'static mut [u8])> {
         self.dgram_tag.set(dgram_tag);
-        let ip6_packet = self.packet.take().ok_or((ReturnCode::ENOMEM, Some(frag_buf)))?;
+        let ip6_packet_option = self.packet.take();
+        if ip6_packet_option.is_none() {
+            return Err((ReturnCode::ENOMEM, frag_buf));
+        }
+        let ip6_packet = ip6_packet_option.unwrap();
+            
         // Here, we assume that the compressed headers fit in the first MTU
         // fragment. This is consistent with RFC 6282.
         let mut lowpan_packet = [0 as u8; radio::MAX_FRAME_SIZE as usize];
-        let (consumed, written) = lowpan.compress(&ip6_packet,
+        let lowpan_result = lowpan.compress(&ip6_packet,
                                                   self.src_mac_addr.get(),
                                                   self.dst_mac_addr.get(),
-                                                  &mut lowpan_packet)
-                                        .map_err(|_| (ReturnCode::FAIL, Some(frag_buf)))?;
+                                                  &mut lowpan_packet);
+        if lowpan_result.is_err() {
+            return Err((ReturnCode::FAIL, frag_buf));
+        }
+        let (consumed, written) = lowpan_result.unwrap();
 
         let remaining = ip6_packet.len() - consumed;
         let lowpan_len = written + remaining;
 
-        let mut frame_info = radio.prepare_data_frame(frag_buf,
+        let mut frame_info_res = radio.prepare_data_frame(frag_buf,
                                                   self.dst_pan.get(),
                                                   self.dst_mac_addr.get(),
                                                   self.src_pan.get(),
                                                   self.src_mac_addr.get(),
                                                   self.security.get());
-        if frame_info.is_err() {
-            return (ReturnCode::FAIL, Some(frag_buf));
+        if frame_info_res.is_err() {
+            return Err((ReturnCode::FAIL, frag_buf));
         }
+        let mut frame_info = frame_info_res.unwrap();
         let remaining_capacity = frame_info.remaining_data_capacity(frag_buf);
 
         // If we can transmit in a single frame
@@ -188,18 +196,15 @@ impl<'a> TxState<'a> {
         } else if self.fragment.get() && written <= remaining_capacity {
             // We assume offset == consumed for the purposes of fragmentation
             self.prepare_transmit_first_fragment(&lowpan_packet, frag_buf,
-                                                 frame_info, written, consumed, radio)
+                                                 frame_info, written, consumed, radio);
+            Ok(ReturnCode::SUCCESS)
         // Otherwise, cannot transmit as packet is too large
         } else {
-            Err((ReturnCode::ESIZE, Some(frag_buf)))
+            Err((ReturnCode::ESIZE, frag_buf))
         };
         self.packet.replace(ip6_packet);
         result
     }
-
-    fn prepare_transmit_first(&self) {
-    }
-
 
     // TODO: We can optionally copy over additional payload for the frag1
     // header, but we currently do not do this.
@@ -207,7 +212,7 @@ impl<'a> TxState<'a> {
                                        lowpan_packet: &[u8],
                                        mut frag_buf: &'static mut [u8],
                                        mut frame_info: FrameInfo,
-                                       lowpan_len: usize,
+                                       written: usize,
                                        offset: usize,
                                        radio: &Mac) 
                                         -> Result<ReturnCode,
@@ -215,10 +220,10 @@ impl<'a> TxState<'a> {
         // This gives the offset to the start of the payload
         let mut frag_header = [0 as u8; lowpan_frag::FRAG1_HDR_SIZE];
         set_frag_hdr(self.dgram_size.get(), self.dgram_tag.get(),
-                     self.dgram_offset.get(), &mut frag_header, true);
+                     /* offset = */ 0, &mut frag_header, true);
         // Copy over the compressed lowpan header
         frame_info.append_payload(frag_buf, &frag_header);
-        frame_info.append_payload(frag_buf, &lowpan_packet[0..lowpan_len]);
+        frame_info.append_payload(frag_buf, &lowpan_packet[0..written]);
 
         self.dgram_offset.set(offset);
         let (result, buf) = radio.transmit(frag_buf, frame_info);
