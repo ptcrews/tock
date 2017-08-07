@@ -9,6 +9,7 @@ extern crate kernel;
 extern crate sam4l;
 
 use capsules::rf233::RF233;
+use capsules::mac::Mac;
 use capsules::timer::TimerDriver;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use capsules::virtual_i2c::{I2CDevice, MuxI2C};
@@ -45,9 +46,9 @@ struct Imixv1 {
     spi: &'static capsules::spi::Spi<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
     ipc: kernel::ipc::IPC,
     ninedof: &'static capsules::ninedof::NineDof<'static>,
-    radio: &'static capsules::radio::RadioDriver<'static,
-                                                 capsules::rf233::RF233<'static,
-                                                 VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>>,
+    radio: &'static capsules::mac::MacDevice<'static, capsules::rf233::RF233<'static, 
+                                                VirtualSpiMasterDevice<'static,
+                                                sam4l::spi::Spi>>>,
     crc: &'static capsules::crc::Crc<'static, sam4l::crccu::Crccu<'static>>,
 }
 
@@ -86,7 +87,7 @@ impl kernel::Platform for Imixv1 {
             10 => f(Some(self.si7021)),
             11 => f(Some(self.ninedof)),
             16 => f(Some(self.crc)),
-            154 => f(Some(self.radio)),
+            //154 => f(Some(self.radio)),
             0xff => f(Some(&self.ipc)),
             _ => f(None),
         }
@@ -386,12 +387,12 @@ pub unsafe fn reset_handler() {
     rf233.initialize(&mut RF233_BUF, &mut RF233_REG_WRITE, &mut RF233_REG_READ);
 
     let radio_capsule = static_init!(
-        capsules::radio::RadioDriver<'static,
+        capsules::mac::MacDevice<'static,
                                      RF233<'static,
                                            VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>>,
-        capsules::radio::RadioDriver::new(rf233),
+        capsules::mac::MacDevice::new(rf233),
         832/8);
-    radio_capsule.config_buffer(&mut RADIO_BUF);
+
     rf233.set_transmit_client(radio_capsule);
     rf233.set_receive_client(radio_capsule, &mut RF233_RX_BUF);
     rf233.set_config_client(radio_capsule);
@@ -417,8 +418,8 @@ pub unsafe fn reset_handler() {
     chip.mpu().enable_mpu();
 
     rf233.reset();
-    rf233.config_set_pan(0xABCD);
-    rf233.config_set_address(0x1008);
+    radio_capsule.set_pan(0xABCD);
+    radio_capsule.set_address(0x1008);
     //    rf233.config_commit();
 
     rf233.start();
