@@ -240,9 +240,12 @@ impl<'a> TxState<'a> {
                                                   self.src_mac_addr.get(),
                                                   self.security.get())
             .map_err(|_| ReturnCode::FAIL)?;
-        // This rounds payload_len down to the nearest multiple of 8
-        let payload_len = frame_info.remaining_data_capacity(frag_buf) & !0b111;
         let dgram_offset = self.dgram_offset.get();
+        let remaining_capacity = frame_info.remaining_data_capacity(frag_buf)
+            - lowpan_frag::FRAGN_HDR_SIZE;
+        // This rounds payload_len down to the nearest multiple of 8
+        let payload_len = min(remaining_capacity, (self.dgram_size.get() as usize)
+                              - dgram_offset) & !0b111;
 
         let mut packet = self.packet.take().ok_or(ReturnCode::ENOMEM)?;
         let mut frag_header = [0 as u8; lowpan_frag::FRAGN_HDR_SIZE];
@@ -425,8 +428,8 @@ RxClient for FragState<'a, R, C, A> {
                    _: ReturnCode) {
 
         // TODO: Handle unwrap!
-        let src_mac_addr = header.src_addr.unwrap();
-        let dst_mac_addr = header.dst_addr.unwrap();
+        let src_mac_addr = header.src_addr.unwrap_or(MacAddress::Short(0));
+        let dst_mac_addr = header.dst_addr.unwrap_or(MacAddress::Short(0));
 
         let (rx_state, returncode) = self.receive_frame(&buf[data_offset..data_offset+data_len],
                                           data_len,

@@ -30,6 +30,8 @@ pub mod io;
 mod i2c_dummy;
 #[allow(dead_code)]
 mod spi_dummy;
+#[allow(dead_code)]
+mod lowpan_frag_dummy;
 
 struct Imixv1 {
     console: &'static capsules::console::Console<'static, sam4l::usart::USART>,
@@ -69,6 +71,9 @@ static mut RF233_REG_READ: [u8; 2] = [0x00; 2];
 // copies application transmissions into or copies out to application buffers
 // for reception.
 static mut RADIO_BUF: [u8; radio::MAX_BUF_SIZE] = [0x00; radio::MAX_BUF_SIZE];
+
+static DEFAULT_CTX_PREFIX: [u8; 8] = [0x0; 8];
+static mut RECV_BUF: [u8; 1280] = [0x0; 1280];
 
 impl kernel::Platform for Imixv1 {
     fn with_driver<F, R>(&self, driver_num: usize, f: F) -> R
@@ -397,6 +402,77 @@ pub unsafe fn reset_handler() {
     rf233.set_receive_client(radio_capsule, &mut RF233_RX_BUF);
     rf233.set_config_client(radio_capsule);
 
+    let default_context = static_init!(
+        capsules::net::lowpan::Context<'static>,
+        capsules::net::lowpan::Context {
+            prefix: &DEFAULT_CTX_PREFIX,
+            prefix_len: DEFAULT_CTX_PREFIX.len() as u8,
+            id: 0,
+            compress: false,
+        }, 0);
+
+    let dummy_context = static_init!(
+        lowpan_frag_dummy::DummyStore<'static>,
+        lowpan_frag_dummy::DummyStore::new(*default_context),
+        0);
+
+    let lowpan = static_init!(
+        capsules::net::lowpan::LoWPAN<'static, lowpan_frag_dummy::DummyStore<'static>>,
+        capsules::net::lowpan::LoWPAN::new(dummy_context),
+        0);
+
+    let tx_state = static_init!(
+        capsules::net::lowpan_fragment::TxState<'static>,
+        capsules::net::lowpan_fragment::TxState::new(),
+        0);
+
+    let rx_state = static_init!(
+        capsules::net::lowpan_fragment::RxState<'static>,
+        capsules::net::lowpan_fragment::RxState::new(&mut RECV_BUF),
+        0);
+
+    let frag_state_alarm = static_init!(
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        VirtualMuxAlarm::new(mux_alarm),
+        0);
+
+    let frag_dummy_alarm = static_init!(
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        VirtualMuxAlarm::new(mux_alarm),
+        0);
+
+    let frag_state = static_init!(
+        capsules::net::lowpan_fragment::FragState<'static, capsules::mac::MacDevice<'static,
+                                                    RF233<'static,
+                                                        VirtualSpiMasterDevice<'static,
+                                                            sam4l::spi::Spi>>>,
+                                               lowpan_frag_dummy::DummyStore<'static>,
+                                               VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+        capsules::net::lowpan_fragment::FragState::new(radio_capsule,
+                                                       lowpan,
+                                                       &mut RADIO_BUF,
+                                                       frag_state_alarm),
+        0);
+    frag_state.add_rx_state(rx_state);
+    radio_capsule.set_transmit_client(frag_state);
+    radio_capsule.set_receive_client(frag_state);
+
+
+    let lowpan_frag_dummy = static_init!(
+        lowpan_frag_dummy::LowpanTest<'static, capsules::mac::MacDevice<'static,
+                                                    RF233<'static,
+                                                        VirtualSpiMasterDevice<'static,
+                                                            sam4l::spi::Spi>>>,
+                                               lowpan_frag_dummy::DummyStore<'static>,
+                                               VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+        lowpan_frag_dummy::LowpanTest::new(radio_capsule, frag_state, tx_state, frag_dummy_alarm),
+        0);
+
+    frag_state.set_receive_client(lowpan_frag_dummy);
+    tx_state.set_transmit_client(lowpan_frag_dummy);
+    frag_state_alarm.set_client(frag_state);
+    frag_dummy_alarm.set_client(lowpan_frag_dummy);
+
     let imixv1 = Imixv1 {
         console: console,
         timer: timer,
@@ -425,6 +501,7 @@ pub unsafe fn reset_handler() {
     rf233.start();
 
     debug!("Initialization complete. Entering main loop");
+    lowpan_frag_dummy.start();
     kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
 }
 
