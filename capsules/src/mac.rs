@@ -40,7 +40,7 @@ impl FrameInfo {
         if payload.len() > self.remaining_data_capacity(buf.as_ref()) {
             return ReturnCode::ENOMEM;
         }
-        let begin = /*radio::PSDU_OFFSET + */self.data_offset + self.data_len;
+        let begin = radio::PSDU_OFFSET + self.data_offset + self.data_len;
         buf[begin..begin + payload.len()].copy_from_slice(payload);
         self.data_len += payload.len();
 
