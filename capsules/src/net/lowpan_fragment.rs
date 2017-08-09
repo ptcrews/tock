@@ -12,7 +12,7 @@ use net::lowpan::{LoWPAN, ContextStore, is_lowpan};
 use net::util::{slice_to_u16, u16_to_slice};
 use net::frag_utils::Bitmap;
 use net::ieee802154::{PanID, MacAddress, SecurityLevel, KeyId, Header};
-use mac::{Mac, FrameInfo, TxClient, RxClient};
+use mac::{Mac, Frame, TxClient, RxClient};
 
 // Timer fire rate in seconds
 const TIMER_RATE: usize = 10;
@@ -152,18 +152,17 @@ impl<'a> TxState<'a> {
             return Err((ReturnCode::ENOMEM, frag_buf));
         }
         let ip6_packet = ip6_packet_option.unwrap();
-        let frame_info = radio.prepare_data_frame(frag_buf,
+        let frame = radio.prepare_data_frame(frag_buf,
                                                       self.dst_pan.get(),
                                                       self.dst_mac_addr.get(),
                                                       self.src_pan.get(),
                                                       self.src_mac_addr.get(),
                                                       self.security.get());
-        if frame_info.is_err() {
-            return Err((ReturnCode::FAIL, frag_buf));
+        if frame.is_err() {
+            return Err((ReturnCode::FAIL, frame.unwrap_err()));
         }
-        let result = self.prepare_transmit_first_fragment(frag_buf,
-                                                          ip6_packet,
-                                                          frame_info.unwrap(),
+        let result = self.prepare_transmit_first_fragment(ip6_packet,
+                                                          frame.unwrap(),
                                                           radio,
                                                           lowpan);
         self.packet.replace(ip6_packet);
@@ -171,9 +170,9 @@ impl<'a> TxState<'a> {
     }
 
     fn prepare_transmit_first_fragment<'b, C: ContextStore<'b>>(&self,
-                                       mut frag_buf: &'static mut [u8],
+                 //                      mut frag_buf: &'static mut [u8],
                                        ip6_packet: &[u8],
-                                       mut frame_info: FrameInfo,
+                                       mut frame: Frame,
                                        radio: &'b Mac,
                                        lowpan: &'b LoWPAN<'b, C>)
                                        -> Result<ReturnCode,
@@ -187,16 +186,16 @@ impl<'a> TxState<'a> {
                                                   self.dst_mac_addr.get(),
                                                   &mut lowpan_packet);
         if lowpan_result.is_err() {
-            return Err((ReturnCode::FAIL, frag_buf));
+            return Err((ReturnCode::FAIL, frame.into_buf()));
         }
         let (consumed, written) = lowpan_result.unwrap();
         let remaining_payload = ip6_packet.len() - consumed;
         let lowpan_len = written + remaining_payload;
-        let mut remaining_capacity = frame_info.remaining_data_capacity(frag_buf);
+        let mut remaining_capacity = frame.remaining_data_capacity();
 
         // Unable to fragment and packet too large
         if !self.fragment.get() && (lowpan_len > remaining_capacity) {
-            return Err((ReturnCode::ESIZE, frag_buf));
+            return Err((ReturnCode::ESIZE, frame.into_buf()));
         }
 
         // Need to fragment
@@ -204,29 +203,29 @@ impl<'a> TxState<'a> {
             let mut frag_header = [0 as u8; lowpan_frag::FRAG1_HDR_SIZE];
             set_frag_hdr(self.dgram_size.get(), self.dgram_tag.get(),
                 /*offset = */ 0, &mut frag_header, true);
-            frame_info.append_payload(frag_buf, &frag_header[..lowpan_frag::FRAG1_HDR_SIZE]);
+            frame.append_payload(&frag_header[..lowpan_frag::FRAG1_HDR_SIZE]);
             remaining_capacity -= lowpan_frag::FRAG1_HDR_SIZE;
         }
 
         // Write the 6lowpan header
         if written <= remaining_capacity {
-            frame_info.append_payload(frag_buf, &lowpan_packet[0..written]);
+            frame.append_payload(&lowpan_packet[0..written]);
             remaining_capacity -= written;
         } else {
-            return Err((ReturnCode::ESIZE, frag_buf));
+            return Err((ReturnCode::ESIZE, frame.into_buf()));
         }
 
         // Write the remainder of the payload
-        frame_info.append_payload(frag_buf, &ip6_packet[consumed..consumed+remaining_capacity]);
+        frame.append_payload(&ip6_packet[consumed..consumed+remaining_capacity]);
         self.dgram_offset.set(consumed+remaining_capacity);
-        let (result, buf) = radio.transmit(frag_buf, frame_info);
+        let (result, buf) = radio.transmit(frame);
         Ok(ReturnCode::SUCCESS)
     }
 
     fn prepare_transmit_next_fragment(&self,
                                       mut frag_buf: &'static mut [u8],
                                       radio: &Mac) -> Result<ReturnCode, ReturnCode> {
-        let mut frame_info = radio.prepare_data_frame(frag_buf,
+        let mut frame = radio.prepare_data_frame(frag_buf,
                                                   self.dst_pan.get(),
                                                   self.dst_mac_addr.get(),
                                                   self.src_pan.get(),
@@ -234,7 +233,7 @@ impl<'a> TxState<'a> {
                                                   self.security.get())
             .map_err(|_| ReturnCode::FAIL)?;
         let dgram_offset = self.dgram_offset.get();
-        let remaining_capacity = frame_info.remaining_data_capacity(frag_buf)
+        let remaining_capacity = frame.remaining_data_capacity()
             - lowpan_frag::FRAGN_HDR_SIZE;
         // This rounds payload_len down to the nearest multiple of 8
         let payload_len = min(remaining_capacity, (self.dgram_size.get() as usize)
@@ -244,13 +243,13 @@ impl<'a> TxState<'a> {
         let mut frag_header = [0 as u8; lowpan_frag::FRAGN_HDR_SIZE];
         set_frag_hdr(self.dgram_size.get(), self.dgram_tag.get(),
                      dgram_offset, &mut frag_header, false);
-        frame_info.append_payload(frag_buf, &frag_header);
-        frame_info.append_payload(frag_buf, &packet[dgram_offset..dgram_offset+payload_len]);
+        frame.append_payload(&frag_header);
+        frame.append_payload(&packet[dgram_offset..dgram_offset+payload_len]);
         self.packet.replace(packet);
 
         // Update the offset to be used for the next fragment
         self.dgram_offset.set(dgram_offset + payload_len);
-        let (result, buf) = radio.transmit(frag_buf, frame_info);
+        let (result, buf) = radio.transmit(frame);
         Ok(ReturnCode::SUCCESS)
     }
 

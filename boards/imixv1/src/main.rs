@@ -10,7 +10,6 @@ extern crate sam4l;
 
 use capsules::mac::Mac;
 use capsules::rf233::RF233;
-use capsules::mac::Mac;
 use capsules::timer::TimerDriver;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use capsules::virtual_i2c::{I2CDevice, MuxI2C};
