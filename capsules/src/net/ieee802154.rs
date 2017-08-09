@@ -671,6 +671,7 @@ impl<'a> Header<'a> {
         let seq_suppressed = (fcf & frame_control::SEQ_SUPPRESSED) != 0;
         let ie_present = (fcf & frame_control::IE_PRESENT) != 0;
         let dst_mode = {
+            debug!("Fcf: {:b}", fcf);
             let mode = (fcf >> frame_control::DST_MODE_POS) & frame_control::MODE_MASK;
             stream_from_option!(AddressMode::from_mode(mode))
         };
@@ -780,6 +781,7 @@ impl<'a> Header<'a> {
         // depends on the pan ID compression field and the frame version
         let mut src_pan_dropped = false;
         let dst_present = dst_mode != AddressMode::NotPresent;
+        debug!("{:?}", dst_mode);
         let src_present = src_mode != AddressMode::NotPresent;
         let (dst_pan_present, src_pan_present) = match version {
             FrameVersion::V2015 => {
@@ -812,9 +814,14 @@ impl<'a> Header<'a> {
         } else {
             (off, None)
         };
+        debug!("Src pan: {}, Dst pan: {}, dropped: {}", src_pan_present, dst_pan_present,
+               src_pan_dropped);
+        debug!("1");
         let (off, dst_addr) = dec_try!(buf, off; MacAddress::decode, dst_mode);
+        debug!("2");
         let (off, src_pan) = if src_pan_present {
             let (off, pan_be) = dec_try!(buf, off; decode_u16);
+            debug!("3");
             (off, Some(u16::from_be(pan_be)))
         } else {
             if src_pan_dropped {
@@ -826,7 +833,9 @@ impl<'a> Header<'a> {
                 (off, None)
             }
         };
+        debug!("4");
         let (off, src_addr) = dec_try!(buf, off; MacAddress::decode, src_mode);
+        debug!("5");
 
         stream_done!(off, (dst_pan, dst_addr, src_pan, src_addr));
     }

@@ -294,9 +294,6 @@ impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
 time::Client for LowpanTest<'a, R, C, A> {
     fn fired(&self) {
         self.run_test_and_increment();
-        if self.test_counter.get() < self.num_tests() {
-            self.schedule_next();
-        }
     }
 }
 
