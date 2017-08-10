@@ -77,6 +77,7 @@ impl Bitmap {
         // Check last byte.
         let mask = 0xff >> (8 - (total_length % 8));
         result = result && (self.map[total_length / 8] == mask);
+        debug!("Bitmap result: {}", result);
         result
     }
 }

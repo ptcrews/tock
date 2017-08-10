@@ -681,7 +681,7 @@ impl<'a> Header<'a> {
         };
 
         // Sequence number
-        let (off, seq) = if seq_suppressed {
+        let (off, seq) = if !seq_suppressed {
             let (off, seq) = dec_try!(buf, off; decode_u8);
             (off, Some(seq))
         } else {

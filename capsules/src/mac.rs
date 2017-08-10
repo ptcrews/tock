@@ -462,6 +462,7 @@ impl<'a, R: radio::Radio + 'a> Mac for MacDevice<'a, R> {
             }
             Some(state) => state,
         };
+        debug_hexdump!(&buf);
         match state {
             TxState::Idle => {
                 if info.security_params.is_some() {

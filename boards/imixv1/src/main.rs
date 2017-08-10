@@ -529,7 +529,7 @@ pub unsafe fn reset_handler() {
     rf233.start();
 
     debug!("Initialization complete. Entering main loop");
-    //lowpan_frag_dummy.start();
+    lowpan_frag_dummy.start();
     kernel::main(&imixv1, &mut chip, load_processes(), &imixv1.ipc);
 }
 

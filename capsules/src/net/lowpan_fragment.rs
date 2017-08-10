@@ -433,10 +433,8 @@ RxClient for FragState<'a, R, C, A> {
                    data_len: usize,
                    _: ReturnCode) {
 
-        for i in 0..10 {
-            debug!("idx {} val {:b}", i, buf[data_offset+i]);
-        }
-        let data_offset = data_offset + 1;
+        debug_hexdump!(&buf[..data_offset+data_len]);
+        let data_offset = data_offset;
         // TODO: Handle unwrap!
         let src_mac_addr = header.src_addr.unwrap_or(MacAddress::Short(0));
         let dst_mac_addr = header.dst_addr.unwrap_or(MacAddress::Short(0));
@@ -595,13 +593,13 @@ impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
                       dst_mac_addr: MacAddress) -> (Option<&RxState<'a>>, ReturnCode) {
         if is_fragment(packet) {
             let (is_frag1, dgram_size, dgram_tag, dgram_offset) = get_frag_hdr(&packet[0..5]);
-            debug!("Fragment: dgram_size: {}, dgram_tag: {}, dgram_offset: {}, is_frag1: {}",
-                   dgram_size, dgram_tag, dgram_offset, is_frag1);
             let offset_to_payload = if is_frag1 {
                 lowpan_frag::FRAG1_HDR_SIZE
             } else {
                 lowpan_frag::FRAGN_HDR_SIZE
             };
+            debug!("Fragment: dgram_size: {}, dgram_tag: {}, dgram_offset: {}, is_frag1: {}, len: {}",
+                   dgram_size, dgram_tag, dgram_offset, is_frag1, packet_len - offset_to_payload);
             self.receive_fragment(&packet[offset_to_payload..],
                                   packet_len - offset_to_payload,
                                   src_mac_addr,
