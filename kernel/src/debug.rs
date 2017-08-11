@@ -21,7 +21,7 @@ use mem::AppSlice;
 use returncode::ReturnCode;
 
 pub const APPID_IDX: usize = 255;
-const BUF_SIZE: usize = 1024;
+const BUF_SIZE: usize = 8192; //1024;
 
 pub struct DebugWriter {
     driver: Option<&'static Driver>,
@@ -296,6 +296,31 @@ pub fn begin_debug(msg: &str, file_line: &(&'static str, u32)) {
     }
 }
 
+pub fn begin_debug_hexdump(bufname: &str, buf: &[u8], file_line: &(&'static str, u32)) {
+    unsafe {
+        let count = read_volatile(&DEBUG_WRITER.count);
+        write_volatile(&mut DEBUG_WRITER.count, count + 1);
+
+        let writer = &mut DEBUG_WRITER;
+        let (file, line) = *file_line;
+        let _ = writer.write_fmt(format_args!("TOCK_DEBUG({}): {}:{}: ", count, file, line));
+        let _ = writer.write_fmt(format_args!("HEXDUMP({}):\n", bufname));
+
+        const BLOCK_SIZE: usize = 16;
+        for (i, b) in buf.iter().enumerate() {
+            if i % BLOCK_SIZE != 0 {
+                let _ = writer.write_str(" ");
+            }
+            let _ = writer.write_fmt(format_args!("{:02x}", *b));
+            if (i + 1) % BLOCK_SIZE == 0 || (i + 1) == buf.len() {
+                let _ = writer.write_str("\n");
+            }
+        }
+
+        writer.publish_str();
+    }
+}
+
 /// In-kernel `printf()` debugging.
 #[macro_export]
 macro_rules! debug {
@@ -313,6 +338,17 @@ macro_rules! debug {
     });
     ($fmt:expr, $($arg:tt)+) => ({
         $crate::debug::begin_debug_fmt(format_args!($fmt, $($arg)+), {
+            static _FILE_LINE: (&'static str, u32) = (file!(), line!());
+            &_FILE_LINE
+        })
+    });
+}
+
+/// In-kernel hexdump.
+#[macro_export]
+macro_rules! debug_hexdump {
+    ($buf:expr) => ({
+        $crate::debug::begin_debug_hexdump(stringify!($buf), $buf, {
             static _FILE_LINE: (&'static str, u32) = (file!(), line!());
             &_FILE_LINE
         })

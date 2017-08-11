@@ -525,7 +525,7 @@ impl<'a, R: radio::Radio + 'a> radio::RxClient for MacDevice<'a, R> {
                                    header,
                                    buf_data_offset,
                                    data_len,
-                                   ReturnCode::ENOSUPPORT);
+                                   ReturnCode::SUCCESS);
                 });
                 false
             }
