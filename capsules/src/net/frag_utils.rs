@@ -17,13 +17,11 @@ impl Bitmap {
         }
     }
 
-    // TODO: Confirm this is correct
     pub fn clear_bit(&mut self, idx: usize) {
         let map_idx = idx / 8;
         self.map[map_idx] &= !(1 << (idx % 8));
     }
 
-    // TODO: Confirm this is correct
     pub fn set_bit(&mut self, idx: usize) {
         let map_idx = idx / 8;
         self.map[map_idx] |= 1 << (idx % 8);
@@ -38,7 +36,6 @@ impl Bitmap {
     // Note that each bit represents a multiple of 8 bytes (as everything
     // must be in 8-byte groups), and thus we can store 8*8 = 64 "bytes" per
     // byte in the bitmap.
-    // TODO: Check the return bool is set correctly
     pub fn set_bits(&mut self, start_idx: usize, end_idx: usize) -> bool {
         if start_idx > end_idx {
             return false;
@@ -77,7 +74,6 @@ impl Bitmap {
         // Check last byte.
         let mask = 0xff >> (8 - (total_length % 8));
         result = result && (self.map[total_length / 8] == mask);
-        debug!("Bitmap result: {}", result);
         result
     }
 }

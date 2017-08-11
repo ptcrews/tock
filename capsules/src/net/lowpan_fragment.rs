@@ -1,13 +1,136 @@
+//! Implements 6LoWPAN transmission and reception, including compression,
+//! fragmentation, and reassembly. This layer exposes a send/receive interface
+//! which converts between fully-formed IPv6 packets and Mac-layer frames.
+//! This layer fragments any packet larger than the 802.15.4 MTU size, and
+//! will issue a callback when the entire packet has been transmitted.
+//! Similarly, this layer issues a callback when an entire IPv6 packet has been
+//! received and reassembled.
+//!
+//! This layer relies on the specifications contained in RFC 4944 and RFC 6282
+//!
+//! Remaining Tasks and Known Problems
+//! ----------------------------------
+//! TODO: Allow for optional compression
+//! TODO: Change ReceiveClient trait to passing back an immutable reference
+//!
+//! 
+//! Design
+//! ------
+//! At a high level, this layer exposes a transmit and receive functionality
+//! that takes IPv6 packets and converts them into chunks that are passed to
+//! the 802.15.4 MAC layer. The FragState struct represents the global
+//! transmission state, and contains tag information, queued TxState structs,
+//! and in-process RxState structs. In order for a client to send via this
+//! interface, it must supply a TxState struct, the IPv6 packet, and arguments
+//! relating to lower layers. This layer then fragments and compresses the
+//! packet if necessary, then transmits it over a Mac-layer device. In order
+//! for a packet to be received, the client must call set_receive_client
+//! on the FragState struct. Currently, there is a single, global receive
+//! client that receives callbacks for all reassembled packets (unlike for
+//! the transmit path, where each TxState struct contains a separate client).
+//! The FragState struct contains a list of RxState structs which are statically
+//! allocated and added to the list; these structs represent the number of
+//! concurrent reassembly operations that can be in progress at the same time.
+//!
+//! This layer adds several new structs, FragState, TxState, and RxState,
+//! as well as interfaces for them.
+//! 
+//! FragState:
+//! - Methods:
+//! -- new(..): Initializes a new FragState struct
+//! -- transmit_packet(..): Transmits the given IPv6 packet, using the provided
+//!      TxState struct to track its progress, fragmenting if necessary
+//! -- set_receive_client(..): Sets the global receive client, which receives
+//!      a callback whenever a packet is fully reassembled
+//!
+//! The FragState struct represents a single, global struct that tracks the state
+//! of transmission and reception for the various clients. This struct manages
+//! global state, including references to the radio and lowpan structs, along
+//! with lists of TxStates and RxStates, buffers, and various other state.
+//!
+//! TxState:
+//! - Methods:
+//! -- new(..): Initializes a new TxState struct
+//! -- set_transmit_client(..): Sets the per-state transmit client, which
+//!      receives a callback after an entire IPv6 packet has been transmitted
+//! 
+//! In order to send a packet, each client must allocate space for a TxState
+//! struct. Whenever a client sends a packet, it must pass in a reference to
+//! its TxState struct, and clients should not directly modify any fields within
+//! the TxState struct. The fragmentation layer uses this struct to store state
+//! about packets currently being sent.
+//!
+//! RxState:
+//! - Methods:
+//! -- new(..): Initializes a new RxState struct
+//!
+//! The RxState struct contains information relating to packet reception and
+//! reassembly. Unlike with the TxState structs, there is no concept of
+//! individual clients "owning" these structs; instead, some number of RxStates
+//! are statically allocated and added to the FragState's RxState list. These
+//! states are then used to keep track of different reassembly flows; the
+//! number of simultaneous packet receptions is dependent on the number of
+//! allocated RxState structs. When a packet is fully reassembled, the global
+//! receive client inside FragState receives a callback.
+//!
+//! In addition to structs and their methods, this layer also defines several
+//! traits for the transmit and receive callbacks.
+//!
+//! TransmitClient Trait:
+//! - send_done(..): Called after the entire IPv6 packet has been sent. Returns
+//!     the IPv6 buffer, a reference to the TxState struct, and additional
+//!     information relating to the sent packet
+//! 
+//! ReceiveClient Trait:
+//! - receive(..): Called after an entire IPv6 packet has been reassembled.
+//!     Returns the IPv6 buffer containing the decompressed packet, as well as
+//!     additional information. Note that this function is required to return a
+//!     static buffer, as the buffer passed into this function is owned by the
+//!     RxState and not the client
+//!
+//! Usage
+//! -----
+//! Examples of how to interface and use this layer are included in the file
+//! `boards/imixv1/src/lowpan_frag_dummy.rs`. Significant set-up is required
+//! in `boards/imixv1/src/main.rs` to initialize the various state for the
+//! layer and its clients.
+
+
+
+TransmitClient Trait
+- send_done(&self, buf: &'static mut [u8], state: &TxState, acked: bool, result: ReturnCode): Called after the entire packet has been sent (all fragments)
+
+ReceiveClient Trait
+- receive(&self, buf: &'static mut [u8], len: u8, result: ReturnCode) -> &'static mut [u8]: Called when an entire packet has been received, reassembled, and decompressed. Note that we are required to return the buffer buf back at the end of this function.
+
+Client initialization:
+- Initialized client struct
+- Initialize TxState with client as TransmitClient
+
+Global initialization:
+- Lowpan, alarms, etc. initialized
+- RxState(s) initialized
+- FragState initialized with TxState(s), RxState(s), Lowpan, Radio, Alarm(s)
+- Set ReceiveClient for FragState
+- Initialize radio, set FragState as RxClient, TxClient
+
+Sending a packet:
+- Call FragState.transmit_packet with packet, TxState
+
+Receiving a packet:
+- Wait for callback, copy out any desired data from buffer, return buffer back
+
+Note that this is a tentative interface, and I am hoping there is a cleaner way to initialize the necessary state for the fragmentation layer. The current code is in the sixlowpan_fragment branch on the ptcrews fork.
+
+
 extern crate kernel;
 use kernel::ReturnCode;
 use kernel::common::take_cell::{TakeCell, MapCell};
 use kernel::common::list::{List, ListLink, ListNode};
-//use kernel::hil::radio::{TxClient, RxClient/*, ConfigClient */};
 use kernel::hil::radio;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
 use core::cell::Cell;
-use core::cmp::min;
 use net::lowpan::{LoWPAN, ContextStore, is_lowpan};
 use net::util::{slice_to_u16, u16_to_slice};
 use net::frag_utils::Bitmap;
@@ -53,7 +176,6 @@ fn set_frag_hdr(dgram_size: u16, dgram_tag: u16, dgram_offset: usize, hdr: &mut 
 fn get_frag_hdr(hdr: &[u8]) -> (bool, u16, u16, usize) {
     let is_frag1 = match hdr[0] & lowpan_frag::FRAGN_HDR {
         lowpan_frag::FRAG1_HDR => true,
-        // TODO: Error handling?
         _ => false,
     };
     // Zero out upper bits
@@ -126,10 +248,10 @@ impl<'a> TxState<'a> {
                      src_mac_addr: MacAddress,
                      dst_mac_addr: MacAddress,
                      packet: &'static mut [u8],
+                     packet_len: usize,
                      source_long: bool,
                      fragment: bool) {
 
-        let packet_len = packet.len();
         self.src_mac_addr.set(src_mac_addr);
         self.dst_mac_addr.set(dst_mac_addr);
         self.source_long.set(source_long);
@@ -153,11 +275,11 @@ impl<'a> TxState<'a> {
         }
         let ip6_packet = ip6_packet_option.unwrap();
         let frame = radio.prepare_data_frame(frag_buf,
-                                                      self.dst_pan.get(),
-                                                      self.dst_mac_addr.get(),
-                                                      self.src_pan.get(),
-                                                      self.src_mac_addr.get(),
-                                                      self.security.get());
+                                             self.dst_pan.get(),
+                                             self.dst_mac_addr.get(),
+                                             self.src_pan.get(),
+                                             self.src_mac_addr.get(),
+                                             self.security.get());
         if frame.is_err() {
             return Err((ReturnCode::FAIL, frame.unwrap_err()));
         }
@@ -225,20 +347,25 @@ impl<'a> TxState<'a> {
         frame.append_payload(&ip6_packet[consumed..consumed+payload_len]);
         self.dgram_offset.set(consumed+payload_len);
         let (result, buf) = radio.transmit(frame);
-        debug!("After transmit: {:?}", result);
-        Ok(ReturnCode::SUCCESS)
+        // If buf is returned, then map the error; otherwise, we return success
+        buf.map(|buf| Err((result, buf))).unwrap_or(Ok(ReturnCode::SUCCESS))
     }
 
     fn prepare_transmit_next_fragment(&self,
                                       mut frag_buf: &'static mut [u8],
-                                      radio: &Mac) -> Result<ReturnCode, ReturnCode> {
-        let mut frame = radio.prepare_data_frame(frag_buf,
+                                      radio: &Mac) -> Result<ReturnCode,
+                                      (ReturnCode, &'static mut [u8])> {
+        let frame_result = radio.prepare_data_frame(frag_buf,
                                                   self.dst_pan.get(),
                                                   self.dst_mac_addr.get(),
                                                   self.src_pan.get(),
                                                   self.src_mac_addr.get(),
-                                                  self.security.get())
-            .map_err(|_| ReturnCode::FAIL)?;
+                                                  self.security.get());
+        if frame_result.is_err() {
+            return Err((ReturnCode::FAIL, frame_result.unwrap_err()));
+        }
+        let mut frame = frame_result.unwrap();
+
         let dgram_offset = self.dgram_offset.get();
         let remaining_capacity = frame.remaining_data_capacity()
             - lowpan_frag::FRAGN_HDR_SIZE;
@@ -251,9 +378,11 @@ impl<'a> TxState<'a> {
             remaining_bytes
         };
 
-        debug!("Payload len: {}, Offset: {}, Rem cap: {}, Size: {}",
-               payload_len, dgram_offset, remaining_capacity, self.dgram_size.get());
-        let mut packet = self.packet.take().ok_or(ReturnCode::ENOMEM)?;
+        let packet_opt = self.packet.take();
+        if packet_opt.is_none() {
+            return Err((ReturnCode::ENOMEM, frame.into_buf()));
+        }
+        let mut packet = packet_opt.unwrap();
         let mut frag_header = [0 as u8; lowpan_frag::FRAGN_HDR_SIZE];
         set_frag_hdr(self.dgram_size.get(), self.dgram_tag.get(),
                      dgram_offset, &mut frag_header, false);
@@ -264,7 +393,8 @@ impl<'a> TxState<'a> {
         // Update the offset to be used for the next fragment
         self.dgram_offset.set(dgram_offset + payload_len);
         let (result, buf) = radio.transmit(frame);
-        Ok(ReturnCode::SUCCESS)
+        // If buf is returned, then map the error; otherwise, we return success
+        buf.map(|buf| Err((result, buf))).unwrap_or(Ok(ReturnCode::SUCCESS))
     }
 
     fn end_transmit(&self, acked: bool, result: ReturnCode) {
@@ -400,6 +530,7 @@ pub struct FragState <'a, R: Mac + 'a, C: ContextStore<'a> + 'a,
     rx_client: Cell<Option<&'static ReceiveClient>>,
 }
 
+#[allow(unused_must_use)]
 impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> TxClient for FragState<'a, R, C, A> {
     fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         self.tx_buf.replace(buf);
@@ -413,11 +544,13 @@ impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> TxClient for FragState<'a
                 // tx_state == head
                 self.end_packet_transmit(acked, result);
             } else {
+                // Otherwise, we found an error
                 let tx_buf = self.tx_buf.take().unwrap();
-                let retcode = head.prepare_transmit_next_fragment(tx_buf, self.radio);
-                if retcode.is_err() {
-                    self.end_packet_transmit(acked, retcode.unwrap_err());
-                }
+                let result = head.prepare_transmit_next_fragment(tx_buf, self.radio);
+                result.map_err(|(retcode, ret_buf)| {
+                    self.end_packet_transmit(acked, retcode);
+                    self.tx_buf.replace(ret_buf);
+                });
             }
         });
     }
@@ -425,19 +558,17 @@ impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> TxClient for FragState<'a
 
 impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm>
 RxClient for FragState<'a, R, C, A> {
-    // TODO: Handle error (result != SUCCESS). Should we even propogate errors?
-    // or just drop packet/frame?
     fn receive<'b>(&self, buf: &'b [u8],
                    header: Header<'b>,
                    data_offset: usize,
                    data_len: usize,
-                   _: ReturnCode) {
-
-        debug_hexdump!(&buf[..data_offset+data_len]);
+                   retcode: ReturnCode) {
+        // We return if retcode is not valid, as it does not make sense to issue
+        // a callback for an invalid frame reception
         let data_offset = data_offset;
-        // TODO: Handle unwrap!
-        let src_mac_addr = header.src_addr.unwrap_or(MacAddress::Short(0));
-        let dst_mac_addr = header.dst_addr.unwrap_or(MacAddress::Short(0));
+        // TODO: Handle the case where the addresses are None/elided
+        let src_mac_addr = header.src_addr.unwrap();
+        let dst_mac_addr = header.dst_addr.unwrap();
 
         let (rx_state, returncode) = self.receive_frame(&buf[data_offset..data_offset+data_len],
                                           data_len,
@@ -482,12 +613,8 @@ impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
             alarm: alarm,
 
             tx_states: List::new(),
-            //tx_state: MapCell::new(TxState::new()),
             tx_dgram_tag: Cell::new(0),
-            tx_busy: Cell::new(false), // TODO: This can be elided if we can 
-                                       // remove elements from the tx_states
-                                       // list, and check if busy by seeing if
-                                       // list is empty.
+            tx_busy: Cell::new(false),
             tx_buf: TakeCell::new(tx_buf),
 
             rx_states: List::new(),
@@ -509,18 +636,18 @@ impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
         self.rx_client.set(Some(client));
     }
 
-    // TODO: We assume ip6_packet.len() == ip6_packet_len
     // TODO: Need to keep track of additional state: encryption bool, etc.
     pub fn transmit_packet(&self,
-                           src_mac_addr: MacAddress, // TODO: Can get this from radio
+                           src_mac_addr: MacAddress,
                            dst_mac_addr: MacAddress,
                            mut ip6_packet: &'static mut [u8],
+                           ip6_packet_len: usize,
                            tx_state: &'a TxState<'a>,
                            source_long: bool,
                            fragment: bool) -> Result<ReturnCode, ReturnCode> {
 
         tx_state.init_transmit(src_mac_addr, dst_mac_addr, ip6_packet, 
-                               source_long, fragment);
+                               ip6_packet_len, source_long, fragment);
         // Queue tx_state
         self.tx_states.push_tail(tx_state);
         if self.tx_busy.get() {
@@ -532,46 +659,39 @@ impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
         }
     }
 
-    #[allow(unused_must_use)]
-    // TODO: Handle failure case
     fn start_packet_transmit(&self) {
-        // TODO: Below will not work until we retrieve the buffer from the
-        // radio on error - any iteration > 2 will not have the buffer anymore
-        // as it was lost in the transmit call
-        /*
+        // We panic here, as it should never be the case that we start
+        // transmitting without the tx_buf
+        let mut frag_buf = self.tx_buf.take().unwrap();
+        let dgram_tag = if (self.tx_dgram_tag.get() + 1) == 0 {
+            1
+        } else {
+            self.tx_dgram_tag.get() + 1
+        };
         let mut tx_state = self.tx_states.head();
         while tx_state.is_some() {
             let result = tx_state.map(move |state|
                 state.start_transmit(dgram_tag, frag_buf, self.radio, self.lowpan)
             ).unwrap();
+
             // Successfully started transmitting
             if result.is_ok() {
+                self.tx_dgram_tag.set(dgram_tag);
                 self.tx_busy.set(true);
-                break;
+                return;
             }
-            // Failed to start transmitting; issue error callbacks and remove
-            // TxState from the list
+
+            // Otherwise, if we failed to start transmitting, so attempt
+            // to send the next TxState
+            let (returncode, new_frag_buf) = result.unwrap_err();
+            frag_buf = new_frag_buf;
+            // Issue error callbacks and remove TxState from the list
             self.tx_states.pop_head().map(|head| {
-                head.end_transmit(false, result.unwrap_err());
+                head.end_transmit(false, returncode);
             });
-            // TODO: Get frag_buf back -- requires modifying the radio
-            // This will *not* compile until frag_buf is updated (as the value
-            // moved)
-            // frag_buf = ...
-            // Updates tx_state
             tx_state = self.tx_states.head();
         }
-        */
-
-        self.tx_states.head().map(move |state| {
-            // We panic here, as it should never be the case that we start
-            // transmitting without the tx_buf
-            let mut frag_buf = self.tx_buf.take().unwrap();
-            let dgram_tag = self.tx_dgram_tag.get() + 1;
-            self.tx_dgram_tag.set( if dgram_tag == 0 { 1 } else { dgram_tag});
-            self.tx_busy.set(true);
-            state.start_transmit(dgram_tag, frag_buf, self.radio, self.lowpan)
-        }).unwrap_or(Ok(ReturnCode::SUCCESS));
+        self.tx_buf.replace(frag_buf);
     }
 
     // This function ends the current packet transmission state, and starts
@@ -598,8 +718,6 @@ impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
             } else {
                 lowpan_frag::FRAGN_HDR_SIZE
             };
-            debug!("Fragment: dgram_size: {}, dgram_tag: {}, dgram_offset: {}, is_frag1: {}, len: {}",
-                   dgram_size, dgram_tag, dgram_offset, is_frag1, packet_len - offset_to_payload);
             self.receive_fragment(&packet[offset_to_payload..],
                                   packet_len - offset_to_payload,
                                   src_mac_addr,
@@ -669,11 +787,9 @@ impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
             rx_state.map(|state| state.start_receive(src_mac_addr, dst_mac_addr,
                                                      dgram_size, dgram_tag));
             if rx_state.is_none() {
-                debug!("No free state found");
                 return (None, ReturnCode::ENOMEM);
             }
         }
-        debug!("In receive fragment: size: {}, offset: {}", dgram_size, dgram_offset);
         rx_state.map(|state| {
             // Returns true if the full packet is reassembled
             let res = state.receive_next_frame(frag_payload,
@@ -683,15 +799,12 @@ impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
                                                &self.lowpan);
             if res.is_err() {
                 // Some error occurred
-                debug!("Error in receive_fragment");
                 (Some(state), ReturnCode::FAIL)
             } else if res.unwrap() {
                 // Packet fully reassembled
-                debug!("Fully reassembled");
                 (Some(state), ReturnCode::SUCCESS)
             } else {
                 // Packet not fully reassembled
-                debug!("Not complete");
                 (None, ReturnCode::SUCCESS)
             }
         }).unwrap_or((None, ReturnCode::ENOMEM))

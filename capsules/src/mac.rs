@@ -425,7 +425,7 @@ impl<'a, R: radio::Radio + 'a> Mac for MacDevice<'a, R> {
             frame_pending: false,
             // Unicast data frames request acknowledgement
             ack_requested: true,
-            version: FrameVersion::V2006, //TODO
+            version: FrameVersion::V2015,
             seq: Some(self.data_sequence.get()),
             dst_pan: Some(dst_pan),
             dst_addr: Some(dst_addr),
@@ -462,7 +462,6 @@ impl<'a, R: radio::Radio + 'a> Mac for MacDevice<'a, R> {
             }
             Some(state) => state,
         };
-        debug_hexdump!(&buf);
         match state {
             TxState::Idle => {
                 if info.security_params.is_some() {
@@ -526,7 +525,7 @@ impl<'a, R: radio::Radio + 'a> radio::RxClient for MacDevice<'a, R> {
                                    header,
                                    buf_data_offset,
                                    data_len,
-                                   ReturnCode::ENOSUPPORT);
+                                   ReturnCode::SUCCESS);
                 });
                 false
             }
