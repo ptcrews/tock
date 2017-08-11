@@ -12,6 +12,7 @@
 //! ----------------------------------
 //! TODO: Allow for optional compression
 //! TODO: Change ReceiveClient trait to passing back an immutable reference
+//! TODO: Implement and expose a ConfigClient interface
 //!
 //! 
 //! Design
@@ -166,13 +167,17 @@ fn is_fragment(packet: &[u8]) -> bool {
     (mask == lowpan_frag::FRAGN_HDR) || (mask == lowpan_frag::FRAG1_HDR)
 }
 
+/// struct TxState
+/// --------------
+/// This struct tracks the per-client transmit state for a single IPv6 packet.
+/// The FragState struct maintains a list of TxState structs, sending each in
+/// order.
 pub struct TxState<'a> {
     packet: TakeCell<'static, [u8]>,
     src_pan: Cell<PanID>,
     dst_pan: Cell<PanID>,
     src_mac_addr: Cell<MacAddress>,
     dst_mac_addr: Cell<MacAddress>,
-    source_long: Cell<bool>,
     security: Cell<Option<(SecurityLevel, KeyId)>>,
     dgram_tag: Cell<u16>,
     dgram_size: Cell<u16>,
@@ -190,6 +195,9 @@ impl<'a> ListNode<'a, TxState<'a>> for TxState<'a> {
 }
 
 impl<'a> TxState<'a> {
+    /// TxState::new
+    /// ------------
+    /// This constructs a new, default TxState struct.
     pub fn new() -> TxState<'a> {
         TxState {
             packet: TakeCell::empty(),
@@ -197,7 +205,6 @@ impl<'a> TxState<'a> {
             dst_pan: Cell::new(0),
             src_mac_addr: Cell::new(MacAddress::Short(0)),
             dst_mac_addr: Cell::new(MacAddress::Short(0)),
-            source_long: Cell::new(false),
             security: Cell::new(None),
             dgram_tag: Cell::new(0),
             dgram_size: Cell::new(0),
@@ -208,6 +215,9 @@ impl<'a> TxState<'a> {
         }
     }
 
+    /// TxState::set_transmit_client
+    /// ----------------------------
+    /// Sets the TransmitClient callback field of the respective TxState struct.
     pub fn set_transmit_client(&self, client: &'static TransmitClient) {
         self.client.set(Some(client));
     }
@@ -221,13 +231,13 @@ impl<'a> TxState<'a> {
                      dst_mac_addr: MacAddress,
                      packet: &'static mut [u8],
                      packet_len: usize,
-                     source_long: bool,
+                     security: Option<(SecurityLevel, KeyId)>,
                      fragment: bool) {
 
         self.src_mac_addr.set(src_mac_addr);
         self.dst_mac_addr.set(dst_mac_addr);
-        self.source_long.set(source_long);
         self.fragment.set(fragment);
+        self.security.set(security);
         self.packet.replace(packet);
         self.dgram_size.set(packet_len as u16);
     }
@@ -286,7 +296,7 @@ impl<'a> TxState<'a> {
         let remaining_payload = ip6_packet.len() - consumed;
         let lowpan_len = written + remaining_payload;
         // TODO: This -2 is added to account for the FCS; this should be changed
-        // in the mac code
+        // in the MAC code
         let mut remaining_capacity = frame.remaining_data_capacity() - 2;
 
         // Need to fragment
@@ -370,7 +380,7 @@ impl<'a> TxState<'a> {
     }
 
     fn end_transmit(&self, acked: bool, result: ReturnCode) {
-        // TODO: Error handling
+        // The packet here should always be valid, so we can panic if it is None
         let mut packet = self.packet.take().unwrap();
         // Note that if a null client is valid, then we lose the packet buffer
         self.client.get().map(move |client|
@@ -378,6 +388,13 @@ impl<'a> TxState<'a> {
     }
 }
 
+/// struct RxState
+/// --------------
+/// This struct tracks the reassembly process for a given packet. The `busy`
+/// field marks whether the particular RxState is currently reassembling a
+/// packet or if it is currently free. The FragState struct maintains a list of
+/// RxState structs, which represents the number of packets that can be
+/// concurrently reassembled.
 pub struct RxState<'a> {
     packet: TakeCell<'static, [u8]>,
     bitmap: MapCell<Bitmap>,
@@ -398,6 +415,9 @@ impl<'a> ListNode<'a, RxState<'a>> for RxState<'a> {
 }
 
 impl<'a> RxState<'a> {
+    /// RxState::new
+    /// ------------
+    /// This function constructs a new RxState struct.
     pub fn new(packet: &'static mut [u8]) -> RxState<'a> {
         RxState {
             packet: TakeCell::new(packet),
@@ -485,6 +505,10 @@ impl<'a> RxState<'a> {
     }
 }
 
+/// struct FragState
+/// ----------------
+/// This struct tracks the global sending/receiving state, and contains the
+/// lists of RxStates and TxStates.
 pub struct FragState <'a, R: Mac + 'a, C: ContextStore<'a> + 'a,
                             A: time::Alarm + 'a> {
     pub radio: &'a R,
@@ -502,6 +526,7 @@ pub struct FragState <'a, R: Mac + 'a, C: ContextStore<'a> + 'a,
     rx_client: Cell<Option<&'static ReceiveClient>>,
 }
 
+// This function is called after transmitting a frame
 #[allow(unused_must_use)]
 impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> TxClient for FragState<'a, R, C, A> {
     fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
@@ -528,6 +553,7 @@ impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> TxClient for FragState<'a
     }
 }
 
+// This function is called after receiving a frame
 impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm>
 RxClient for FragState<'a, R, C, A> {
     fn receive<'b>(&self, buf: &'b [u8],
@@ -552,14 +578,6 @@ RxClient for FragState<'a, R, C, A> {
     }
 }
 
-// TODO: Need to implement config client?
-/*
-impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> ConfigClient for FragState<'a, R, C, A> {
-    fn config_done(&self, result: ReturnCode) {
-    }
-}
-*/
-
 impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> 
 time::Client for FragState<'a, R, C, A> {
     fn fired(&self) {
@@ -577,6 +595,9 @@ time::Client for FragState<'a, R, C, A> {
 }
 
 impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
+    /// FragState::new
+    /// --------------
+    /// This function initializes and returns a new FragState struct.
     pub fn new(radio: &'a R, lowpan: &'a LoWPAN<'a, C>, tx_buf: &'static mut [u8],
                alarm: &'a A) -> FragState<'a, R, C, A> {
         FragState {
@@ -594,32 +615,48 @@ impl <'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
         }
     }
 
-    pub fn schedule_next_timer(&self) {
+    fn schedule_next_timer(&self) {
         let seconds = A::Frequency::frequency() * (TIMER_RATE as u32);
         let next = self.alarm.now().wrapping_add(seconds);
         self.alarm.set_alarm(next);
     }
 
+    /// FragState::add_rx_state
+    /// -----------------------
+    /// This function prepends the passed in RxState struct to the list of
+    /// RxStates maintained by the FragState struct. For the current use cases,
+    /// some number of RxStates are statically allocated and immediately
+    /// added to the list of RxStates.
     pub fn add_rx_state(&self, rx_state: &'a RxState<'a>) {
         self.rx_states.push_head(rx_state);
     }
 
+    /// FragState::set_receive_client
+    /// -----------------------------
+    /// This function sets the client to receive the callback when a packet
+    /// has been fully reassembled. In the current design, the concept of a
+    /// receive client per RxState did not make sense; thus, there is a single
+    /// receive client that receives all reassembled packets.
     pub fn set_receive_client(&self, client: &'static ReceiveClient) {
         self.rx_client.set(Some(client));
     }
 
-    // TODO: Need to keep track of additional state: encryption bool, etc.
+    /// FragState::transmit_packet
+    /// --------------------------
+    /// This function is called to send a fully-formed IPv6 packet. Arguments
+    /// to this function are used to determine various aspects of the MAC
+    /// layer frame and keep track of the transmission state.
     pub fn transmit_packet(&self,
                            src_mac_addr: MacAddress,
                            dst_mac_addr: MacAddress,
                            mut ip6_packet: &'static mut [u8],
                            ip6_packet_len: usize,
+                           security: Option<(SecurityLevel, KeyId)>,
                            tx_state: &'a TxState<'a>,
-                           source_long: bool,
                            fragment: bool) -> Result<ReturnCode, ReturnCode> {
 
         tx_state.init_transmit(src_mac_addr, dst_mac_addr, ip6_packet, 
-                               ip6_packet_len, source_long, fragment);
+                               ip6_packet_len, security, fragment);
         // Queue tx_state
         self.tx_states.push_tail(tx_state);
         if self.tx_busy.get() {

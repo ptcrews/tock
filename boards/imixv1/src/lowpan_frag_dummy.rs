@@ -284,7 +284,7 @@ LowpanTest<'a, R, C, A> {
         let tx_state = self.tx_state;
             //frag_state.radio.config_set_pan(0xABCD);
             let ret_code = frag_state.transmit_packet(src_mac_addr, dst_mac_addr, &mut IP6_DGRAM,
-                                                      IP6_DGRAM.len(), tx_state, false, true);
+                                                      IP6_DGRAM.len(), None, tx_state, true);
             debug!("Ret code: {:?}", ret_code);
         }
 
