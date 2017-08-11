@@ -95,34 +95,6 @@
 //! in `boards/imixv1/src/main.rs` to initialize the various state for the
 //! layer and its clients.
 
-
-
-TransmitClient Trait
-- send_done(&self, buf: &'static mut [u8], state: &TxState, acked: bool, result: ReturnCode): Called after the entire packet has been sent (all fragments)
-
-ReceiveClient Trait
-- receive(&self, buf: &'static mut [u8], len: u8, result: ReturnCode) -> &'static mut [u8]: Called when an entire packet has been received, reassembled, and decompressed. Note that we are required to return the buffer buf back at the end of this function.
-
-Client initialization:
-- Initialized client struct
-- Initialize TxState with client as TransmitClient
-
-Global initialization:
-- Lowpan, alarms, etc. initialized
-- RxState(s) initialized
-- FragState initialized with TxState(s), RxState(s), Lowpan, Radio, Alarm(s)
-- Set ReceiveClient for FragState
-- Initialize radio, set FragState as RxClient, TxClient
-
-Sending a packet:
-- Call FragState.transmit_packet with packet, TxState
-
-Receiving a packet:
-- Wait for callback, copy out any desired data from buffer, return buffer back
-
-Note that this is a tentative interface, and I am hoping there is a cleaner way to initialize the necessary state for the fragmentation layer. The current code is in the sixlowpan_fragment branch on the ptcrews fork.
-
-
 extern crate kernel;
 use kernel::ReturnCode;
 use kernel::common::take_cell::{TakeCell, MapCell};
