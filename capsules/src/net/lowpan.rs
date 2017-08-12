@@ -3,11 +3,11 @@
 
 use core::mem;
 use core::result::Result;
+use net::ieee802154::MacAddress;
 
 use net::ip::{IP6Header, MacAddr, IPAddr, ip6_nh};
 use net::util;
 use net::util::{slice_to_u16, u16_to_slice};
-use net::ieee802154::MacAddress;
 
 /// Contains bit masks and constants related to the two-byte header of the
 /// LoWPAN_IPHC encoding format.

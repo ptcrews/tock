@@ -679,7 +679,7 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 self.rx_client.get().map(|client| {
                     let rbuf = self.rx_buf.take().unwrap();
                     let frame_len = rbuf[1] as usize;
-                    client.receive(rbuf, frame_len-2, crc_valid, ReturnCode::SUCCESS);
+                    client.receive(rbuf, frame_len - 2, crc_valid, ReturnCode::SUCCESS);
                 });
             }
 
