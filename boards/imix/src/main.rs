@@ -419,7 +419,6 @@ pub unsafe fn reset_handler() {
     rf233.set_receive_client(radio_mac, &mut RF233_RX_BUF);
     rf233.set_config_client(radio_mac);
 
-    // START
     let default_context = static_init!(
         capsules::net::lowpan::Context<'static>,
         capsules::net::lowpan::Context {
@@ -486,7 +485,6 @@ pub unsafe fn reset_handler() {
     tx_state.set_transmit_client(lowpan_frag_dummy);
     frag_state_alarm.set_client(frag_state);
     frag_dummy_alarm.set_client(lowpan_frag_dummy);
-    // TODO: END
 
     // Configure the USB controller
     let usb_client = static_init!(
@@ -532,8 +530,6 @@ pub unsafe fn reset_handler() {
         /// Beginning of the ROM region containing app images.
         static _sapps: u8;
     }
-    // TODO
-    //lowpan_frag_dummy.start();
     kernel::process::load_processes(&_sapps as *const u8,
                                     &mut APP_MEMORY,
                                     &mut PROCESSES,
