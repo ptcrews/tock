@@ -533,7 +533,7 @@ pub unsafe fn reset_handler() {
         static _sapps: u8;
     }
     // TODO
-    lowpan_frag_dummy.start();
+    //lowpan_frag_dummy.start();
     kernel::process::load_processes(&_sapps as *const u8,
                                     &mut APP_MEMORY,
                                     &mut PROCESSES,
