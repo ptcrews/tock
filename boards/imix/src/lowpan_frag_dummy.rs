@@ -1,20 +1,20 @@
 //! A dummy sixlowpan/IP sender
 
+use capsules::mac;
+use capsules::net::ieee802154::MacAddress;
 use capsules::net::ip::{IP6Header, IPAddr, ip6_nh};
 use capsules::net::lowpan;
 use capsules::net::lowpan::{ContextStore, Context};
 use capsules::net::lowpan_fragment::{FragState, TxState, TransmitClient, ReceiveClient};
 use capsules::net::util;
-use capsules::mac;
-use capsules::net::ieee802154::{MacAddress};
+use core::cell::Cell;
 
 use core::mem;
-use core::cell::Cell;
+use kernel::ReturnCode;
 
 use kernel::hil::radio;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
-use kernel::ReturnCode;
 
 pub struct DummyStore<'a> {
     context0: Context<'a>,
@@ -59,9 +59,9 @@ pub const SRC_ADDR: IPAddr = IPAddr([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0
 pub const DST_ADDR: IPAddr = IPAddr([0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29,
                                      0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f]);
 pub const SRC_MAC_ADDR: MacAddress = MacAddress::Long([0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
-                                                     0x17]);
+                                                       0x17]);
 pub const DST_MAC_ADDR: MacAddress = MacAddress::Long([0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
-                                                     0x1f]);
+                                                       0x1f]);
 
 pub const IP6_HDR_SIZE: usize = 40;
 pub const PAYLOAD_LEN: usize = 200;
@@ -114,11 +114,12 @@ pub struct LowpanTest<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::A
     test_counter: Cell<usize>,
 }
 
-impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
-LowpanTest<'a, R, C, A> {
-    pub fn new(radio: &'a R, frag_state: &'a FragState<'a, R, C, A>,
+impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a> LowpanTest<'a, R, C, A> {
+    pub fn new(radio: &'a R,
+               frag_state: &'a FragState<'a, R, C, A>,
                tx_state: &'a TxState<'a>,
-               alarm: &'a A) -> LowpanTest<'a, R, C, A> {
+               alarm: &'a A)
+               -> LowpanTest<'a, R, C, A> {
         LowpanTest {
             radio: radio,
             alarm: alarm,
@@ -195,85 +196,93 @@ LowpanTest<'a, R, C, A> {
         }
     }
 
-    fn run_check_test(&self, test_id: usize, buf: &'static mut [u8], len: u16)
-    -> &'static mut [u8] {
+    fn run_check_test(&self,
+                      test_id: usize,
+                      buf: &'static mut [u8],
+                      len: u16)
+                      -> &'static mut [u8] {
         debug!("Running test {}:", test_id);
         match test_id {
             // Change TF compression
             0 => ipv6_check_receive_packet(TF::Inline, 255, SAC::Inline, DAC::Inline, buf, len),
             1 => ipv6_check_receive_packet(TF::Traffic, 255, SAC::Inline, DAC::Inline, buf, len),
             2 => ipv6_check_receive_packet(TF::Flow, 255, SAC::Inline, DAC::Inline, buf, len),
-            3 => ipv6_check_receive_packet(TF::TrafficFlow, 255, SAC::Inline, DAC::Inline, buf, len),
+            3 => {
+                ipv6_check_receive_packet(TF::TrafficFlow, 255, SAC::Inline, DAC::Inline, buf, len)
+            }
 
             // Change HL compression
-            4 => ipv6_check_receive_packet(TF::TrafficFlow,
-                                           255, SAC::Inline, DAC::Inline, buf, len),
-            5 => ipv6_check_receive_packet(TF::TrafficFlow,
-                                           64, SAC::Inline, DAC::Inline, buf, len),
-            6 => ipv6_check_receive_packet(TF::TrafficFlow,
-                                           1, SAC::Inline, DAC::Inline, buf, len),
-            7 => ipv6_check_receive_packet(TF::TrafficFlow,
-                                           42, SAC::Inline, DAC::Inline, buf, len),
+            4 => {
+                ipv6_check_receive_packet(TF::TrafficFlow, 255, SAC::Inline, DAC::Inline, buf, len)
+            }
+            5 => ipv6_check_receive_packet(TF::TrafficFlow, 64, SAC::Inline, DAC::Inline, buf, len),
+            6 => ipv6_check_receive_packet(TF::TrafficFlow, 1, SAC::Inline, DAC::Inline, buf, len),
+            7 => ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::Inline, DAC::Inline, buf, len),
 
             // Change source compression
-            8 => ipv6_check_receive_packet(TF::TrafficFlow,
-                                           42, SAC::Inline, DAC::Inline, buf, len),
-            9 => ipv6_check_receive_packet(TF::TrafficFlow,
-                                           42, SAC::LLP64, DAC::Inline, buf, len),
-            10 => ipv6_check_receive_packet(TF::TrafficFlow,
-                                            42, SAC::LLP16, DAC::Inline, buf, len),
-            11 => ipv6_check_receive_packet(TF::TrafficFlow,
-                                            42, SAC::LLPIID, DAC::Inline, buf, len),
-            12 => ipv6_check_receive_packet(TF::TrafficFlow,
-                                            42, SAC::Unspecified, DAC::Inline, buf, len),
-            13 => ipv6_check_receive_packet(TF::TrafficFlow,
-                                            42, SAC::Ctx64, DAC::Inline, buf, len),
-            14 => ipv6_check_receive_packet(TF::TrafficFlow,
-                                            42, SAC::Ctx16, DAC::Inline, buf, len),
-            15 => ipv6_check_receive_packet(TF::TrafficFlow,
-                                            42, SAC::CtxIID, DAC::Inline, buf, len),
+            8 => ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::Inline, DAC::Inline, buf, len),
+            9 => ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::LLP64, DAC::Inline, buf, len),
+            10 => ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::LLP16, DAC::Inline, buf, len),
+            11 => {
+                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::LLPIID, DAC::Inline, buf, len)
+            }
+            12 => {
+                ipv6_check_receive_packet(TF::TrafficFlow,
+                                          42,
+                                          SAC::Unspecified,
+                                          DAC::Inline,
+                                          buf,
+                                          len)
+            }
+            13 => ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::Ctx64, DAC::Inline, buf, len),
+            14 => ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::Ctx16, DAC::Inline, buf, len),
+            15 => {
+                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Inline, buf, len)
+            }
 
             // Change dest compression
-            16 =>
-                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Inline, buf, len),
-            17 =>
-                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::LLP64, buf, len),
-            18 =>
-                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::LLP16, buf, len),
-            19 =>
-                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::LLPIID, buf, len),
-            20 =>
-                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Ctx64, buf, len),
-            21 =>
-                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Ctx16, buf, len),
-            22 =>
-                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::CtxIID, buf, len),
-            23 =>
+            16 => {
+                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Inline, buf, len)
+            }
+            17 => ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::LLP64, buf, len),
+            18 => ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::LLP16, buf, len),
+            19 => {
+                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::LLPIID, buf, len)
+            }
+            20 => ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Ctx64, buf, len),
+            21 => ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Ctx16, buf, len),
+            22 => {
+                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::CtxIID, buf, len)
+            }
+            23 => {
                 ipv6_check_receive_packet(TF::TrafficFlow,
-                                          42, SAC::CtxIID, DAC::McastInline, buf, len),
-            24 =>
-                ipv6_check_receive_packet(TF::TrafficFlow,
-                                          42, SAC::CtxIID, DAC::Mcast48, buf, len),
-            25 =>
-                ipv6_check_receive_packet(TF::TrafficFlow,
-                                          42, SAC::CtxIID, DAC::Mcast32, buf, len),
-            26 =>
-                ipv6_check_receive_packet(TF::TrafficFlow,
-                                          42, SAC::CtxIID, DAC::Mcast8, buf, len),
-            27 =>
-                ipv6_check_receive_packet(TF::TrafficFlow,
-                                          42, SAC::CtxIID, DAC::McastCtx, buf, len),
+                                          42,
+                                          SAC::CtxIID,
+                                          DAC::McastInline,
+                                          buf,
+                                          len)
+            }
+            24 => {
+                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Mcast48, buf, len)
+            }
+            25 => {
+                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Mcast32, buf, len)
+            }
+            26 => {
+                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Mcast8, buf, len)
+            }
+            27 => {
+                ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::McastCtx, buf, len)
+            }
 
             _ => buf,
         }
     }
     fn ipv6_send_packet_test(&self, tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
-            ipv6_prepare_packet(tf, hop_limit, sac, dac);
-            unsafe {
-                self.send_ipv6_packet(&MLP,
-                                      SRC_MAC_ADDR,
-                                      DST_MAC_ADDR);
-            }
+        ipv6_prepare_packet(tf, hop_limit, sac, dac);
+        unsafe {
+            self.send_ipv6_packet(&MLP, SRC_MAC_ADDR, DST_MAC_ADDR);
+        }
     }
 
     unsafe fn send_ipv6_packet(&self,
@@ -282,31 +291,38 @@ LowpanTest<'a, R, C, A> {
                                dst_mac_addr: MacAddress) {
         let frag_state = self.frag_state;
         let tx_state = self.tx_state;
-            //frag_state.radio.config_set_pan(0xABCD);
-            let ret_code = frag_state.transmit_packet(src_mac_addr, dst_mac_addr, &mut IP6_DGRAM,
-                                                      IP6_DGRAM.len(), None, tx_state, true);
-            debug!("Ret code: {:?}", ret_code);
-        }
-
+        //frag_state.radio.config_set_pan(0xABCD);
+        let ret_code = frag_state.transmit_packet(src_mac_addr,
+                                                  dst_mac_addr,
+                                                  &mut IP6_DGRAM,
+                                                  IP6_DGRAM.len(),
+                                                  None,
+                                                  tx_state,
+                                                  true);
+        debug!("Ret code: {:?}", ret_code);
+    }
 }
 
-impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
-time::Client for LowpanTest<'a, R, C, A> {
+impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a> time::Client
+    for
+    LowpanTest<'a, R, C, A> {
     fn fired(&self) {
         self.run_test_and_increment();
     }
 }
 
-impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
-TransmitClient for LowpanTest<'a, R, C, A> {
+impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a> TransmitClient
+    for
+    LowpanTest<'a, R, C, A> {
     fn send_done(&self, _: &'static mut [u8], _: &TxState, _: bool, _: ReturnCode) {
         debug!("Send completed");
         self.schedule_next();
     }
 }
 
-impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a>
-ReceiveClient for LowpanTest<'a, R, C, A> {
+impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a> ReceiveClient
+    for
+    LowpanTest<'a, R, C, A> {
     fn receive(&self, buf: &'static mut [u8], len: u16, _: ReturnCode) -> &'static mut [u8] {
         debug!("Receive completed");
         let test_num = self.test_counter.get();
@@ -317,8 +333,13 @@ ReceiveClient for LowpanTest<'a, R, C, A> {
 
 static mut IP6_DGRAM: [u8; IP6_HDR_SIZE + PAYLOAD_LEN] = [0; IP6_HDR_SIZE + PAYLOAD_LEN];
 
-fn ipv6_check_receive_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC,
-                             recv_packet: &'static mut [u8], len: u16) -> &'static mut [u8]{
+fn ipv6_check_receive_packet(tf: TF,
+                             hop_limit: u8,
+                             sac: SAC,
+                             dac: DAC,
+                             recv_packet: &'static mut [u8],
+                             len: u16)
+                             -> &'static mut [u8] {
     ipv6_prepare_packet(tf, hop_limit, sac, dac);
     unsafe {
         for i in 0..len as usize {
@@ -484,4 +505,3 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
     debug!("Packet with tf={:?} hl={} sac={:?} dac={:?}",
            tf, hop_limit, sac, dac);
 }
-

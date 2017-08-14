@@ -521,11 +521,7 @@ impl<'a, R: radio::Radio + 'a> radio::RxClient for MacDevice<'a, R> {
             } else {
                 // No security needed, can yield the frame immediately
                 self.rx_client.get().map(|client| {
-                    client.receive(&buf,
-                                   header,
-                                   buf_data_offset,
-                                   data_len,
-                                   ReturnCode::SUCCESS);
+                    client.receive(&buf, header, buf_data_offset, data_len, ReturnCode::SUCCESS);
                 });
                 false
             }
