@@ -560,7 +560,7 @@ RxClient for FragState<'a, R, C, A> {
                    header: Header<'b>,
                    data_offset: usize,
                    data_len: usize,
-                   retcode: ReturnCode) {
+                   _: ReturnCode) {
         // We return if retcode is not valid, as it does not make sense to issue
         // a callback for an invalid frame reception
         let data_offset = data_offset;
