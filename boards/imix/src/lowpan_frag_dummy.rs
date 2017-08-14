@@ -298,6 +298,7 @@ impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a> Lowpan
                                                   IP6_DGRAM.len(),
                                                   None,
                                                   tx_state,
+                                                  true,
                                                   true);
         debug!("Ret code: {:?}", ret_code);
     }

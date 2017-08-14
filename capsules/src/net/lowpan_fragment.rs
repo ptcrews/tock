@@ -11,8 +11,8 @@
 //! Remaining Tasks and Known Problems
 //! ----------------------------------
 //! TODO: Allow for optional compression
-//! TODO: Change ReceiveClient trait to passing back an immutable reference
-//! TODO: Implement and expose a ConfigClient interface
+//! TODO: Change ReceiveClient trait to pass back an immutable reference
+//! TODO: Implement and expose a ConfigClient interface?
 //!
 //!
 //! Design
@@ -181,6 +181,7 @@ pub struct TxState<'a> {
     dgram_size: Cell<u16>,
     dgram_offset: Cell<usize>,
     fragment: Cell<bool>,
+    compress: Cell<bool>,
     client: Cell<Option<&'static TransmitClient>>,
 
     next: ListLink<'a, TxState<'a>>,
@@ -208,6 +209,7 @@ impl<'a> TxState<'a> {
             dgram_size: Cell::new(0),
             dgram_offset: Cell::new(0),
             fragment: Cell::new(false),
+            compress: Cell::new(false),
             client: Cell::new(None),
             next: ListLink::empty(),
         }
@@ -230,11 +232,13 @@ impl<'a> TxState<'a> {
                      packet: &'static mut [u8],
                      packet_len: usize,
                      security: Option<(SecurityLevel, KeyId)>,
-                     fragment: bool) {
+                     fragment: bool,
+                     compress: bool) {
 
         self.src_mac_addr.set(src_mac_addr);
         self.dst_mac_addr.set(dst_mac_addr);
         self.fragment.set(fragment);
+        self.compress.set(compress);
         self.security.set(security);
         self.packet.replace(packet);
         self.dgram_size.set(packet_len as u16);
@@ -281,14 +285,18 @@ impl<'a> TxState<'a> {
         // Here, we assume that the compressed headers fit in the first MTU
         // fragment. This is consistent with RFC 6282.
         let mut lowpan_packet = [0 as u8; radio::MAX_FRAME_SIZE as usize];
-        let lowpan_result = lowpan.compress(&ip6_packet,
-                                            self.src_mac_addr.get(),
-                                            self.dst_mac_addr.get(),
-                                            &mut lowpan_packet);
-        if lowpan_result.is_err() {
-            return Err((ReturnCode::FAIL, frame.into_buf()));
-        }
-        let (consumed, written) = lowpan_result.unwrap();
+        let (consumed, written) = if self.compress.get() {
+            let lowpan_result = lowpan.compress(&ip6_packet,
+                                                self.src_mac_addr.get(),
+                                                self.dst_mac_addr.get(),
+                                                &mut lowpan_packet);
+            if lowpan_result.is_err() {
+                return Err((ReturnCode::FAIL, frame.into_buf()));
+            }
+            lowpan_result.unwrap()
+        } else {
+            (0, 0)
+        };
         let remaining_payload = ip6_packet.len() - consumed;
         let lowpan_len = written + remaining_payload;
         // TODO: This -2 is added to account for the FCS; this should be changed
@@ -312,13 +320,17 @@ impl<'a> TxState<'a> {
                 return Err((ReturnCode::ESIZE, frame.into_buf()));
             }
         }
+
         // Write the 6lowpan header
-        if written <= remaining_capacity {
-            frame.append_payload(&lowpan_packet[0..written]);
-            remaining_capacity -= written;
-        } else {
-            return Err((ReturnCode::ESIZE, frame.into_buf()));
+        if self.compress.get() {
+            if written <= remaining_capacity {
+                frame.append_payload(&lowpan_packet[0..written]);
+                remaining_capacity -= written;
+            } else {
+                return Err((ReturnCode::ESIZE, frame.into_buf()));
+            }
         }
+            
         // Write the remainder of the payload, rounding down to a multiple
         // of 8 if the entire payload won't fit
         let payload_len = if remaining_payload > remaining_capacity {
@@ -665,7 +677,8 @@ impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
                            ip6_packet_len: usize,
                            security: Option<(SecurityLevel, KeyId)>,
                            tx_state: &'a TxState<'a>,
-                           fragment: bool)
+                           fragment: bool,
+                           compress: bool)
                            -> Result<ReturnCode, ReturnCode> {
 
         tx_state.init_transmit(src_mac_addr,
@@ -673,7 +686,8 @@ impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
                                ip6_packet,
                                ip6_packet_len,
                                security,
-                               fragment);
+                               fragment,
+                               compress);
         // Queue tx_state
         self.tx_states.push_tail(tx_state);
         if self.tx_busy.get() {
