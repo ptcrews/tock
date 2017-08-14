@@ -345,7 +345,9 @@ fn ipv6_check_receive_packet(tf: TF,
         for i in 0..len as usize {
             if recv_packet[i] != IP6_DGRAM[i] {
                 debug!("Packets differ at idx: {} where recv = {}, ref = {}",
-                       i, recv_packet[i], IP6_DGRAM[i]);
+                       i,
+                       recv_packet[i],
+                       IP6_DGRAM[i]);
                 break;
             }
         }
@@ -503,5 +505,8 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
         }
     }
     debug!("Packet with tf={:?} hl={} sac={:?} dac={:?}",
-           tf, hop_limit, sac, dac);
+           tf,
+           hop_limit,
+           sac,
+           dac);
 }
