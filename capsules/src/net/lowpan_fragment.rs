@@ -11,10 +11,10 @@
 //! Remaining Tasks and Known Problems
 //! ----------------------------------
 //! TODO: Implement and expose a ConfigClient interface?
-//! Problem: The receiving Imix sometimes stops printing debug messages, while
-//!     the transmitting Imix is still sending. Not sure if this is due to an
-//!     issue with flushing output or if this is a larger underlying bug.
 //!
+//! Problem: The receiving Imix sometimes fails to receive a fragment. This
+//!     occurs below the Mac layer, and prevents the packet from being fully
+//!     reassembled.
 //!
 //! Design
 //! ------

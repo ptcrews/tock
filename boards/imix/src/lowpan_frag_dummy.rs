@@ -1,4 +1,40 @@
-//! A dummy sixlowpan/IP sender
+//! This implements a simple testing framework for 6LoWPAN fragmentation and
+//! compression. Two Imix boards run this code, one for receiving and one for
+//! transmitting. The transmitting board must call the `start` function in
+//! the `main.rs` file. The transmitting Imix then sends a variety of packets
+//! to the receiving Imix, relying on the 6LoWPAN fragmentation and reassembly
+//! layer. Note that this layer also performs 6LoWPAN compression (invisible
+//! to the upper layers), so this test suite is also dependent on the
+//! correctness of the compression/decompression implementation; for this
+//! reason, tests solely for compression/decompression have been left in a
+//! different file.
+//!
+//! This test suite will print out whether a receive packet is different than
+//! the expected packet. For this test to work correctly, and for both sides
+//! to remain in sync, they must both be started at the same time. Any dropped
+//! frames will prevent the test from completing successfully.
+//!
+//! To use this test suite, allocate space for a new LowpanTest structure, and
+//! set it as the client for the FragState struct and for the respective TxState
+//! struct. For the transmit side, call the LowpanTest::start method. A simple
+//! example is given below:
+//!
+//! let lowpan_frag_test = static_init!(
+//!     lowpan_frag_dummy::LowpanTest<'static,
+//!         VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+//!         lowpan_frag_dummy::LowpanTest::new(radio_mac as &'static Mac,
+//!                                            frag_state,
+//!                                            tx_state,
+//!                                            frag_dummy_alarm)
+//! );
+//!
+//! frag_state.set_receive_client(lowpan_frag_test);
+//! tx_state.set_transmit_client(lowpan_frag_test);
+//! frag_dummy_alarm.set_client(lowpan_frag_test);
+//!
+//! ...
+//!
+//! lowpan_frag_test.start();
 
 use capsules::mac;
 use capsules::net::ieee802154::MacAddress;
