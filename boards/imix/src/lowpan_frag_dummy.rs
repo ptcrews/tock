@@ -16,26 +16,26 @@ use kernel::hil::radio;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
 
-pub struct DummyStore<'a> {
-    context0: Context<'a>,
+pub struct DummyStore {
+    context0: Context,
 }
 
-impl<'a> DummyStore<'a> {
-    pub fn new(context0: Context<'a>) -> DummyStore<'a> {
+impl DummyStore {
+    pub fn new(context0: Context) -> DummyStore {
         DummyStore { context0: context0 }
     }
 }
 
-impl<'a> ContextStore<'a> for DummyStore<'a> {
-    fn get_context_from_addr(&self, ip_addr: IPAddr) -> Option<Context<'a>> {
-        if util::matches_prefix(&ip_addr.0, self.context0.prefix, self.context0.prefix_len) {
+impl ContextStore for DummyStore {
+    fn get_context_from_addr(&self, ip_addr: IPAddr) -> Option<Context> {
+        if util::matches_prefix(&ip_addr.0, &self.context0.prefix, self.context0.prefix_len) {
             Some(self.context0)
         } else {
             None
         }
     }
 
-    fn get_context_from_id(&self, ctx_id: u8) -> Option<Context<'a>> {
+    fn get_context_from_id(&self, ctx_id: u8) -> Option<Context> {
         if ctx_id == 0 {
             Some(self.context0)
         } else {
@@ -43,9 +43,9 @@ impl<'a> ContextStore<'a> for DummyStore<'a> {
         }
     }
 
-    fn get_context_from_prefix(&self, prefix: &[u8], prefix_len: u8) -> Option<Context<'a>> {
+    fn get_context_from_prefix(&self, prefix: &[u8], prefix_len: u8) -> Option<Context> {
         if prefix_len == self.context0.prefix_len &&
-           util::matches_prefix(prefix, self.context0.prefix, prefix_len) {
+           util::matches_prefix(prefix, &self.context0.prefix, prefix_len) {
             Some(self.context0)
         } else {
             None
@@ -106,20 +106,20 @@ enum DAC {
 pub const TEST_DELAY_MS: u32 = 10000;
 pub const TEST_LOOP: bool = false;
 
-pub struct LowpanTest<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a> {
-    radio: &'a R,
+pub struct LowpanTest<'a, A: time::Alarm + 'a> {
+    radio: &'a mac::Mac,
     alarm: &'a A,
-    frag_state: &'a FragState<'a, R, C, A>,
+    frag_state: &'a FragState<'a, A>,
     tx_state: &'a TxState<'a>,
     test_counter: Cell<usize>,
 }
 
-impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a> LowpanTest<'a, R, C, A> {
-    pub fn new(radio: &'a R,
-               frag_state: &'a FragState<'a, R, C, A>,
+impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
+    pub fn new(radio: &'a mac::Mac,
+               frag_state: &'a FragState<'a, A>,
                tx_state: &'a TxState<'a>,
                alarm: &'a A)
-               -> LowpanTest<'a, R, C, A> {
+               -> LowpanTest<'a, A> {
         LowpanTest {
             radio: radio,
             alarm: alarm,
@@ -304,26 +304,26 @@ impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a> Lowpan
     }
 }
 
-impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a> time::Client
+impl<'a, A: time::Alarm + 'a> time::Client
     for
-    LowpanTest<'a, R, C, A> {
+    LowpanTest<'a, A> {
     fn fired(&self) {
         self.run_test_and_increment();
     }
 }
 
-impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a> TransmitClient
+impl<'a, A: time::Alarm + 'a> TransmitClient
     for
-    LowpanTest<'a, R, C, A> {
+    LowpanTest<'a, A> {
     fn send_done(&self, _: &'static mut [u8], _: &TxState, _: bool, _: ReturnCode) {
         debug!("Send completed");
         self.schedule_next();
     }
 }
 
-impl<'a, R: mac::Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a> ReceiveClient
+impl<'a, A: time::Alarm + 'a> ReceiveClient
     for
-    LowpanTest<'a, R, C, A> {
+    LowpanTest<'a, A> {
     fn receive(&self, buf: &'static mut [u8], len: u16, _: ReturnCode) -> &'static mut [u8] {
         debug!("Receive completed");
         let test_num = self.test_counter.get();

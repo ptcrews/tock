@@ -2,7 +2,7 @@
 
 use capsules::net::ip::{IP6Header, MacAddr, IPAddr, ip6_nh};
 use capsules::net::lowpan;
-use capsules::net::lowpan::{ContextStore, Context, LoWPAN};
+use capsules::net::lowpan::{ContextStore, Context};
 use capsules::net::util;
 // use capsules::radio_debug;
 
@@ -16,26 +16,26 @@ use kernel::hil::time::Frequency;
 
 static TX_BUF: [u8; 128] = [0; 128];
 
-pub struct DummyStore<'a> {
-    context0: Context<'a>,
+pub struct DummyStore {
+    context0: Context,
 }
 
-impl<'a> DummyStore<'a> {
-    pub fn new(context0: Context<'a>) -> DummyStore<'a> {
+impl DummyStore {
+    pub fn new(context0: Context) -> DummyStore {
         DummyStore { context0: context0 }
     }
 }
 
-impl<'a> ContextStore<'a> for DummyStore<'a> {
-    fn get_context_from_addr(&self, ip_addr: IPAddr) -> Option<Context<'a>> {
-        if util::matches_prefix(&ip_addr.0, self.context0.prefix, self.context0.prefix_len) {
+impl ContextStore for DummyStore {
+    fn get_context_from_addr(&self, ip_addr: IPAddr) -> Option<Context> {
+        if util::matches_prefix(&ip_addr.0, &self.context0.prefix, self.context0.prefix_len) {
             Some(self.context0)
         } else {
             None
         }
     }
 
-    fn get_context_from_id(&self, ctx_id: u8) -> Option<Context<'a>> {
+    fn get_context_from_id(&self, ctx_id: u8) -> Option<Context> {
         if ctx_id == 0 {
             Some(self.context0)
         } else {
@@ -43,9 +43,9 @@ impl<'a> ContextStore<'a> for DummyStore<'a> {
         }
     }
 
-    fn get_context_from_prefix(&self, prefix: &[u8], prefix_len: u8) -> Option<Context<'a>> {
+    fn get_context_from_prefix(&self, prefix: &[u8], prefix_len: u8) -> Option<Context> {
         if prefix_len == self.context0.prefix_len &&
-           util::matches_prefix(prefix, self.context0.prefix, prefix_len) {
+           util::matches_prefix(prefix, &self.context0.prefix, prefix_len) {
             Some(self.context0)
         } else {
             None
@@ -390,12 +390,13 @@ unsafe fn send_ipv6_packet<'a>(radio: &'a Radio,
             compress: true,
         },
     };
-    let lowpan = LoWPAN::new(&store);
     //let frag_state = FragState::new(radio, &lowpan, TX_BUF, &self.alarm);
-    let (consumed, written) = lowpan.compress(&ip6_datagram,
-                  src_mac_addr,
-                  dst_mac_addr,
-                  &mut RF233_BUF[offset..])
+    let (consumed, written) =
+        lowpan::compress(&store,
+                         &ip6_datagram,
+                         src_mac_addr,
+                         dst_mac_addr,
+                         &mut RF233_BUF[offset..])
         .expect("Error compressing packet");
     let payload_len = ip6_datagram.len() - consumed;
     let total = written + payload_len;
@@ -408,12 +409,14 @@ unsafe fn send_ipv6_packet<'a>(radio: &'a Radio,
 
     // Decompress LoWPAN packet into IPv6
     let mut out_ip6_datagram = [0 as u8; IP6_HDR_SIZE + PAYLOAD_LEN];
-    let (d_consumed, d_written) = lowpan.decompress(&RF233_BUF[offset..offset + total],
-                    src_mac_addr,
-                    dst_mac_addr,
-                    &mut out_ip6_datagram,
-                    0,
-                    false)
+    let (d_consumed, d_written) =
+        decompress(&store,
+                   &RF233_BUF[offset..offset + total],
+                   src_mac_addr,
+                   dst_mac_addr,
+                   &mut out_ip6_datagram,
+                   0,
+                   false)
         .expect("Error decompressing packet");
     let d_payload_len = total - d_consumed;
     let d_total = d_written + d_payload_len;

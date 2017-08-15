@@ -107,7 +107,8 @@ use kernel::hil::time::Frequency;
 use mac::{Mac, Frame, TxClient, RxClient};
 use net::frag_utils::Bitmap;
 use net::ieee802154::{PanID, MacAddress, SecurityLevel, KeyId, Header};
-use net::lowpan::{LoWPAN, ContextStore, is_lowpan};
+use net::lowpan;
+use net::lowpan::{ContextStore, is_lowpan};
 use net::util::{slice_to_u16, u16_to_slice};
 
 // Timer fire rate in seconds
@@ -245,13 +246,12 @@ impl<'a> TxState<'a> {
     }
 
     // Takes ownership of frag_buf and gives it to the radio
-    fn start_transmit<'b, C: ContextStore<'b>>
-        (&self,
-         dgram_tag: u16,
-         mut frag_buf: &'static mut [u8],
-         radio: &'b Mac,
-         lowpan: &'b LoWPAN<'b, C>)
-         -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
+    fn start_transmit(&self,
+                      dgram_tag: u16,
+                      mut frag_buf: &'static mut [u8],
+                      radio: &Mac,
+                      ctx_store: &ContextStore)
+        -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
         self.dgram_tag.set(dgram_tag);
         let ip6_packet_option = self.packet.take();
         if ip6_packet_option.is_none() {
@@ -268,28 +268,30 @@ impl<'a> TxState<'a> {
             return Err((ReturnCode::FAIL, frame.unwrap_err()));
         }
 
-        let result =
-            self.prepare_transmit_first_fragment(ip6_packet, frame.unwrap(), radio, lowpan);
+        let result = self.prepare_transmit_first_fragment(ip6_packet,
+                                                          frame.unwrap(),
+                                                          radio,
+                                                          ctx_store);
         self.packet.replace(ip6_packet);
         result
     }
 
-    fn prepare_transmit_first_fragment<'b, C: ContextStore<'b>>
-        (&self,
-         ip6_packet: &[u8],
-         mut frame: Frame,
-         radio: &'b Mac,
-         lowpan: &'b LoWPAN<'b, C>)
-         -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
+    fn prepare_transmit_first_fragment(&self,
+                                       ip6_packet: &[u8],
+                                       mut frame: Frame,
+                                       radio: &Mac,
+                                       ctx_store: &ContextStore)
+        -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
 
         // Here, we assume that the compressed headers fit in the first MTU
         // fragment. This is consistent with RFC 6282.
         let mut lowpan_packet = [0 as u8; radio::MAX_FRAME_SIZE as usize];
         let (consumed, written) = if self.compress.get() {
-            let lowpan_result = lowpan.compress(&ip6_packet,
-                                                self.src_mac_addr.get(),
-                                                self.dst_mac_addr.get(),
-                                                &mut lowpan_packet);
+            let lowpan_result = lowpan::compress(ctx_store,
+                                                 &ip6_packet,
+                                                 self.src_mac_addr.get(),
+                                                 self.dst_mac_addr.get(),
+                                                 &mut lowpan_packet);
             if lowpan_result.is_err() {
                 return Err((ReturnCode::FAIL, frame.into_buf()));
             }
@@ -474,21 +476,23 @@ impl<'a> RxState<'a> {
     // This function assumes that the payload is a slice starting from the
     // actual payload (no 802.15.4 headers, no fragmentation headers), and
     // returns true if the packet is completely reassembled.
-    fn receive_next_frame<'b, C: ContextStore<'b>>(&self,
-                                                   payload: &[u8],
-                                                   payload_len: usize,
-                                                   dgram_size: u16,
-                                                   dgram_offset: usize,
-                                                   lowpan: &'b LoWPAN<'b, C>)
-                                                   -> Result<bool, ReturnCode> {
+    fn receive_next_frame(&self,
+                          payload: &[u8],
+                          payload_len: usize,
+                          dgram_size: u16,
+                          dgram_offset: usize,
+                          ctx_store: &ContextStore)
+        -> Result<bool, ReturnCode> {
         let mut packet = self.packet.take().ok_or(ReturnCode::ENOMEM)?;
         let uncompressed_len = if dgram_offset == 0 {
-            let (consumed, written) = lowpan.decompress(&payload[0..payload_len as usize],
-                            self.src_mac_addr.get(),
-                            self.dst_mac_addr.get(),
-                            &mut packet,
-                            dgram_size,
-                            true)
+            let (consumed, written) =
+                lowpan::decompress(ctx_store,
+                                   &payload[0..payload_len as usize],
+                                   self.src_mac_addr.get(),
+                                   self.dst_mac_addr.get(),
+                                   &mut packet,
+                                   dgram_size,
+                                   true)
                 .map_err(|_| ReturnCode::FAIL)?;
             let remaining = payload_len - consumed;
             packet[written..written + remaining]
@@ -532,9 +536,9 @@ impl<'a> RxState<'a> {
 /// ----------------
 /// This struct tracks the global sending/receiving state, and contains the
 /// lists of RxStates and TxStates.
-pub struct FragState<'a, R: Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm + 'a> {
-    pub radio: &'a R,
-    lowpan: &'a LoWPAN<'a, C>,
+pub struct FragState<'a, A: time::Alarm + 'a> {
+    pub radio: &'a Mac,
+    ctx_store: &'a ContextStore,
     alarm: &'a A,
 
     // Transmit state
@@ -550,7 +554,7 @@ pub struct FragState<'a, R: Mac + 'a, C: ContextStore<'a> + 'a, A: time::Alarm +
 
 // This function is called after transmitting a frame
 #[allow(unused_must_use)]
-impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> TxClient for FragState<'a, R, C, A> {
+impl<'a, A: time::Alarm> TxClient for FragState<'a, A> {
     fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         self.tx_buf.replace(buf);
         if result != ReturnCode::SUCCESS {
@@ -576,7 +580,7 @@ impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> TxClient for FragState<'a,
 }
 
 // This function is called after receiving a frame
-impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> RxClient for FragState<'a, R, C, A> {
+impl<'a, A: time::Alarm> RxClient for FragState<'a, A> {
     fn receive<'b>(&self,
                    buf: &'b [u8],
                    header: Header<'b>,
@@ -599,7 +603,7 @@ impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> RxClient for FragState<'a,
     }
 }
 
-impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> time::Client for FragState<'a, R, C, A> {
+impl<'a, A: time::Alarm> time::Client for FragState<'a, A> {
     fn fired(&self) {
         // Timeout any expired rx_states
         for state in self.rx_states.iter() {
@@ -614,18 +618,18 @@ impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> time::Client for FragState
     }
 }
 
-impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
+impl<'a, A: time::Alarm> FragState<'a, A> {
     /// FragState::new
     /// --------------
     /// This function initializes and returns a new FragState struct.
-    pub fn new(radio: &'a R,
-               lowpan: &'a LoWPAN<'a, C>,
+    pub fn new(radio: &'a Mac,
+               ctx_store: &'a ContextStore,
                tx_buf: &'static mut [u8],
                alarm: &'a A)
-               -> FragState<'a, R, C, A> {
+               -> FragState<'a, A> {
         FragState {
             radio: radio,
-            lowpan: lowpan,
+            ctx_store: ctx_store,
             alarm: alarm,
 
             tx_states: List::new(),
@@ -710,7 +714,7 @@ impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
         let mut tx_state = self.tx_states.head();
         while tx_state.is_some() {
             let result = tx_state.map(move |state| {
-                    state.start_transmit(dgram_tag, frag_buf, self.radio, self.lowpan)
+                    state.start_transmit(dgram_tag, frag_buf, self.radio, self.ctx_store)
                 })
                 .unwrap();
 
@@ -782,12 +786,14 @@ impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
                 // unwrap fails
                 let mut packet = state.packet.take().unwrap();
                 if is_lowpan(payload) {
-                    let decompressed = self.lowpan.decompress(&payload[0..payload_len as usize],
-                                                              src_mac_addr,
-                                                              dst_mac_addr,
-                                                              &mut packet,
-                                                              0,
-                                                              false);
+                    let decompressed =
+                        lowpan::decompress(self.ctx_store,
+                                           &payload[0..payload_len as usize],
+                                           src_mac_addr,
+                                           dst_mac_addr,
+                                           &mut packet,
+                                           0,
+                                           false);
                     if decompressed.is_err() {
                         return (None, ReturnCode::FAIL);
                     }
@@ -837,7 +843,7 @@ impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> FragState<'a, R, C, A> {
                                                    payload_len,
                                                    dgram_size,
                                                    dgram_offset,
-                                                   &self.lowpan);
+                                                   self.ctx_store);
                 if res.is_err() {
                     // Some error occurred
                     (Some(state), ReturnCode::FAIL)
