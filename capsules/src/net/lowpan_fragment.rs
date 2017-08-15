@@ -527,8 +527,9 @@ impl<'a> RxState<'a> {
         self.bitmap.map(|bitmap| bitmap.clear());
         self.timeout_counter.set(0);
         if client.is_some() {
-            let buffer = self.packet.take().unwrap();
+            let mut buffer = self.packet.take().unwrap();
             client.unwrap().receive(&buffer, self.dgram_size.get(), result);
+            self.packet.replace(buffer);
         }
     }
 }

@@ -522,6 +522,5 @@ pub unsafe fn reset_handler() {
                                     &mut APP_MEMORY,
                                     &mut PROCESSES,
                                     FAULT_RESPONSE);
-    lowpan_frag_dummy.start();
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }
