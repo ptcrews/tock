@@ -581,8 +581,7 @@ impl<'a, R: Mac, C: ContextStore<'a>, A: time::Alarm> RxClient for FragState<'a,
                    buf: &'b [u8],
                    header: Header<'b>,
                    data_offset: usize,
-                   data_len: usize,
-                   _: ReturnCode) {
+                   data_len: usize) {
         // We return if retcode is not valid, as it does not make sense to issue
         // a callback for an invalid frame reception
         let data_offset = data_offset;
