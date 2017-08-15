@@ -10,9 +10,10 @@
 //!
 //! Remaining Tasks and Known Problems
 //! ----------------------------------
-//! TODO: Allow for optional compression
-//! TODO: Change ReceiveClient trait to pass back an immutable reference
 //! TODO: Implement and expose a ConfigClient interface?
+//! Problem: The receiving Imix sometimes stops printing debug messages, while
+//!     the transmitting Imix is still sending. Not sure if this is due to an
+//!     issue with flushing output or if this is a larger underlying bug.
 //!
 //!
 //! Design
@@ -117,7 +118,7 @@ const TIMER_RATE: usize = 10;
 const FRAG_TIMEOUT: usize = 60;
 
 pub trait ReceiveClient {
-    fn receive(&self, buf: &'static mut [u8], len: u16, result: ReturnCode) -> &'static mut [u8];
+    fn receive<'a>(&self, buf: &'a [u8], len: u16, result: ReturnCode);
 }
 
 pub trait TransmitClient {
@@ -526,8 +527,8 @@ impl<'a> RxState<'a> {
         self.bitmap.map(|bitmap| bitmap.clear());
         self.timeout_counter.set(0);
         if client.is_some() {
-            let mut buffer = self.packet.take().unwrap();
-            self.packet.replace(client.unwrap().receive(buffer, self.dgram_size.get(), result));
+            let buffer = self.packet.take().unwrap();
+            client.unwrap().receive(&buffer, self.dgram_size.get(), result);
         }
     }
 }

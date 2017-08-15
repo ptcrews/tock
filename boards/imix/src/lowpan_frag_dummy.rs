@@ -198,9 +198,8 @@ impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
 
     fn run_check_test(&self,
                       test_id: usize,
-                      buf: &'static mut [u8],
-                      len: u16)
-                      -> &'static mut [u8] {
+                      buf: &[u8],
+                      len: u16) {
         debug!("Running test {}:", test_id);
         match test_id {
             // Change TF compression
@@ -275,7 +274,8 @@ impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
                 ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::McastCtx, buf, len)
             }
 
-            _ => buf,
+            _ => debug!("Finished tests")
+
         }
     }
     fn ipv6_send_packet_test(&self, tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
@@ -324,7 +324,7 @@ impl<'a, A: time::Alarm + 'a> TransmitClient
 impl<'a, A: time::Alarm + 'a> ReceiveClient
     for
     LowpanTest<'a, A> {
-    fn receive(&self, buf: &'static mut [u8], len: u16, _: ReturnCode) -> &'static mut [u8] {
+    fn receive<'b>(&self, buf: &'b [u8], len: u16, _: ReturnCode) {
         debug!("Receive completed");
         let test_num = self.test_counter.get();
         self.test_counter.set((test_num + 1) % self.num_tests());
@@ -338,9 +338,8 @@ fn ipv6_check_receive_packet(tf: TF,
                              hop_limit: u8,
                              sac: SAC,
                              dac: DAC,
-                             recv_packet: &'static mut [u8],
-                             len: u16)
-                             -> &'static mut [u8] {
+                             recv_packet: &[u8],
+                             len: u16) {
     ipv6_prepare_packet(tf, hop_limit, sac, dac);
     unsafe {
         for i in 0..len as usize {
@@ -353,7 +352,6 @@ fn ipv6_check_receive_packet(tf: TF,
             }
         }
     }
-    recv_packet
 }
 
 
