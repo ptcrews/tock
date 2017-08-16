@@ -475,6 +475,7 @@ pub unsafe fn reset_handler() {
     tx_state.set_transmit_client(lowpan_frag_dummy);
     frag_state_alarm.set_client(frag_state);
     frag_dummy_alarm.set_client(lowpan_frag_dummy);
+    frag_state.schedule_next_timer();
 
     // Configure the USB controller
     let usb_client = static_init!(

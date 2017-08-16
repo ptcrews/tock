@@ -350,11 +350,6 @@ impl<'a> TxState<'a> {
                                       mut frag_buf: &'static mut [u8],
                                       radio: &Mac)
                                       -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
-        // TODO: Remove; spins
-        let mut t = 0;
-        for i in 0..1000 {
-            t += 1;
-        }
         let frame_result = radio.prepare_data_frame(frag_buf,
                                                     self.dst_pan.get(),
                                                     self.dst_mac_addr.get(),
@@ -568,6 +563,7 @@ impl<'a, A: time::Alarm> TxClient for FragState<'a, A> {
                 self.end_packet_transmit(acked, result);
             } else {
                 // Otherwise, we found an error
+                // TODO
                 let tx_buf = self.tx_buf.take().unwrap();
                 let result = head.prepare_transmit_next_fragment(tx_buf, self.radio);
                 result.map_err(|(retcode, ret_buf)| {
@@ -638,7 +634,7 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
         }
     }
 
-    fn schedule_next_timer(&self) {
+    pub fn schedule_next_timer(&self) {
         let seconds = A::Frequency::frequency() * (TIMER_RATE as u32);
         let next = self.alarm.now().wrapping_add(seconds);
         self.alarm.set_alarm(next);
