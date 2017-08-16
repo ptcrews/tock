@@ -507,8 +507,9 @@ impl<'a> RxState<'a> {
             payload_len
         };
         self.packet.replace(packet);
-        if !self.bitmap.map_or(false,
-                |bitmap| bitmap.set_bits(dgram_offset / 8, (dgram_offset + uncompressed_len) / 8)) {
+        if !self.bitmap.map_or(false, |bitmap| {
+            bitmap.set_bits(dgram_offset / 8, (dgram_offset + uncompressed_len) / 8)
+        }) {
             // If this fails, we received an overlapping fragment. We can simply
             // drop the packet in this case.
             Err(ReturnCode::FAIL)
