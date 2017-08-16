@@ -350,6 +350,11 @@ impl<'a> TxState<'a> {
                                       mut frag_buf: &'static mut [u8],
                                       radio: &Mac)
                                       -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
+        // TODO: Remove; spins
+        let mut t = 0;
+        for i in 0..1000 {
+            t += 1;
+        }
         let frame_result = radio.prepare_data_frame(frag_buf,
                                                     self.dst_pan.get(),
                                                     self.dst_mac_addr.get(),
