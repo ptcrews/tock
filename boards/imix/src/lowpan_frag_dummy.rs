@@ -232,10 +232,7 @@ impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
         }
     }
 
-    fn run_check_test(&self,
-                      test_id: usize,
-                      buf: &[u8],
-                      len: u16) {
+    fn run_check_test(&self, test_id: usize, buf: &[u8], len: u16) {
         debug!("Running test {}:", test_id);
         match test_id {
             // Change TF compression
@@ -310,7 +307,7 @@ impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
                 ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::McastCtx, buf, len)
             }
 
-            _ => debug!("Finished tests")
+            _ => debug!("Finished tests"),
 
         }
     }
@@ -340,26 +337,20 @@ impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
     }
 }
 
-impl<'a, A: time::Alarm + 'a> time::Client
-    for
-    LowpanTest<'a, A> {
+impl<'a, A: time::Alarm + 'a> time::Client for LowpanTest<'a, A> {
     fn fired(&self) {
         self.run_test_and_increment();
     }
 }
 
-impl<'a, A: time::Alarm + 'a> TransmitClient
-    for
-    LowpanTest<'a, A> {
+impl<'a, A: time::Alarm + 'a> TransmitClient for LowpanTest<'a, A> {
     fn send_done(&self, _: &'static mut [u8], _: &TxState, _: bool, _: ReturnCode) {
         debug!("Send completed");
         self.schedule_next();
     }
 }
 
-impl<'a, A: time::Alarm + 'a> ReceiveClient
-    for
-    LowpanTest<'a, A> {
+impl<'a, A: time::Alarm + 'a> ReceiveClient for LowpanTest<'a, A> {
     fn receive<'b>(&self, buf: &'b [u8], len: u16, _: ReturnCode) {
         debug!("Receive completed");
         let test_num = self.test_counter.get();

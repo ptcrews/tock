@@ -281,7 +281,7 @@ pub fn compress(ctx_store: &ContextStore,
                 src_mac_addr: MacAddress,
                 dst_mac_addr: MacAddress,
                 mut buf: &mut [u8])
-    -> Result<(usize, usize), ()> {
+                -> Result<(usize, usize), ()> {
     let ip6_header: &IP6Header = unsafe { mem::transmute(ip6_datagram.as_ptr()) };
     let mut consumed: usize = mem::size_of::<IP6Header>();
     let mut next_headers: &[u8] = &ip6_datagram[consumed..];
@@ -292,8 +292,7 @@ pub fn compress(ctx_store: &ContextStore,
     // Initialize the LOWPAN_IPHC header
     buf[0..2].copy_from_slice(&iphc::DISPATCH);
 
-    let mut src_ctx: Option<Context> =
-        ctx_store.get_context_from_addr(ip6_header.src_addr);
+    let mut src_ctx: Option<Context> = ctx_store.get_context_from_addr(ip6_header.src_addr);
     let mut dst_ctx: Option<Context> = if ip6_header.dst_addr.is_multicast() {
         let prefix_len: u8 = ip6_header.dst_addr.0[3];
         let prefix: &[u8] = &ip6_header.dst_addr.0[4..12];
@@ -356,12 +355,11 @@ pub fn compress(ctx_store: &ContextStore,
                 written += 1;
 
                 // Recursively place IPHC-encoded IPv6 after the NHC ID
-                let (encap_consumed, encap_written) =
-                    compress(ctx_store,
-                             next_headers,
-                             src_mac_addr,
-                             dst_mac_addr,
-                             &mut buf[written..])?;
+                let (encap_consumed, encap_written) = compress(ctx_store,
+                                                               next_headers,
+                                                               src_mac_addr,
+                                                               dst_mac_addr,
+                                                               &mut buf[written..])?;
                 consumed += encap_consumed;
                 written += encap_written;
 
@@ -491,10 +489,7 @@ fn compress_tf(ip6_header: &IP6Header, buf: &mut [u8], written: &mut usize) {
     buf[0] |= tf_encoding;
 }
 
-fn compress_nh(ip6_header: &IP6Header,
-               is_nhc: bool,
-               buf: &mut [u8],
-               written: &mut usize) {
+fn compress_nh(ip6_header: &IP6Header, is_nhc: bool, buf: &mut [u8], written: &mut usize) {
     if is_nhc {
         buf[0] |= iphc::NH;
     } else {
@@ -661,8 +656,7 @@ fn compress_udp_ports(udp_header: &[u8], buf: &mut [u8], written: &mut usize) ->
         // This should compress the ports to a single 8-bit value,
         // with the source port before the destination port
         buf[*written] = (((src_port & !nhc::UDP_4BIT_PORT_MASK) << 4) |
-                         (dst_port & !nhc::UDP_4BIT_PORT_MASK)) as
-                        u8;
+                         (dst_port & !nhc::UDP_4BIT_PORT_MASK)) as u8;
         *written += 1;
     } else if (src_port & nhc::UDP_8BIT_PORT_MASK) == nhc::UDP_8BIT_PORT {
         // Source port compressed to 8 bits, destination port uncompressed
@@ -778,7 +772,7 @@ pub fn decompress(ctx_store: &ContextStore,
                   mut out_buf: &mut [u8],
                   dgram_size: u16,
                   is_fragment: bool)
-    -> Result<(usize, usize), ()> {
+                  -> Result<(usize, usize), ()> {
     // Get the LOWPAN_IPHC header (the first two bytes are the header)
     let iphc_header_1: u8 = buf[0];
     let iphc_header_2: u8 = buf[1];
@@ -845,14 +839,13 @@ pub fn decompress(ctx_store: &ContextStore,
 
         match next_header {
             ip6_nh::IP6 => {
-                let (encap_consumed, encap_written) =
-                    decompress(ctx_store,
-                               &buf[consumed..],
-                               src_mac_addr,
-                               dst_mac_addr,
-                               &mut next_headers,
-                               dgram_size,
-                               is_fragment)?;
+                let (encap_consumed, encap_written) = decompress(ctx_store,
+                                                                 &buf[consumed..],
+                                                                 src_mac_addr,
+                                                                 dst_mac_addr,
+                                                                 &mut next_headers,
+                                                                 dgram_size,
+                                                                 is_fragment)?;
                 consumed += encap_consumed;
                 written += encap_written;
                 break;
@@ -861,8 +854,7 @@ pub fn decompress(ctx_store: &ContextStore,
                 // UDP length includes UDP header and data in bytes
                 let udp_length = (8 + (buf.len() - consumed)) as u16;
                 // Decompress UDP header fields
-                let (src_port, dst_port) =
-                    decompress_udp_ports(nhc_header, &buf, &mut consumed);
+                let (src_port, dst_port) = decompress_udp_ports(nhc_header, &buf, &mut consumed);
                 // Fill in uncompressed UDP header
                 u16_to_slice(src_port.to_be(), &mut next_headers[0..2]);
                 u16_to_slice(dst_port.to_be(), &mut next_headers[2..4]);
@@ -956,7 +948,7 @@ fn decompress_cie(ctx_store: &ContextStore,
                   iphc_header: u8,
                   buf: &[u8],
                   consumed: &mut usize)
-    -> Result<(Context, Context), ()> {
+                  -> Result<(Context, Context), ()> {
     let ctx_0 = ctx_store.get_context_0();
     let (mut src_ctx, mut dst_ctx) = (ctx_0, ctx_0);
     if iphc_header & iphc::CID != 0 {
@@ -974,10 +966,7 @@ fn decompress_cie(ctx_store: &ContextStore,
     Ok((src_ctx, dst_ctx))
 }
 
-fn decompress_tf(ip6_header: &mut IP6Header,
-                 iphc_header: u8,
-                 buf: &[u8],
-                 consumed: &mut usize) {
+fn decompress_tf(ip6_header: &mut IP6Header, iphc_header: u8, buf: &[u8], consumed: &mut usize) {
     let fl_compressed = (iphc_header & iphc::TF_FLOW_LABEL) != 0;
     let tc_compressed = (iphc_header & iphc::TF_TRAFFIC_CLASS) != 0;
 
@@ -998,8 +987,7 @@ fn decompress_tf(ip6_header: &mut IP6Header,
     if fl_compressed {
         ip6_header.set_flow_label(0);
     } else {
-        let flow = (((buf[*consumed] & 0x0f) as u32) << 16) |
-                   ((buf[*consumed + 1] as u32) << 8) |
+        let flow = (((buf[*consumed] & 0x0f) as u32) << 16) | ((buf[*consumed + 1] as u32) << 8) |
                    (buf[*consumed + 2] as u32);
         *consumed += 3;
         ip6_header.set_flow_label(flow);
@@ -1057,11 +1045,7 @@ fn decompress_src(ip6_header: &mut IP6Header,
                                consumed)?;
     } else {
         // SAC = 0, SAM = 00, 01, 10, 11
-        decompress_iid_link_local(sam_mode,
-                                  &mut ip6_header.src_addr,
-                                  mac_addr,
-                                  buf,
-                                  consumed)?;
+        decompress_iid_link_local(sam_mode, &mut ip6_header.src_addr, mac_addr, buf, consumed)?;
     }
     Ok(())
 }
@@ -1088,11 +1072,7 @@ fn decompress_dst(ip6_header: &mut IP6Header,
                                consumed)?;
     } else {
         // DAC = 0, DAM = 00, 01, 10, 11
-        decompress_iid_link_local(dam_mode,
-                                  &mut ip6_header.dst_addr,
-                                  mac_addr,
-                                  buf,
-                                  consumed)?;
+        decompress_iid_link_local(dam_mode, &mut ip6_header.dst_addr, mac_addr, buf, consumed)?;
     }
     Ok(())
 }

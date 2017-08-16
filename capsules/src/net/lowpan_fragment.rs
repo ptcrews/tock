@@ -252,7 +252,7 @@ impl<'a> TxState<'a> {
                       mut frag_buf: &'static mut [u8],
                       radio: &Mac,
                       ctx_store: &ContextStore)
-        -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
+                      -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
         self.dgram_tag.set(dgram_tag);
         let ip6_packet_option = self.packet.take();
         if ip6_packet_option.is_none() {
@@ -269,10 +269,8 @@ impl<'a> TxState<'a> {
             return Err((ReturnCode::FAIL, frame.unwrap_err()));
         }
 
-        let result = self.prepare_transmit_first_fragment(ip6_packet,
-                                                          frame.unwrap(),
-                                                          radio,
-                                                          ctx_store);
+        let result =
+            self.prepare_transmit_first_fragment(ip6_packet, frame.unwrap(), radio, ctx_store);
         self.packet.replace(ip6_packet);
         result
     }
@@ -282,7 +280,7 @@ impl<'a> TxState<'a> {
                                        mut frame: Frame,
                                        radio: &Mac,
                                        ctx_store: &ContextStore)
-        -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
+                                       -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
 
         // Here, we assume that the compressed headers fit in the first MTU
         // fragment. This is consistent with RFC 6282.
@@ -333,7 +331,7 @@ impl<'a> TxState<'a> {
                 return Err((ReturnCode::ESIZE, frame.into_buf()));
             }
         }
-            
+
         // Write the remainder of the payload, rounding down to a multiple
         // of 8 if the entire payload won't fit
         let payload_len = if remaining_payload > remaining_capacity {
@@ -483,18 +481,16 @@ impl<'a> RxState<'a> {
                           dgram_size: u16,
                           dgram_offset: usize,
                           ctx_store: &ContextStore)
-        -> Result<bool, ReturnCode> {
+                          -> Result<bool, ReturnCode> {
         let mut packet = self.packet.take().ok_or(ReturnCode::ENOMEM)?;
         let uncompressed_len = if dgram_offset == 0 {
-            let (consumed, written) =
-                lowpan::decompress(ctx_store,
-                                   &payload[0..payload_len as usize],
-                                   self.src_mac_addr.get(),
-                                   self.dst_mac_addr.get(),
-                                   &mut packet,
-                                   dgram_size,
-                                   true)
-                .map_err(|_| ReturnCode::FAIL)?;
+            let (consumed, written) = lowpan::decompress(ctx_store,
+                                                         &payload[0..payload_len as usize],
+                                                         self.src_mac_addr.get(),
+                                                         self.dst_mac_addr.get(),
+                                                         &mut packet,
+                                                         dgram_size,
+                                                         true).map_err(|_| ReturnCode::FAIL)?;
             let remaining = payload_len - consumed;
             packet[written..written + remaining]
                 .copy_from_slice(&payload[consumed..consumed + remaining]);
@@ -583,11 +579,7 @@ impl<'a, A: time::Alarm> TxClient for FragState<'a, A> {
 
 // This function is called after receiving a frame
 impl<'a, A: time::Alarm> RxClient for FragState<'a, A> {
-    fn receive<'b>(&self,
-                   buf: &'b [u8],
-                   header: Header<'b>,
-                   data_offset: usize,
-                   data_len: usize) {
+    fn receive<'b>(&self, buf: &'b [u8], header: Header<'b>, data_offset: usize, data_len: usize) {
         // We return if retcode is not valid, as it does not make sense to issue
         // a callback for an invalid frame reception
         let data_offset = data_offset;
@@ -788,14 +780,13 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
                 // unwrap fails
                 let mut packet = state.packet.take().unwrap();
                 if is_lowpan(payload) {
-                    let decompressed =
-                        lowpan::decompress(self.ctx_store,
-                                           &payload[0..payload_len as usize],
-                                           src_mac_addr,
-                                           dst_mac_addr,
-                                           &mut packet,
-                                           0,
-                                           false);
+                    let decompressed = lowpan::decompress(self.ctx_store,
+                                                          &payload[0..payload_len as usize],
+                                                          src_mac_addr,
+                                                          dst_mac_addr,
+                                                          &mut packet,
+                                                          0,
+                                                          false);
                     if decompressed.is_err() {
                         return (None, ReturnCode::FAIL);
                     }
