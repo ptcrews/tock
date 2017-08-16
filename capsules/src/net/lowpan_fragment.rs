@@ -502,7 +502,7 @@ impl<'a> RxState<'a> {
             payload_len
         };
         self.packet.replace(packet);
-        if 
+        if
             !self.bitmap
                 .map(|bitmap| {
                     bitmap.set_bits(dgram_offset / 8, (dgram_offset + uncompressed_len) / 8)
