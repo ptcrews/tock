@@ -351,8 +351,8 @@ impl<'a, A: time::Alarm + 'a> TransmitClient for LowpanTest<'a, A> {
 }
 
 impl<'a, A: time::Alarm + 'a> ReceiveClient for LowpanTest<'a, A> {
-    fn receive<'b>(&self, buf: &'b [u8], len: u16, _: ReturnCode) {
-        debug!("Receive completed");
+    fn receive<'b>(&self, buf: &'b [u8], len: u16, retcode: ReturnCode) {
+        debug!("Receive completed: {:?}", retcode);
         let test_num = self.test_counter.get();
         self.test_counter.set((test_num + 1) % self.num_tests());
         self.run_check_test(test_num, buf, len)
@@ -375,7 +375,6 @@ fn ipv6_check_receive_packet(tf: TF,
                        i,
                        recv_packet[i],
                        IP6_DGRAM[i]);
-                break;
             }
         }
     }
