@@ -38,14 +38,13 @@
 
 use capsules::mac;
 use capsules::net::ieee802154::MacAddress;
-use capsules::net::ip::{IP6Header, IPAddr, ip6_nh};
+use capsules::net::ip6::{Header, Address, NextHeaderType};
 use capsules::net::lowpan;
 use capsules::net::lowpan::{ContextStore, Context};
 use capsules::net::lowpan_fragment::{FragState, TxState, TransmitClient, ReceiveClient};
 use capsules::net::util;
 use core::cell::Cell;
 
-use core::mem;
 use kernel::ReturnCode;
 
 use kernel::hil::radio;
@@ -63,7 +62,7 @@ impl DummyStore {
 }
 
 impl ContextStore for DummyStore {
-    fn get_context_from_addr(&self, ip_addr: IPAddr) -> Option<Context> {
+    fn get_context_from_addr(&self, ip_addr: Address) -> Option<Context> {
         if util::matches_prefix(&ip_addr.0, &self.context0.prefix, self.context0.prefix_len) {
             Some(self.context0)
         } else {
@@ -90,10 +89,10 @@ impl ContextStore for DummyStore {
 }
 
 pub const MLP: [u8; 8] = [0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7];
-pub const SRC_ADDR: IPAddr = IPAddr([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
-                                     0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f]);
-pub const DST_ADDR: IPAddr = IPAddr([0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29,
-                                     0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f]);
+pub const SRC_ADDR: Address = Address([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                                       0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f]);
+pub const DST_ADDR: Address = Address([0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+                                       0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f]);
 pub const SRC_MAC_ADDR: MacAddress = MacAddress::Long([0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
                                                        0x17]);
 pub const DST_MAC_ADDR: MacAddress = MacAddress::Long([0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
@@ -389,9 +388,8 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
         }
     }
     {
-        let mut ip6_header: &mut IP6Header = unsafe { mem::transmute(IP6_DGRAM.as_mut_ptr()) };
-        *ip6_header = IP6Header::new();
-        ip6_header.set_payload_len(PAYLOAD_LEN as u16);
+        let mut ip6_header: Header = Default::default();
+        ip6_header.payload_len = PAYLOAD_LEN as u16;
 
         if tf != TF::TrafficFlow {
             ip6_header.set_ecn(0b01);
@@ -403,14 +401,14 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
         }
 
         if (tf as u8) & (TF::Flow as u8) != 0 {
-            ip6_header.set_flow_label(0);
+            ip6_header.flow_label = 0;
         } else {
-            ip6_header.set_flow_label(0xABCDE);
+            ip6_header.flow_label = 0xABCDE;
         }
 
-        ip6_header.set_next_header(ip6_nh::NO_NEXT);
+        ip6_header.next_header = NextHeaderType::NoNext;
 
-        ip6_header.set_hop_limit(hop_limit);
+        ip6_header.hop_limit = hop_limit;
 
         match sac {
             SAC::Inline => {
@@ -527,6 +525,11 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
                 ip6_header.dst_addr.0[4..12].copy_from_slice(&MLP);
                 ip6_header.dst_addr.0[12..16].copy_from_slice(&DST_ADDR.0[12..16]);
             }
+        }
+
+        if !ip6_header.encode(unsafe { &mut IP6_DGRAM }).is_done() {
+            debug!("Failed to encode IPv6 header");
+            return;
         }
     }
     debug!("Packet with tf={:?} hl={} sac={:?} dac={:?}",
