@@ -757,7 +757,7 @@ impl<'a, R: radio::Radio + 'a> Mac for MacDevice<'a, R> {
             frame_pending: false,
             // Unicast data frames request acknowledgement
             ack_requested: true,
-            version: FrameVersion::V2015,
+            version: FrameVersion::V2006,
             seq: Some(self.data_sequence.get()),
             dst_pan: Some(dst_pan),
             dst_addr: Some(dst_addr),
