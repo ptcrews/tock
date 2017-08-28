@@ -350,10 +350,17 @@ impl<'a> TxState<'a> {
                                       mut frag_buf: &'static mut [u8],
                                       radio: &Mac)
                                       -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
+        // FOR RASPBERRY PI EXAMPLE PURPOSES ONLY:
+        for _ in 0..1024 {
+            for b in frag_buf.iter_mut() {
+                *b ^= 0x5;
+            }
+        }
+
         let frame_result = radio.prepare_data_frame(frag_buf,
-                                                    self.dst_pan.get(),
+                                                    radio.get_pan(),
                                                     self.dst_mac_addr.get(),
-                                                    self.src_pan.get(),
+                                                    radio.get_pan(),
                                                     self.src_mac_addr.get(),
                                                     self.security.get());
         if frame_result.is_err() {
@@ -392,6 +399,7 @@ impl<'a> TxState<'a> {
         let (result, buf) = radio.transmit(frame);
         // If buf is returned, then map the error; otherwise, we return success
         buf.map(|buf| Err((result, buf))).unwrap_or(Ok(ReturnCode::SUCCESS))
+
     }
 
     fn end_transmit(&self, acked: bool, result: ReturnCode) {
