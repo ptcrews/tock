@@ -98,7 +98,7 @@ pub const SRC_MAC_ADDR: MacAddress = MacAddress::Long([0x10, 0x11, 0x12, 0x13, 0
 pub const DST_MAC_ADDR: MacAddress = MacAddress::Long([0x06, 0x24, 0xa0, 0xff, 0xf6, 0xad, 0x71, 0x8f]);
 
 pub const IP6_HDR_SIZE: usize = 40;
-pub const PAYLOAD_LEN: usize = 200;
+pub const PAYLOAD_LEN: usize = 10;
 pub static mut RF233_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_SIZE];
 
 #[derive(Copy,Clone,Debug,PartialEq)]

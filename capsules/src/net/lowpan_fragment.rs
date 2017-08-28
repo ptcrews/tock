@@ -351,7 +351,7 @@ impl<'a> TxState<'a> {
                                       radio: &Mac)
                                       -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
         // FOR RASPBERRY PI EXAMPLE PURPOSES ONLY:
-        for _ in 0..1024 {
+        for _ in 0..8192 {
             for b in frag_buf.iter_mut() {
                 *b ^= 0x5;
             }
