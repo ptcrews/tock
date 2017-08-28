@@ -260,9 +260,9 @@ impl<'a> TxState<'a> {
         }
         let ip6_packet = ip6_packet_option.unwrap();
         let frame = radio.prepare_data_frame(frag_buf,
-                                             self.dst_pan.get(),
+                                             radio.get_pan(),
                                              self.dst_mac_addr.get(),
-                                             self.src_pan.get(),
+                                             radio.get_pan(),
                                              self.src_mac_addr.get(),
                                              self.security.get());
         if frame.is_err() {
