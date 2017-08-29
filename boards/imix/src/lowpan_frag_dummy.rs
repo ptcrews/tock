@@ -67,7 +67,7 @@ impl OnesComplement for u16 {
 fn compute_icmp_checksum(src_addr: &IPAddr,
                          dst_addr: &IPAddr,
                          icmp_packet: &[u8],
-                         icmp_length: u32)
+                         icmp_length: u16)
                          -> u16 {
     // The ICMP checksum is computed on the IPv6 pseudo-header concatenated
     // with the ICMP header and payload, but with the ICMP checksum field
@@ -101,7 +101,7 @@ fn compute_icmp_checksum(src_addr: &IPAddr,
 
     // ICMP length and ICMP next header type. Note that we can avoid adding zeros,
     // but the pseudo header must be in network byte-order.
-    checksum = checksum.ones_complement_add(icmp_length.to_be());
+    checksum = checksum.ones_complement_add(icmp_length);
     checksum = checksum.ones_complement_add(58 as u16);
 
     // ICMP payload
@@ -466,8 +466,8 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
         payload[5] = 0;
         payload[6] = 0;
         payload[7] = 0;
-        let checksum = compute_icmp_checksum(&SRC_ADDR, &DST_ADDR, &payload, 12);
-        util::u16_to_slice(checksum.to_be(), &mut payload[2..4]);
+        let checksum = compute_icmp_checksum(&SRC_ADDR, &DST_ADDR, &payload, 10);
+        util::u16_to_slice(checksum, &mut payload[2..4]);
     }
     {
         let mut ip6_header: &mut IP6Header = unsafe { mem::transmute(IP6_DGRAM.as_mut_ptr()) };
