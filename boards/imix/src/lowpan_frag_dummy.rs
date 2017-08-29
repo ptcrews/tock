@@ -67,7 +67,7 @@ impl OnesComplement for u16 {
 fn compute_icmp_checksum(src_addr: &IPAddr,
                          dst_addr: &IPAddr,
                          icmp_packet: &[u8],
-                         icmp_length: u16)
+                         icmp_length: u32)
                          -> u16 {
     // The ICMP checksum is computed on the IPv6 pseudo-header concatenated
     // with the ICMP header and payload, but with the ICMP checksum field
@@ -75,7 +75,7 @@ fn compute_icmp_checksum(src_addr: &IPAddr,
     // been filled with the ICMP header, except for the ignored checksum.
     let mut checksum: u16 = 0;
 
-    // IPv6 pseudo-header
+    // ICMPv6 pseudo-header
     // +--16 bits--+--16 bits--+--16 bits--+--16 bits--+
     // |                                               |
     // +              Source IPv6 Address              +
@@ -85,10 +85,12 @@ fn compute_icmp_checksum(src_addr: &IPAddr,
     // +           Destination IPv6 Address            +
     // |                                               |
     // +-----------+-----------+-----------+-----------+
-    // |      ICMP Length      |     0     |  NH type  |
+    // |                  ICMP Length                  |
+    // +-----------+-----------+-----------+-----------+
+    // |               Zeros               |  NH type  |
     // +-----------+-----------+-----------+-----------+
 
-    // Source and destination addresses
+    // Source and destination addresses (assumed to already be in big endian)
     for two_bytes in src_addr.0.chunks(2) {
         checksum = checksum.ones_complement_add(util::slice_to_u16(two_bytes));
     }
@@ -99,7 +101,7 @@ fn compute_icmp_checksum(src_addr: &IPAddr,
     // ICMP length and ICMP next header type. Note that we can avoid adding zeros,
     // but the pseudo header must be in network byte-order.
     checksum = checksum.ones_complement_add(icmp_length.to_be());
-    checksum = checksum.ones_complement_add((58 as u16).to_be());
+    checksum = checksum.ones_complement_add(58 as u16);
 
     // ICMP payload
     for bytes in icmp_packet.chunks(2) {
@@ -463,8 +465,8 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
         payload[5] = 0;
         payload[6] = 0;
         payload[7] = 0;
-        let checksum = compute_icmp_checksum(&SRC_ADDR, &DST_ADDR, &payload, 8);
-        util::u16_to_slice(checksum, &mut payload[2..4]);
+        let checksum = compute_icmp_checksum(&SRC_ADDR, &DST_ADDR, &payload, 12);
+        util::u16_to_slice(checksum.to_be(), &mut payload[2..4]);
     }
     {
         let mut ip6_header: &mut IP6Header = unsafe { mem::transmute(IP6_DGRAM.as_mut_ptr()) };
