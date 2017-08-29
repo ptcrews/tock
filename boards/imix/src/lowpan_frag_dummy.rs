@@ -76,7 +76,7 @@ fn compute_icmp_checksum(src_addr: &IPAddr,
     let mut checksum: u16 = 0;
 
     // ICMPv6 pseudo-header
-    // +--16 bits--+--16 bits--+--16 bits--+--16 bits--+
+    // +-- 8 bits -+-- 8 bits -+-- 8 bits -+-- 8 bits -+
     // |                                               |
     // +              Source IPv6 Address              +
     // |                                               |
