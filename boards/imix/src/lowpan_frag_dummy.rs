@@ -52,6 +52,72 @@ use kernel::hil::radio;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
 
+trait OnesComplement {
+    fn ones_complement_add(self, other: Self) -> Self;
+}
+
+/// Implements one's complement addition for use in calculating the UDP checksum
+impl OnesComplement for u16 {
+    fn ones_complement_add(self, other: u16) -> u16 {
+        let (sum, overflow) = self.overflowing_add(other);
+        if overflow { sum + 1 } else { sum }
+    }
+}
+
+fn compute_icmp_checksum(src_addr: &IPAddr,
+                         dst_addr: &IPAddr,
+                         icmp_packet: &[u8],
+                         icmp_length: u16)
+                         -> u16 {
+    // The ICMP checksum is computed on the IPv6 pseudo-header concatenated
+    // with the ICMP header and payload, but with the ICMP checksum field
+    // zeroed out. Hence, this function assumes that `icmp_header` has already
+    // been filled with the ICMP header, except for the ignored checksum.
+    let mut checksum: u16 = 0;
+
+    // IPv6 pseudo-header
+    // +--16 bits--+--16 bits--+--16 bits--+--16 bits--+
+    // |                                               |
+    // +              Source IPv6 Address              +
+    // |                                               |
+    // +-----------+-----------+-----------+-----------+
+    // |                                               |
+    // +           Destination IPv6 Address            +
+    // |                                               |
+    // +-----------+-----------+-----------+-----------+
+    // |      ICMP Length      |     0     |  NH type  |
+    // +-----------+-----------+-----------+-----------+
+
+    // Source and destination addresses
+    for two_bytes in src_addr.0.chunks(2) {
+        checksum = checksum.ones_complement_add(util::slice_to_u16(two_bytes));
+    }
+    for two_bytes in dst_addr.0.chunks(2) {
+        checksum = checksum.ones_complement_add(util::slice_to_u16(two_bytes));
+    }
+
+    // ICMP length and ICMP next header type. Note that we can avoid adding zeros,
+    // but the pseudo header must be in network byte-order.
+    checksum = checksum.ones_complement_add(icmp_length.to_be());
+    checksum = checksum.ones_complement_add((58 as u16).to_be());
+
+    // ICMP payload
+    for bytes in icmp_packet.chunks(2) {
+        checksum = checksum.ones_complement_add(if bytes.len() == 2 {
+            util::slice_to_u16(bytes)
+        } else {
+            (bytes[0] as u16).to_be()
+        });
+    }
+
+    // Return the complement of the checksum, unless it is 0, in which case we
+    // the checksum is one's complement -0 for a non-zero binary representation
+    if !checksum != 0 { !checksum } else { checksum }
+}
+
+/// Maps values of a IPv6 next header field to a corresponding LoWPAN
+/// NHC-encoding extension ID, if that next header type is NHC-compressible
+
 pub struct DummyStore {
     context0: Context,
 }
@@ -389,9 +455,16 @@ fn ipv6_check_receive_packet(tf: TF,
 fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
     {
         let mut payload = unsafe { &mut IP6_DGRAM[IP6_HDR_SIZE..] };
-        for i in 0..PAYLOAD_LEN {
-            payload[i] = i as u8;
-        }
+        payload[0] = 128;
+        payload[1] = 0;
+        payload[2] = 0;
+        payload[3] = 0;
+        payload[4] = 0;
+        payload[5] = 0;
+        payload[6] = 0;
+        payload[7] = 0;
+        let checksum = compute_icmp_checksum(&SRC_ADDR, &DST_ADDR, &payload, 8);
+        util::u16_to_slice(checksum, &mut payload[2..4]);
     }
     {
         let mut ip6_header: &mut IP6Header = unsafe { mem::transmute(IP6_DGRAM.as_mut_ptr()) };
