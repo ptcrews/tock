@@ -254,25 +254,25 @@ impl<'a> TxState<'a> {
                       ctx_store: &ContextStore)
                       -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
         self.dgram_tag.set(dgram_tag);
-        let ip6_packet_option = self.packet.take();
-        if ip6_packet_option.is_none() {
-            return Err((ReturnCode::ENOMEM, frag_buf));
+        match self.packet.take() {
+            None => Err((ReturnCode::ENOMEM, frag_buf)),
+            Some(ip6_packet) => {
+                let result = match radio.prepare_data_frame(frag_buf,
+                                                     self.dst_pan.get(),
+                                                     self.dst_mac_addr.get(),
+                                                     self.src_pan.get(),
+                                                     self.src_mac_addr.get(),
+                                                     self.security.get()) {
+                    Err(frame) => Err((ReturnCode::FAIL, frame)),
+                    Ok(frame) =>
+                        self.prepare_transmit_first_fragment(ip6_packet, frame, radio, ctx_store)
+                };
+                // If the ip6_packet is Some, always want to replace even in
+                // case of errors
+                self.packet.replace(ip6_packet);
+                result
+            }
         }
-        let ip6_packet = ip6_packet_option.unwrap();
-        let frame = radio.prepare_data_frame(frag_buf,
-                                             self.dst_pan.get(),
-                                             self.dst_mac_addr.get(),
-                                             self.src_pan.get(),
-                                             self.src_mac_addr.get(),
-                                             self.security.get());
-        if frame.is_err() {
-            return Err((ReturnCode::FAIL, frame.unwrap_err()));
-        }
-
-        let result =
-            self.prepare_transmit_first_fragment(ip6_packet, frame.unwrap(), radio, ctx_store);
-        self.packet.replace(ip6_packet);
-        result
     }
 
     fn prepare_transmit_first_fragment(&self,
@@ -350,48 +350,47 @@ impl<'a> TxState<'a> {
                                       mut frag_buf: &'static mut [u8],
                                       radio: &Mac)
                                       -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
-        let frame_result = radio.prepare_data_frame(frag_buf,
-                                                    self.dst_pan.get(),
-                                                    self.dst_mac_addr.get(),
-                                                    self.src_pan.get(),
-                                                    self.src_mac_addr.get(),
-                                                    self.security.get());
-        if frame_result.is_err() {
-            return Err((ReturnCode::FAIL, frame_result.unwrap_err()));
+        match radio.prepare_data_frame(frag_buf,
+                                       self.dst_pan.get(),
+                                       self.dst_mac_addr.get(),
+                                       self.src_pan.get(),
+                                       self.src_mac_addr.get(),
+                                       self.security.get()) {
+            Err(frame) => Err((ReturnCode::FAIL, frame)),
+            Ok(mut frame) => {
+                let dgram_offset = self.dgram_offset.get();
+                let remaining_capacity = frame.remaining_data_capacity() - lowpan_frag::FRAGN_HDR_SIZE;
+                // This rounds payload_len down to the nearest multiple of 8 if it
+                // is not the last fragment (per RFC 4944)
+                let remaining_bytes = (self.dgram_size.get() as usize) - dgram_offset;
+                let payload_len = if remaining_bytes > remaining_capacity {
+                    remaining_capacity & !0b111
+                } else {
+                    remaining_bytes
+                };
+
+                match self.packet.take() {
+                    None => Err((ReturnCode::ENOMEM, frame.into_buf())),
+                    Some(mut packet) => {
+                        let mut frag_header = [0 as u8; lowpan_frag::FRAGN_HDR_SIZE];
+                        set_frag_hdr(self.dgram_size.get(),
+                                     self.dgram_tag.get(),
+                                     dgram_offset,
+                                     &mut frag_header,
+                                     false);
+                        frame.append_payload(&frag_header);
+                        frame.append_payload(&packet[dgram_offset..dgram_offset + payload_len]);
+                        self.packet.replace(packet);
+
+                        // Update the offset to be used for the next fragment
+                        self.dgram_offset.set(dgram_offset + payload_len);
+                        let (result, buf) = radio.transmit(frame);
+                        // If buf is returned, then map the error; otherwise, we return success
+                        buf.map(|buf| Err((result, buf))).unwrap_or(Ok(ReturnCode::SUCCESS))
+                    }
+                }
+            }
         }
-        let mut frame = frame_result.unwrap();
-
-        let dgram_offset = self.dgram_offset.get();
-        let remaining_capacity = frame.remaining_data_capacity() - lowpan_frag::FRAGN_HDR_SIZE;
-        // This rounds payload_len down to the nearest multiple of 8 if it
-        // is not the last fragment (per RFC 4944)
-        let remaining_bytes = (self.dgram_size.get() as usize) - dgram_offset;
-        let payload_len = if remaining_bytes > remaining_capacity {
-            remaining_capacity & !0b111
-        } else {
-            remaining_bytes
-        };
-
-        let packet_opt = self.packet.take();
-        if packet_opt.is_none() {
-            return Err((ReturnCode::ENOMEM, frame.into_buf()));
-        }
-        let mut packet = packet_opt.unwrap();
-        let mut frag_header = [0 as u8; lowpan_frag::FRAGN_HDR_SIZE];
-        set_frag_hdr(self.dgram_size.get(),
-                     self.dgram_tag.get(),
-                     dgram_offset,
-                     &mut frag_header,
-                     false);
-        frame.append_payload(&frag_header);
-        frame.append_payload(&packet[dgram_offset..dgram_offset + payload_len]);
-        self.packet.replace(packet);
-
-        // Update the offset to be used for the next fragment
-        self.dgram_offset.set(dgram_offset + payload_len);
-        let (result, buf) = radio.transmit(frame);
-        // If buf is returned, then map the error; otherwise, we return success
-        buf.map(|buf| Err((result, buf))).unwrap_or(Ok(ReturnCode::SUCCESS))
     }
 
     fn end_transmit(&self, acked: bool, result: ReturnCode) {
