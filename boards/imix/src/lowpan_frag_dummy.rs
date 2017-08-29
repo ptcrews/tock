@@ -172,7 +172,7 @@ pub const DST_MAC_ADDR: MacAddress = MacAddress::Long([0xd2, 0x75, 0xc1, 0x2f, 0
 
 
 pub const IP6_HDR_SIZE: usize = 40;
-pub const PAYLOAD_LEN: usize = 200;
+pub const PAYLOAD_LEN: usize = 10;
 pub static mut RF233_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_SIZE];
 
 #[derive(Copy,Clone,Debug,PartialEq)]
@@ -486,7 +486,7 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
             ip6_header.set_flow_label(0xABCDE);
         }
 
-        ip6_header.set_next_header(ip6_nh::NO_NEXT);
+        ip6_header.set_next_header(58 as u8); // ICMPv6
 
         ip6_header.set_hop_limit(hop_limit);
 
