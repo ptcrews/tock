@@ -706,6 +706,7 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
     }
 
     fn start_packet_transmit(&self) {
+        // Already transmitting
         if self.tx_busy.get() {
             return;
         }
@@ -747,30 +748,6 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
                 }
             }
         }) {}
-
-        /*
-        while self.tx_states.head().is_some() {
-            self.tx_states.head().map(move |state| {
-                let mut frag_buf =
-                    self.tx_buf.take().expect("Error: `tx_buf` is None in call to start_packet_transmit.");
-                match state.start_transmit(dgram_tag, frag_buf, self.radio, self.ctx_store) {
-                    // Successfully started transmitting
-                    Ok(_) => {
-                        self.tx_dgram_tag.set(dgram_tag);
-                        self.tx_busy.set(true);
-                        return;
-                    },
-                    // Otherwise, if we failed to start transmitting, so attempt
-                    // to send the next TxState
-                    Err((returncode, new_frag_buf)) => {
-                        self.tx_buf.replace(new_frag_buf);
-                        // Issue error callbacks and remove TxState from the list
-                        self.tx_states.pop_head().map(|head| { head.end_transmit(false, returncode); });
-                    }
-                }
-            });
-        }
-        */
     }
 
     // This function ends the current packet transmission state, and starts
