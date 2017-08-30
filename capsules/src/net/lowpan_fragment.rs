@@ -258,14 +258,15 @@ impl<'a> TxState<'a> {
             None => Err((ReturnCode::ENOMEM, frag_buf)),
             Some(ip6_packet) => {
                 let result = match radio.prepare_data_frame(frag_buf,
-                                                     self.dst_pan.get(),
-                                                     self.dst_mac_addr.get(),
-                                                     self.src_pan.get(),
-                                                     self.src_mac_addr.get(),
-                                                     self.security.get()) {
+                                                            self.dst_pan.get(),
+                                                            self.dst_mac_addr.get(),
+                                                            self.src_pan.get(),
+                                                            self.src_mac_addr.get(),
+                                                            self.security.get()) {
                     Err(frame) => Err((ReturnCode::FAIL, frame)),
-                    Ok(frame) =>
+                    Ok(frame) => {
                         self.prepare_transmit_first_fragment(ip6_packet, frame, radio, ctx_store)
+                    }
                 };
                 // If the ip6_packet is Some, always want to replace even in
                 // case of errors
@@ -359,7 +360,8 @@ impl<'a> TxState<'a> {
             Err(frame) => Err((ReturnCode::FAIL, frame)),
             Ok(mut frame) => {
                 let dgram_offset = self.dgram_offset.get();
-                let remaining_capacity = frame.remaining_data_capacity() - lowpan_frag::FRAGN_HDR_SIZE;
+                let remaining_capacity = frame.remaining_data_capacity() -
+                                         lowpan_frag::FRAGN_HDR_SIZE;
                 // This rounds payload_len down to the nearest multiple of 8 if it
                 // is not the last fragment (per RFC 4944)
                 let remaining_bytes = (self.dgram_size.get() as usize) - dgram_offset;
@@ -401,7 +403,8 @@ impl<'a> TxState<'a> {
             // from the upper layer for the duration of the transmission. It
             // represents a significant bug if the packet is not there when
             // transmission completes.
-            let mut packet = self.packet.take().expect("Error: `packet` is None in call to end_transmit.");
+            let mut packet =
+                self.packet.take().expect("Error: `packet` is None in call to end_transmit.");
             client.send_done(packet, self, acked, result);
         });
     }
@@ -529,7 +532,8 @@ impl<'a> RxState<'a> {
             // in the callback represents a significant error that should never
             // occur - all other calls to `packet.take()` replace the packet,
             // and thus the packet should always be here.
-            let mut buffer = self.packet.take().expect("Error: `packet` is None in call to end_receive.");
+            let mut buffer =
+                self.packet.take().expect("Error: `packet` is None in call to end_receive.");
             client.receive(&buffer, self.dgram_size.get(), result);
             self.packet.replace(buffer);
         });
@@ -574,7 +578,8 @@ impl<'a, A: time::Alarm> TxClient for FragState<'a, A> {
                 // Otherwise, we found an error
                 // Note that `tx_buf` should *always* be here, as we called
                 // `self.tx_buf.replace(..)` at the top of this function.
-                let tx_buf = self.tx_buf.take().expect("Error: `tx_buf` is None in send_done callback.");
+                let tx_buf =
+                    self.tx_buf.take().expect("Error: `tx_buf` is None in send_done callback.");
                 let result = head.prepare_transmit_next_fragment(tx_buf, self.radio);
                 result.map_err(|(retcode, ret_buf)| {
                     self.end_packet_transmit(acked, retcode);
@@ -716,7 +721,7 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
         } else {
             self.tx_dgram_tag.get() + 1
         };
-        
+
         while self.tx_states.head().map_or(false, move |state| {
             // We panic here, as it should never be the case that we start
             // transmitting without the tx_buf, since the `tx_buf` is owned by
@@ -724,8 +729,9 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
             // Failure to replace the `tx_buf` or failure to initialize TxState
             // with a `tx_buf` represents a significant logic error, and we should
             // panic.
-            let mut frag_buf =
-                self.tx_buf.take().expect("Error: `tx_buf` is None in call to start_packet_transmit.");
+            let mut frag_buf = self.tx_buf
+                .take()
+                .expect("Error: `tx_buf` is None in call to start_packet_transmit.");
 
             match state.start_transmit(dgram_tag, frag_buf, self.radio, self.ctx_store) {
                 // Successfully started transmitting
@@ -734,7 +740,7 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
                     self.tx_busy.set(true);
                     // Break out of loop
                     false
-                },
+                }
                 // Otherwise, if we failed to start transmitting, so attempt
                 // to send the next TxState
                 Err((returncode, new_frag_buf)) => {
@@ -863,12 +869,14 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
                 match res {
                     // Some error occurred
                     Err(_) => (Some(state), ReturnCode::FAIL),
-                    Ok(complete) => if complete {
-                        // Packet fully reassembled
-                        (Some(state), ReturnCode::SUCCESS)
-                    } else {
-                        // Packet not fully reassembled
-                        (None, ReturnCode::SUCCESS)
+                    Ok(complete) => {
+                        if complete {
+                            // Packet fully reassembled
+                            (Some(state), ReturnCode::SUCCESS)
+                        } else {
+                            // Packet not fully reassembled
+                            (None, ReturnCode::SUCCESS)
+                        }
                     }
                 }
             })
