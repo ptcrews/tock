@@ -291,10 +291,10 @@ impl<'a> TxState<'a> {
                                                  self.src_mac_addr.get(),
                                                  self.dst_mac_addr.get(),
                                                  &mut lowpan_packet);
-            if lowpan_result.is_err() {
-                return Err((ReturnCode::FAIL, frame.into_buf()));
+            match lowpan_result {
+                Err(_) => return Err((ReturnCode::FAIL, frame.into_buf())),
+                Ok(result) => result,
             }
-            lowpan_result.unwrap()
         } else {
             (0, 0)
         };
@@ -369,6 +369,7 @@ impl<'a> TxState<'a> {
                     remaining_bytes
                 };
 
+                // Take the packet temporarily
                 match self.packet.take() {
                     None => Err((ReturnCode::ENOMEM, frame.into_buf())),
                     Some(mut packet) => {
@@ -380,6 +381,7 @@ impl<'a> TxState<'a> {
                                      false);
                         frame.append_payload(&frag_header);
                         frame.append_payload(&packet[dgram_offset..dgram_offset + payload_len]);
+                        // Replace the packet
                         self.packet.replace(packet);
 
                         // Update the offset to be used for the next fragment
@@ -394,10 +396,14 @@ impl<'a> TxState<'a> {
     }
 
     fn end_transmit(&self, acked: bool, result: ReturnCode) {
-        // The packet here should always be valid, so we can panic if it is None
-        let mut packet = self.packet.take().unwrap();
-        // Note that if a null client is valid, then we lose the packet buffer
-        self.client.get().map(move |client| client.send_done(packet, self, acked, result));
+        self.client.get().map(move |client| {
+            // The packet here should always be valid, as we borrow the packet
+            // from the upper layer for the duration of the transmission. It
+            // represents a significant bug if the packet is not there when
+            // transmission completes.
+            let mut packet = self.packet.take().expect("Error: `packet` is None in call to end_transmit.");
+            client.send_done(packet, self, acked, result);
+        });
     }
 }
 
@@ -518,11 +524,15 @@ impl<'a> RxState<'a> {
         self.busy.set(false);
         self.bitmap.map(|bitmap| bitmap.clear());
         self.timeout_counter.set(0);
-        if client.is_some() {
-            let mut buffer = self.packet.take().unwrap();
-            client.unwrap().receive(&buffer, self.dgram_size.get(), result);
+        client.map(move |client| {
+            // Since packet is borrowed from the upper layer, failing to return it
+            // in the callback represents a significant error that should never
+            // occur - all other calls to `packet.take()` replace the packet,
+            // and thus the packet should always be here.
+            let mut buffer = self.packet.take().expect("Error: `packet` is None in call to end_receive.");
+            client.receive(&buffer, self.dgram_size.get(), result);
             self.packet.replace(buffer);
-        }
+        });
     }
 }
 
@@ -562,8 +572,9 @@ impl<'a, A: time::Alarm> TxClient for FragState<'a, A> {
                 self.end_packet_transmit(acked, result);
             } else {
                 // Otherwise, we found an error
-                // TODO
-                let tx_buf = self.tx_buf.take().unwrap();
+                // Note that `tx_buf` should *always* be here, as we called
+                // `self.tx_buf.replace(..)` at the top of this function.
+                let tx_buf = self.tx_buf.take().expect("Error: `tx_buf` is None in send_done callback.");
                 let result = head.prepare_transmit_next_fragment(tx_buf, self.radio);
                 result.map_err(|(retcode, ret_buf)| {
                     self.end_packet_transmit(acked, retcode);
@@ -580,9 +591,10 @@ impl<'a, A: time::Alarm> RxClient for FragState<'a, A> {
         // We return if retcode is not valid, as it does not make sense to issue
         // a callback for an invalid frame reception
         let data_offset = data_offset;
-        // TODO: Handle the case where the addresses are None/elided
-        let src_mac_addr = header.src_addr.unwrap();
-        let dst_mac_addr = header.dst_addr.unwrap();
+        // TODO: Handle the case where the addresses are None/elided - they
+        // should not default to the zero address
+        let src_mac_addr = header.src_addr.unwrap_or(MacAddress::Short(0));
+        let dst_mac_addr = header.dst_addr.unwrap_or(MacAddress::Short(0));
 
         let (rx_state, returncode) = self.receive_frame(&buf[data_offset..data_offset + data_len],
                                                         data_len,
@@ -694,37 +706,71 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
     }
 
     fn start_packet_transmit(&self) {
-        // We panic here, as it should never be the case that we start
-        // transmitting without the tx_buf
-        let mut frag_buf = self.tx_buf.take().unwrap();
+        if self.tx_busy.get() {
+            return;
+        }
+
         let dgram_tag = if (self.tx_dgram_tag.get() + 1) == 0 {
             1
         } else {
             self.tx_dgram_tag.get() + 1
         };
-        let mut tx_state = self.tx_states.head();
-        while tx_state.is_some() {
-            let result = tx_state.map(move |state| {
-                    state.start_transmit(dgram_tag, frag_buf, self.radio, self.ctx_store)
-                })
-                .unwrap();
+        
+        while self.tx_states.head().map_or(false, move |state| {
+            // We panic here, as it should never be the case that we start
+            // transmitting without the tx_buf, since the `tx_buf` is owned by
+            // the TxState struct and is passed to the radio during transmission.
+            // Failure to replace the `tx_buf` or failure to initialize TxState
+            // with a `tx_buf` represents a significant logic error, and we should
+            // panic.
+            let mut frag_buf =
+                self.tx_buf.take().expect("Error: `tx_buf` is None in call to start_packet_transmit.");
 
-            // Successfully started transmitting
-            if result.is_ok() {
-                self.tx_dgram_tag.set(dgram_tag);
-                self.tx_busy.set(true);
-                return;
+            match state.start_transmit(dgram_tag, frag_buf, self.radio, self.ctx_store) {
+                // Successfully started transmitting
+                Ok(_) => {
+                    self.tx_dgram_tag.set(dgram_tag);
+                    self.tx_busy.set(true);
+                    // Break out of loop
+                    false
+                },
+                // Otherwise, if we failed to start transmitting, so attempt
+                // to send the next TxState
+                Err((returncode, new_frag_buf)) => {
+                    // Must replace the `tx_buf`, otherwise will panic on next
+                    // iteration
+                    self.tx_buf.replace(new_frag_buf);
+                    // Issue error callbacks and remove TxState from the list
+                    self.tx_states.pop_head().map(|head| { head.end_transmit(false, returncode); });
+                    // Continue loop
+                    true
+                }
             }
+        }) {}
 
-            // Otherwise, if we failed to start transmitting, so attempt
-            // to send the next TxState
-            let (returncode, new_frag_buf) = result.unwrap_err();
-            frag_buf = new_frag_buf;
-            // Issue error callbacks and remove TxState from the list
-            self.tx_states.pop_head().map(|head| { head.end_transmit(false, returncode); });
-            tx_state = self.tx_states.head();
+        /*
+        while self.tx_states.head().is_some() {
+            self.tx_states.head().map(move |state| {
+                let mut frag_buf =
+                    self.tx_buf.take().expect("Error: `tx_buf` is None in call to start_packet_transmit.");
+                match state.start_transmit(dgram_tag, frag_buf, self.radio, self.ctx_store) {
+                    // Successfully started transmitting
+                    Ok(_) => {
+                        self.tx_dgram_tag.set(dgram_tag);
+                        self.tx_busy.set(true);
+                        return;
+                    },
+                    // Otherwise, if we failed to start transmitting, so attempt
+                    // to send the next TxState
+                    Err((returncode, new_frag_buf)) => {
+                        self.tx_buf.replace(new_frag_buf);
+                        // Issue error callbacks and remove TxState from the list
+                        self.tx_states.pop_head().map(|head| { head.end_transmit(false, returncode); });
+                    }
+                }
+            });
         }
-        self.tx_buf.replace(frag_buf);
+        */
     }
 
     // This function ends the current packet transmission state, and starts
@@ -773,9 +819,10 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
         let rx_state = self.rx_states.iter().find(|state| !state.busy.get());
         rx_state.map(|state| {
                 state.start_receive(src_mac_addr, dst_mac_addr, payload_len as u16, 0);
-                // The packet buffer should *always* be there, so we can panic if
-                // unwrap fails
-                let mut packet = state.packet.take().unwrap();
+                // The packet buffer should *always* be there; in particular,
+                // since this state is not busy, it must have the packet buffer.
+                // Otherwise, we are in an inconsistent state and can fail.
+                let mut packet = state.packet.take().expect("Error: `packet` in RxState struct is `None` in call to `receive_single_packet`.");
                 if is_lowpan(payload) {
                     let decompressed = lowpan::decompress(self.ctx_store,
                                                           &payload[0..payload_len as usize],
@@ -784,14 +831,16 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
                                                           &mut packet,
                                                           0,
                                                           false);
-                    if decompressed.is_err() {
-                        return (None, ReturnCode::FAIL);
+                    match decompressed {
+                        Ok((consumed, written)) => {
+                            let remaining = payload_len - consumed;
+                            packet[written..written + remaining]
+                                .copy_from_slice(&payload[consumed..consumed + remaining]);
+                        },
+                        Err(_) => {
+                            return (None, ReturnCode::FAIL);
+                        }
                     }
-                    let (consumed, written) = decompressed.unwrap();
-                    let remaining = payload_len - consumed;
-                    packet[written..written + remaining]
-                        .copy_from_slice(&payload[consumed..consumed + remaining]);
-
                 } else {
                     packet[0..payload_len].copy_from_slice(&payload[0..payload_len]);
                 }
@@ -834,15 +883,16 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
                                                    dgram_size,
                                                    dgram_offset,
                                                    self.ctx_store);
-                if res.is_err() {
+                match res {
                     // Some error occurred
-                    (Some(state), ReturnCode::FAIL)
-                } else if res.unwrap() {
-                    // Packet fully reassembled
-                    (Some(state), ReturnCode::SUCCESS)
-                } else {
-                    // Packet not fully reassembled
-                    (None, ReturnCode::SUCCESS)
+                    Err(_) => (Some(state), ReturnCode::FAIL),
+                    Ok(complete) => if complete {
+                        // Packet fully reassembled
+                        (Some(state), ReturnCode::SUCCESS)
+                    } else {
+                        // Packet not fully reassembled
+                        (None, ReturnCode::SUCCESS)
+                    }
                 }
             })
             .unwrap_or((None, ReturnCode::ENOMEM))
