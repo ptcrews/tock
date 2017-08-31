@@ -28,6 +28,8 @@ pub mod io;
 mod i2c_dummy;
 #[allow(dead_code)]
 mod spi_dummy;
+#[allow(dead_code)]
+mod lowpan_frag_dummy;
 
 #[allow(dead_code)]
 mod power;
@@ -61,8 +63,7 @@ struct Imix {
     spi: &'static capsules::spi::Spi<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
     ipc: kernel::ipc::IPC,
     ninedof: &'static capsules::ninedof::NineDof<'static>,
-    radio: &'static capsules::radio::RadioDriver<'static,
-                                                 capsules::mac::MacDevice<'static, RF233Device>>,
+    radio: &'static capsules::radio::RadioDriver<'static>,
     crc: &'static capsules::crc::Crc<'static, sam4l::crccu::Crccu<'static>>,
     usb_driver: &'static capsules::usb_user::UsbSyscallDriver<'static,
                         capsules::usbc_client::Client<'static, sam4l::usbc::Usbc<'static>>>,
@@ -411,9 +412,8 @@ pub unsafe fn reset_handler() {
         capsules::mac::MacDevice<'static, RF233Device>,
         capsules::mac::MacDevice::new(rf233));
     let radio_capsule = static_init!(
-        capsules::radio::RadioDriver<'static,
-                                     capsules::mac::MacDevice<'static, RF233Device>>,
-        capsules::radio::RadioDriver::new(radio_mac));
+        capsules::radio::RadioDriver<'static>,
+        capsules::radio::RadioDriver::new(radio_mac as &'static Mac));
     radio_capsule.config_buffer(&mut RADIO_BUF);
     radio_mac.set_transmit_client(radio_capsule);
     radio_mac.set_receive_client(radio_capsule);
