@@ -2,7 +2,9 @@
 #![no_std]
 
 #[allow(unused_imports)]
-#[macro_use(debug)]
+#[macro_use(stream_cond, stream_len_cond, stream_done, stream_err, stream_from_option)]
+#[macro_use(enc_try, enc_consume, dec_try, dec_consume)]
+#[macro_use(debug, debug_hexdump)]
 extern crate kernel;
 
 pub mod ambient_light;

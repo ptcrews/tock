@@ -9,6 +9,7 @@ extern crate kernel;
 extern crate sam4l;
 
 use capsules::mac::Mac;
+use capsules::net::lowpan;
 use capsules::rf233::RF233;
 use capsules::timer::TimerDriver;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
@@ -28,6 +29,8 @@ pub mod io;
 mod i2c_dummy;
 #[allow(dead_code)]
 mod spi_dummy;
+#[allow(dead_code)]
+mod lowpan_frag_dummy;
 
 #[allow(dead_code)]
 mod power;
@@ -61,8 +64,7 @@ struct Imix {
     spi: &'static capsules::spi::Spi<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
     ipc: kernel::ipc::IPC,
     ninedof: &'static capsules::ninedof::NineDof<'static>,
-    radio: &'static capsules::radio::RadioDriver<'static,
-                                                 capsules::mac::MacDevice<'static, RF233Device>>,
+    radio: &'static capsules::radio::RadioDriver<'static>,
     crc: &'static capsules::crc::Crc<'static, sam4l::crccu::Crccu<'static>>,
     usb_driver: &'static capsules::usb_user::UsbSyscallDriver<'static,
                         capsules::usbc_client::Client<'static, sam4l::usbc::Usbc<'static>>>,
@@ -85,6 +87,12 @@ static mut RF233_REG_READ: [u8; 2] = [0x00; 2];
 // copies application transmissions into or copies out to application buffers
 // for reception.
 static mut RADIO_BUF: [u8; radio::MAX_BUF_SIZE] = [0x00; radio::MAX_BUF_SIZE];
+
+const DEFAULT_CTX_PREFIX_LEN: usize = 8;
+static DEFAULT_CTX_PREFIX: [u8; 16] = [0x0 as u8; 16];
+// TODO: Fix constants
+static mut RX_STATE_BUF: [u8; 1280] = [0x0; 1280];
+static mut RADIO_BUF_TMP: [u8; radio::MAX_BUF_SIZE] = [0x00; radio::MAX_BUF_SIZE];
 
 impl kernel::Platform for Imix {
     fn with_driver<F, R>(&self, driver_num: usize, f: F) -> R
@@ -411,9 +419,8 @@ pub unsafe fn reset_handler() {
         capsules::mac::MacDevice<'static, RF233Device>,
         capsules::mac::MacDevice::new(rf233));
     let radio_capsule = static_init!(
-        capsules::radio::RadioDriver<'static,
-                                     capsules::mac::MacDevice<'static, RF233Device>>,
-        capsules::radio::RadioDriver::new(radio_mac));
+        capsules::radio::RadioDriver<'static>,
+        capsules::radio::RadioDriver::new(radio_mac as &'static Mac));
     radio_capsule.config_buffer(&mut RADIO_BUF);
     radio_mac.set_transmit_client(radio_capsule);
     radio_mac.set_receive_client(radio_capsule);
@@ -422,6 +429,64 @@ pub unsafe fn reset_handler() {
     rf233.set_config_client(radio_mac);
     radio_mac.set_pan(0xABCD);
     radio_mac.set_address(0x1008);
+
+    let dummy_ctx_store = static_init!(
+        lowpan_frag_dummy::DummyStore,
+        lowpan_frag_dummy::DummyStore::new(lowpan::Context {
+            prefix: DEFAULT_CTX_PREFIX,
+            prefix_len: DEFAULT_CTX_PREFIX_LEN as u8,
+            id: 0,
+            compress: false,
+        })
+    );
+
+    let tx_state = static_init!(
+        capsules::net::lowpan_fragment::TxState<'static>,
+        capsules::net::lowpan_fragment::TxState::new()
+    );
+
+    let rx_state = static_init!(
+        capsules::net::lowpan_fragment::RxState<'static>,
+        capsules::net::lowpan_fragment::RxState::new(&mut RX_STATE_BUF)
+    );
+
+    let frag_state_alarm = static_init!(
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        VirtualMuxAlarm::new(mux_alarm)
+    );
+
+    let frag_dummy_alarm = static_init!(
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        VirtualMuxAlarm::new(mux_alarm)
+    );
+
+    let frag_state = static_init!(
+        capsules::net::lowpan_fragment::FragState<'static,
+            VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+        capsules::net::lowpan_fragment::FragState::new(
+            radio_mac as &'static Mac,
+            dummy_ctx_store as &'static lowpan::ContextStore,
+            &mut RADIO_BUF_TMP,
+            frag_state_alarm)
+    );
+    frag_state.add_rx_state(rx_state);
+    radio_mac.set_transmit_client(frag_state);
+    radio_mac.set_receive_client(frag_state);
+
+    let lowpan_frag_dummy = static_init!(
+        lowpan_frag_dummy::LowpanTest<'static,
+            VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+            lowpan_frag_dummy::LowpanTest::new(radio_mac as &'static Mac,
+                                               frag_state,
+                                               tx_state,
+                                               frag_dummy_alarm)
+    );
+
+    frag_state.set_receive_client(lowpan_frag_dummy);
+    tx_state.set_transmit_client(lowpan_frag_dummy);
+    frag_state_alarm.set_client(frag_state);
+    frag_dummy_alarm.set_client(lowpan_frag_dummy);
+    frag_state.schedule_next_timer();
 
     // Configure the USB controller
     let usb_client = static_init!(
