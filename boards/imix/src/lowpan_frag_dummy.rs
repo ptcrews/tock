@@ -1,3 +1,5 @@
+//! `lowpan_frag_dummy.rs`: 6LoWPAN Fragmentation Test Suite
+//!
 //! This implements a simple testing framework for 6LoWPAN fragmentation and
 //! compression. Two Imix boards run this code, one for receiving and one for
 //! transmitting. The transmitting board must call the `start` function in

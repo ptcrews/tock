@@ -9,7 +9,6 @@ extern crate kernel;
 extern crate sam4l;
 
 use capsules::mac::Mac;
-#[allow(unused_imports)]
 use capsules::net::lowpan;
 use capsules::rf233::RF233;
 use capsules::timer::TimerDriver;
@@ -421,7 +420,7 @@ pub unsafe fn reset_handler() {
 
     let dummy_ctx_store = static_init!(
         lowpan_frag_dummy::DummyStore,
-        lowpan_frag_dummy::DummyStore::new(capsules::net::lowpan::Context {
+        lowpan_frag_dummy::DummyStore::new(lowpan::Context {
             prefix: DEFAULT_CTX_PREFIX,
             prefix_len: DEFAULT_CTX_PREFIX_LEN as u8,
             id: 0,
@@ -454,7 +453,7 @@ pub unsafe fn reset_handler() {
             VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
         capsules::net::lowpan_fragment::FragState::new(
             radio_mac as &'static Mac,
-            dummy_ctx_store as &'static capsules::net::lowpan::ContextStore,
+            dummy_ctx_store as &'static lowpan::ContextStore,
             &mut RADIO_BUF_TMP,
             frag_state_alarm)
     );

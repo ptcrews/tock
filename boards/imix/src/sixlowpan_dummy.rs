@@ -1,4 +1,17 @@
-//! A dummy sixlowpan/IP sender
+//! `sixlowpan_dummy.rs`: 6LoWPAN Compression Test Suite
+//!
+//! This file implements a simple testing framework for 6LoWPAN compression.
+//! A single Imix board can run this code, with either another Imix or another
+//! platform (such as a computer running Wireshark) receiving the packets and
+//! verifying they were transmitted correctly. This test deterministically
+//! generates various IPv6 packets, which are then compressed differently
+//! according to RFC 6282 header compression format. Once this packet has been
+//! compressed, it is then decompressed, and the test verifies that the
+//! decompressed packet matches the generated packet. This provides a simple
+//! sanity check for compression and decompression on the same board. Once
+//! the sanity check passes, the compressed packet is sent over the radio, where
+//! the listening Imix/platform can again verify the correctness of the
+//! compression scheme.
 
 use capsules::net::ip::{IP6Header, MacAddr, IPAddr, ip6_nh};
 use capsules::net::lowpan;
