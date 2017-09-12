@@ -11,6 +11,8 @@
 //! Remaining Tasks and Known Problems
 //! ----------------------------------
 //! TODO: Implement and expose a ConfigClient interface?
+//! TODO: Call the `discard_all_state` function when a disassociation event
+//!       occurs (detected at a lower layer).
 //!
 //! Problem: The receiving Imix sometimes fails to receive a fragment. This
 //!     occurs below the Mac layer, and prevents the packet from being fully
@@ -89,6 +91,115 @@
 //!     additional information. Note that this function is required to return a
 //!     static buffer, as the buffer passed into this function is owned by the
 //!     RxState and not the client
+//!
+//! Control Flow
+//! ------------
+//! Below is an outline of the control flow for the fragmentation state.
+//!
+//! Transmit Path:
+//!     Along the transmit path, FragState::transmit_packet is first called
+//!     to initialize the TxState struct and start the transmission of the
+//!     first frame.
+//!     
+//!     ----------------------------
+//!     |FragState::transmit_packet|
+//!     ----------------------------
+//!                 |
+//!                 v
+//!    ----------------------------------
+//!    |FragState::start_packet_transmit|
+//!    ----------------------------------
+//!                 |
+//!                 v
+//!       -------------------------
+//!       |TxState::start_transmit|
+//!       -------------------------
+//!                 |
+//!                 v
+//! ------------------------------------------
+//! |TxState::prepare_transmit_first_fragment|
+//! ------------------------------------------
+//!                 |
+//!                 v
+//!         -----------------
+//!         |Radio::transmit|
+//!         -----------------
+//!
+//!     After initialization, the FragState struct receives a `send_done`
+//!     callback, and proceeds to process the next frame. Either there is a
+//!     packet in the process of being sent, or a packet has just finished
+//!     sending. Therefore, we either process the next frame of the in-process
+//!     packet, or we enter the end state for the current `TxState` struct
+//!     and begin transmitting the next packet.
+//!
+//!     ---------------------- false -----------------------------------------
+//!     |FragState::send_done| ----> |TxState::prepare_transmit_next_fragment|
+//!     ----------------------       -----------------------------------------
+//!                    | true                             |
+//!                    v                                  v
+//!     --------------------------------          -----------------
+//!     |FragState::end_packet_transmit|          |Radio::transmit|
+//!     --------------------------------          -----------------
+//!                    |
+//!                    v
+//!     ----------------------------------
+//!     |FragState::start_packet_transmit|
+//!     ----------------------------------
+//!                    |
+//!                    v
+//!        -------------------------
+//!        |TxState::start_transmit|
+//!        -------------------------
+//!                    |
+//!                    v
+//!   ------------------------------------------
+//!   |TxState::prepare_transmit_first_fragment|
+//!   ------------------------------------------
+//!                    |
+//!                    v
+//!            -----------------
+//!            |Radio::transmit|
+//!            -----------------
+//!
+//! Receive Path:
+//!     Along the receive path, individual frames are received by the
+//!     fragmentation layer through `receive` callbacks from the lower layer.
+//!     Once a frame is received, we check to see if it is a fragment or not.
+//!     If it is a fragment, we either continue the reassembly of a packet or
+//!     initialize a free `RxState` struct to start the reassembly process.
+//!     If it is not a fragment, then we initialize a free `RxState` struct
+//!     and reassemble the full packet. After returning from `receive_frame`,
+//!     if the packet is fully reassembled, we call `end_receive` on the
+//!     corresponding `RxState` struct.
+//!
+//!     --------------------
+//!     |FragState::receive|
+//!     --------------------
+//!               |
+//!               |  --- if fully received ---
+//!               |  ^                       |
+//!               v  |                       v
+//!   --------------------------     ----------------------
+//!   |FragState::receive_frame|     |RxState::end_receive|
+//!   --------------------------     ----------------------
+//!               | 
+//!               ----- if not fragmented ----
+//!               |                          |
+//!               v                          v
+//!   -----------------------------  ----------------------------------
+//!   |FragState::receive_fragment|  |FragState::receive_single_packet|
+//!   -----------------------------  ----------------------------------
+//!               |                                    |
+//!               ------ if not started ------         |
+//!               |                          |         |
+//!               v                          v         v
+//!   -----------------------------  ------------------------
+//!   |RxState::receive_next_frame|  |RxState::start_receive|
+//!   -----------------------------  ------------------------
+//!
+//!   Note that there is a timer that expires busy `RxState` structs after
+//!   FRAG_TIMEOUT seconds, and thus `RxState`s can go from the busy state
+//!   to the free state asynchronously.
 //!
 //! Usage
 //! -----
@@ -528,10 +639,9 @@ impl<'a> RxState<'a> {
         self.bitmap.map(|bitmap| bitmap.clear());
         self.timeout_counter.set(0);
         client.map(move |client| {
-            // Since packet is borrowed from the upper layer, failing to return it
-            // in the callback represents a significant error that should never
-            // occur - all other calls to `packet.take()` replace the packet,
-            // and thus the packet should always be here.
+            // Since the RxState owns the `packet` buffer, it should always be
+            // `Some`. Having it be `None` here represents a significant error,
+            // and we are then in an inconsistent state.
             let mut buffer =
                 self.packet.take().expect("Error: `packet` is None in call to end_receive.");
             client.receive(&buffer, self.dgram_size.get(), result);
@@ -569,10 +679,10 @@ impl<'a, A: time::Alarm> TxClient for FragState<'a, A> {
             self.end_packet_transmit(acked, result);
             return;
         }
+        // If there is a head element, we are busy transmitting
         self.tx_states.head().map(move |head| {
             if head.is_transmit_done() {
-                // This must return Some if we are in the closure - in particular,
-                // tx_state == head
+                // If the transmit has completed, enter the end state
                 self.end_packet_transmit(acked, result);
             } else {
                 // Otherwise, we found an error
@@ -725,8 +835,8 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
         while self.tx_states.head().map_or(false, move |state| {
             // We panic here, as it should never be the case that we start
             // transmitting without the tx_buf, since the `tx_buf` is owned by
-            // the TxState struct and is passed to the radio during transmission.
-            // Failure to replace the `tx_buf` or failure to initialize TxState
+            // the FragState struct and is passed to the radio during transmission.
+            // Failure to replace the `tx_buf` or failure to initialize FragState
             // with a `tx_buf` represents a significant logic error, and we should
             // panic.
             let mut frag_buf = self.tx_buf
@@ -824,6 +934,7 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
                                 .copy_from_slice(&payload[consumed..consumed + remaining]);
                         }
                         Err(_) => {
+                            state.packet.replace(packet);
                             return (None, ReturnCode::FAIL);
                         }
                     }
