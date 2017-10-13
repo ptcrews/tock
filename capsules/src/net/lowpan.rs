@@ -1,1287 +1,896 @@
-/// Implements the 6LoWPAN specification for sending IPv6 datagrams over
-/// 802.15.4 packets efficiently, as detailed in RFC 6282.
+//! Implements 6LoWPAN transmission and reception, including compression,
+//! fragmentation, and reassembly. This layer exposes a send/receive interface
+//! which converts between fully-formed IPv6 packets and Mac-layer frames.
+//! This layer fragments any packet larger than the 802.15.4 MTU size, and
+//! will issue a callback when the entire packet has been transmitted.
+//! Similarly, this layer issues a callback when an entire IPv6 packet has been
+//! received and reassembled.
+//!
+//! This layer relies on the specifications contained in RFC 4944 and RFC 6282
+//!
+//! Remaining Tasks and Known Problems
+//! ----------------------------------
+//! TODO: Implement and expose a ConfigClient interface?
+//!
+//! Problem: The receiving Imix sometimes fails to receive a fragment. This
+//!     occurs below the Mac layer, and prevents the packet from being fully
+//!     reassembled.
+//!
+//! Design
+//! ------
+//! At a high level, this layer exposes a transmit and receive functionality
+//! that takes IPv6 packets and converts them into chunks that are passed to
+//! the 802.15.4 MAC layer. The LowpanState struct represents the global
+//! transmission state, and contains tag information, queued TxState structs,
+//! and in-process RxState structs. In order for a client to send via this
+//! interface, it must supply a TxState struct, the IPv6 packet, and arguments
+//! relating to lower layers. This layer then fragments and compresses the
+//! packet if necessary, then transmits it over a Mac-layer device. In order
+//! for a packet to be received, the client must call set_receive_client
+//! on the LowpanState struct. Currently, there is a single, global receive
+//! client that receives callbacks for all reassembled packets (unlike for
+//! the transmit path, where each TxState struct contains a separate client).
+//! The LowpanState struct contains a list of RxState structs which are statically
+//! allocated and added to the list; these structs represent the number of
+//! concurrent reassembly operations that can be in progress at the same time.
+//!
+//! This layer adds several new structs, LowpanState, TxState, and RxState,
+//! as well as interfaces for them.
+//!
+//! LowpanState:
+//! - Methods:
+//! -- new(..): Initializes a new LowpanState struct
+//! -- transmit_packet(..): Transmits the given IPv6 packet, using the provided
+//!      TxState struct to track its progress, fragmenting if necessary
+//! -- set_receive_client(..): Sets the global receive client, which receives
+//!      a callback whenever a packet is fully reassembled
+//!
+//! The LowpanState struct represents a single, global struct that tracks the state
+//! of transmission and reception for the various clients. This struct manages
+//! global state, including references to the radio and lowpan structs, along
+//! with lists of TxStates and RxStates, buffers, and various other state.
+//!
+//! TxState:
+//! - Methods:
+//! -- new(..): Initializes a new TxState struct
+//! -- set_transmit_client(..): Sets the per-state transmit client, which
+//!      receives a callback after an entire IPv6 packet has been transmitted
+//!
+//! In order to send a packet, each client must allocate space for a TxState
+//! struct. Whenever a client sends a packet, it must pass in a reference to
+//! its TxState struct, and clients should not directly modify any fields within
+//! the TxState struct. The fragmentation layer uses this struct to store state
+//! about packets currently being sent.
+//!
+//! RxState:
+//! - Methods:
+//! -- new(..): Initializes a new RxState struct
+//!
+//! The RxState struct contains information relating to packet reception and
+//! reassembly. Unlike with the TxState structs, there is no concept of
+//! individual clients "owning" these structs; instead, some number of RxStates
+//! are statically allocated and added to the LowpanState's RxState list. These
+//! states are then used to keep track of different reassembly flows; the
+//! number of simultaneous packet receptions is dependent on the number of
+//! allocated RxState structs. When a packet is fully reassembled, the global
+//! receive client inside LowpanState receives a callback.
+//!
+//! In addition to structs and their methods, this layer also defines several
+//! traits for the transmit and receive callbacks.
+//!
+//! TransmitClient Trait:
+//! - send_done(..): Called after the entire IPv6 packet has been sent. Returns
+//!     the IPv6 buffer, a reference to the TxState struct, and additional
+//!     information relating to the sent packet
+//!
+//! ReceiveClient Trait:
+//! - receive(..): Called after an entire IPv6 packet has been reassembled.
+//!     Returns the IPv6 buffer containing the decompressed packet, as well as
+//!     additional information. Note that this function is required to return a
+//!     static buffer, as the buffer passed into this function is owned by the
+//!     RxState and not the client
+//!
+//! Usage
+//! -----
+//! Examples of how to interface and use this layer are included in the file
+//! `boards/imixv1/src/lowpan_frag_dummy.rs`. Significant set-up is required
+//! in `boards/imixv1/src/main.rs` to initialize the various state for the
+//! layer and its clients.
 
-use core::mem;
-use core::result::Result;
-use net::ieee802154::MacAddress;
-use net::ip::{IP6Header, IPAddr, ip6_nh};
-use net::util;
+use core::cell::Cell;
+use ieee802154::mac::{Mac, Frame, TxClient, RxClient};
+use kernel::ReturnCode;
+use kernel::common::list::{List, ListLink, ListNode};
+use kernel::common::take_cell::{TakeCell, MapCell};
+use kernel::hil::radio;
+use kernel::hil::time;
+use kernel::hil::time::Frequency;
+use net::frag_utils::Bitmap;
+use net::ieee802154::{PanID, MacAddress, SecurityLevel, KeyId, Header};
+use net::lowpan_compress;
+use net::lowpan_compress::{ContextStore, is_lowpan};
 use net::util::{slice_to_u16, u16_to_slice};
 
-/// Contains bit masks and constants related to the two-byte header of the
-/// LoWPAN_IPHC encoding format.
-mod iphc {
-    pub const DISPATCH: [u8; 2] = [0x60, 0x00];
+// Timer fire rate in seconds
+const TIMER_RATE: usize = 10;
+// Reassembly timeout in seconds
+const FRAG_TIMEOUT: usize = 60;
 
-    // First byte masks
-
-    pub const TF_TRAFFIC_CLASS: u8 = 0x08;
-    pub const TF_FLOW_LABEL: u8 = 0x10;
-
-    pub const NH: u8 = 0x04;
-
-    pub const HLIM_MASK: u8 = 0x03;
-    pub const HLIM_INLINE: u8 = 0x00;
-    pub const HLIM_1: u8 = 0x01;
-    pub const HLIM_64: u8 = 0x02;
-    pub const HLIM_255: u8 = 0x03;
-
-    // Second byte masks
-
-    pub const CID: u8 = 0x80;
-
-    pub const SAC: u8 = 0x40;
-
-    pub const SAM_MASK: u8 = 0x30;
-    pub const SAM_INLINE: u8 = 0x00;
-    pub const SAM_MODE1: u8 = 0x10;
-    pub const SAM_MODE2: u8 = 0x20;
-    pub const SAM_MODE3: u8 = 0x30;
-
-    pub const MULTICAST: u8 = 0x08;
-
-    pub const DAC: u8 = 0x04;
-    pub const DAM_MASK: u8 = 0x03;
-    pub const DAM_INLINE: u8 = 0x00;
-    pub const DAM_MODE1: u8 = 0x01;
-    pub const DAM_MODE2: u8 = 0x02;
-    pub const DAM_MODE3: u8 = 0x03;
-
-    // Address compression
-    pub const MAC_BASE: [u8; 8] = [0, 0, 0, 0xff, 0xfe, 0, 0, 0];
-    pub const MAC_UL: u8 = 0x02;
+pub trait ReceiveClient {
+    fn receive<'a>(&self, buf: &'a [u8], len: u16, result: ReturnCode);
 }
 
-/// Contains bit masks and constants related to LoWPAN_NHC encoding,
-/// including some specific to UDP header encoding
-mod nhc {
-    pub const DISPATCH_NHC: u8 = 0xe0;
-    pub const DISPATCH_UDP: u8 = 0xf0;
-    pub const DISPATCH_MASK: u8 = 0xf0;
-
-    pub const EID_MASK: u8 = 0x0e;
-    pub const HOP_OPTS: u8 = 0 << 1;
-    pub const ROUTING: u8 = 1 << 1;
-    pub const FRAGMENT: u8 = 2 << 1;
-    pub const DST_OPTS: u8 = 3 << 1;
-    pub const MOBILITY: u8 = 4 << 1;
-    pub const IP6: u8 = 7 << 1;
-
-    pub const NH: u8 = 0x01;
-
-    // UDP header compression
-
-    pub const UDP_4BIT_PORT: u16 = 0xf0b0;
-    pub const UDP_4BIT_PORT_MASK: u16 = 0xfff0;
-    pub const UDP_8BIT_PORT: u16 = 0xf000;
-    pub const UDP_8BIT_PORT_MASK: u16 = 0xff00;
-
-    pub const UDP_CHECKSUM_FLAG: u8 = 0b100;
-    pub const UDP_SRC_PORT_FLAG: u8 = 0b010;
-    pub const UDP_DST_PORT_FLAG: u8 = 0b001;
+pub trait TransmitClient {
+    fn send_done(&self, buf: &'static mut [u8], state: &TxState, acked: bool, result: ReturnCode);
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct Context {
-    pub prefix: [u8; 16],
-    pub prefix_len: u8,
-    pub id: u8,
-    pub compress: bool,
+pub mod lowpan_frag {
+    pub const FRAGN_HDR: u8 = 0b11100000;
+    pub const FRAG1_HDR: u8 = 0b11000000;
+    pub const FRAG1_HDR_SIZE: usize = 4;
+    pub const FRAGN_HDR_SIZE: usize = 5;
 }
 
-/// LoWPAN encoding requires being able to look up the existence of contexts,
-/// which are essentially IPv6 address prefixes. Any implementation must ensure
-/// that context 0 is always available and contains the mesh-local prefix.
-pub trait ContextStore {
-    fn get_context_from_addr(&self, ip_addr: IPAddr) -> Option<Context>;
-    fn get_context_from_id(&self, ctx_id: u8) -> Option<Context>;
-    fn get_context_0(&self) -> Context {
-        match self.get_context_from_id(0) {
-            Some(ctx) => ctx,
-            None => panic!("Context 0 not found"),
-        }
-    }
-    fn get_context_from_prefix(&self, prefix: &[u8], prefix_len: u8) -> Option<Context>;
-}
-
-/// Computes the LoWPAN Interface Identifier from either the 16-bit short MAC or
-/// the IEEE EUI-64 that is derived from the 48-bit MAC.
-pub fn compute_iid(mac_addr: &MacAddress) -> [u8; 8] {
-    match mac_addr {
-        &MacAddress::Short(short_addr) => {
-            // IID is 0000:00ff:fe00:XXXX, where XXXX is 16-bit MAC
-            let mut iid: [u8; 8] = iphc::MAC_BASE;
-            iid[6] = (short_addr >> 1) as u8;
-            iid[7] = (short_addr & 0xff) as u8;
-            iid
-        }
-        &MacAddress::Long(long_addr) => {
-            // IID is IEEE EUI-64 with universal/local bit inverted
-            let mut iid: [u8; 8] = long_addr;
-            iid[0] ^= iphc::MAC_UL;
-            iid
-        }
+fn set_frag_hdr(dgram_size: u16,
+                dgram_tag: u16,
+                dgram_offset: usize,
+                hdr: &mut [u8],
+                is_frag1: bool) {
+    let mask = if is_frag1 {
+        lowpan_frag::FRAG1_HDR
+    } else {
+        lowpan_frag::FRAGN_HDR
+    };
+    u16_to_slice(dgram_size, &mut hdr[0..2]);
+    hdr[0] = mask | (hdr[0] & !mask);
+    u16_to_slice(dgram_tag, &mut hdr[2..4]);
+    if !is_frag1 {
+        hdr[4] = (dgram_offset / 8) as u8;
     }
 }
 
-pub fn is_lowpan(packet: &[u8]) -> bool {
-    (packet[0] & iphc::DISPATCH[0]) == iphc::DISPATCH[0]
+fn get_frag_hdr(hdr: &[u8]) -> (bool, u16, u16, usize) {
+    let is_frag1 = match hdr[0] & lowpan_frag::FRAGN_HDR {
+        lowpan_frag::FRAG1_HDR => true,
+        _ => false,
+    };
+    // Zero out upper bits
+    let dgram_size = slice_to_u16(&hdr[0..2]) & !(0xf << 12);
+    let dgram_tag = slice_to_u16(&hdr[2..4]);
+    let dgram_offset = if is_frag1 { 0 } else { hdr[4] };
+    (is_frag1, dgram_size, dgram_tag, (dgram_offset as usize) * 8)
 }
 
-/// Determines if the next header is LoWPAN_NHC compressible, which depends on
-/// both the next header type and the length of the IPv6 next header extensions.
-/// Returns `Ok((false, 0))` if the next header is not compressible or
-/// `Ok((true, nh_len))`. `nh_len` is only meaningful when the next header type
-/// is an IPv6 next header extension, in which case it is the number of bytes
-/// after the first two bytes in the IPv6 next header extension. Returns
-/// `Err(())` in the case of an invalid IPv6 packet.
-fn is_ip6_nh_compressible(next_header: u8, next_headers: &[u8]) -> Result<(bool, u8), ()> {
-    match next_header {
-        // IP6 encapsulated headers are always compressed
-        ip6_nh::IP6 => Ok((true, 0)),
-        // UDP headers are always compresed
-        ip6_nh::UDP => Ok((true, 0)),
-        ip6_nh::FRAGMENT | ip6_nh::HOP_OPTS | ip6_nh::ROUTING | ip6_nh::DST_OPTS |
-        ip6_nh::MOBILITY => {
-            let mut header_len: u32 = 6;
-            if next_header != ip6_nh::FRAGMENT {
-                // All compressible next header extensions except
-                // for the fragment header have a length field
-                if next_headers.len() < 2 {
-                    return Err(());
+fn is_fragment(packet: &[u8]) -> bool {
+    let mask = packet[0] & lowpan_frag::FRAGN_HDR;
+    (mask == lowpan_frag::FRAGN_HDR) || (mask == lowpan_frag::FRAG1_HDR)
+}
+
+/// struct TxState
+/// --------------
+/// This struct tracks the per-client transmit state for a single IPv6 packet.
+/// The LowpanState struct maintains a list of TxState structs, sending each in
+/// order.
+pub struct TxState<'a> {
+    packet: TakeCell<'static, [u8]>,
+    src_pan: Cell<PanID>,
+    dst_pan: Cell<PanID>,
+    src_mac_addr: Cell<MacAddress>,
+    dst_mac_addr: Cell<MacAddress>,
+    security: Cell<Option<(SecurityLevel, KeyId)>>,
+    dgram_tag: Cell<u16>,
+    dgram_size: Cell<u16>,
+    dgram_offset: Cell<usize>,
+    fragment: Cell<bool>,
+    compress: Cell<bool>,
+    client: Cell<Option<&'static TransmitClient>>,
+
+    next: ListLink<'a, TxState<'a>>,
+}
+
+impl<'a> ListNode<'a, TxState<'a>> for TxState<'a> {
+    fn next(&'a self) -> &'a ListLink<TxState<'a>> {
+        &self.next
+    }
+}
+
+impl<'a> TxState<'a> {
+    /// TxState::new
+    /// ------------
+    /// This constructs a new, default TxState struct.
+    pub fn new() -> TxState<'a> {
+        TxState {
+            packet: TakeCell::empty(),
+            src_pan: Cell::new(0),
+            dst_pan: Cell::new(0),
+            src_mac_addr: Cell::new(MacAddress::Short(0)),
+            dst_mac_addr: Cell::new(MacAddress::Short(0)),
+            security: Cell::new(None),
+            dgram_tag: Cell::new(0),
+            dgram_size: Cell::new(0),
+            dgram_offset: Cell::new(0),
+            fragment: Cell::new(false),
+            compress: Cell::new(false),
+            client: Cell::new(None),
+            next: ListLink::empty(),
+        }
+    }
+
+    /// TxState::set_transmit_client
+    /// ----------------------------
+    /// Sets the TransmitClient callback field of the respective TxState struct.
+    pub fn set_transmit_client(&self, client: &'static TransmitClient) {
+        self.client.set(Some(client));
+    }
+
+    fn is_transmit_done(&self) -> bool {
+        self.dgram_size.get() as usize <= self.dgram_offset.get()
+    }
+
+    fn init_transmit(&self,
+                     src_mac_addr: MacAddress,
+                     dst_mac_addr: MacAddress,
+                     packet: &'static mut [u8],
+                     packet_len: usize,
+                     security: Option<(SecurityLevel, KeyId)>,
+                     fragment: bool,
+                     compress: bool) {
+
+        self.src_mac_addr.set(src_mac_addr);
+        self.dst_mac_addr.set(dst_mac_addr);
+        self.fragment.set(fragment);
+        self.compress.set(compress);
+        self.security.set(security);
+        self.packet.replace(packet);
+        self.dgram_size.set(packet_len as u16);
+    }
+
+    // Takes ownership of frag_buf and gives it to the radio
+    fn start_transmit(&self,
+                      dgram_tag: u16,
+                      frag_buf: &'static mut [u8],
+                      radio: &Mac,
+                      ctx_store: &ContextStore)
+                      -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
+        self.dgram_tag.set(dgram_tag);
+        match self.packet.take() {
+            None => Err((ReturnCode::ENOMEM, frag_buf)),
+            Some(ip6_packet) => {
+                let result = match radio.prepare_data_frame(frag_buf,
+                                                            self.dst_pan.get(),
+                                                            self.dst_mac_addr.get(),
+                                                            self.src_pan.get(),
+                                                            self.src_mac_addr.get(),
+                                                            self.security.get()) {
+                    Err(frame) => Err((ReturnCode::FAIL, frame)),
+                    Ok(frame) => {
+                        self.prepare_transmit_first_fragment(ip6_packet, frame, radio, ctx_store)
+                    }
+                };
+                // If the ip6_packet is Some, always want to replace even in
+                // case of errors
+                self.packet.replace(ip6_packet);
+                result
+            }
+        }
+    }
+
+    fn prepare_transmit_first_fragment(&self,
+                                       ip6_packet: &[u8],
+                                       mut frame: Frame,
+                                       radio: &Mac,
+                                       ctx_store: &ContextStore)
+                                       -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
+
+        // Here, we assume that the compressed headers fit in the first MTU
+        // fragment. This is consistent with RFC 6282.
+        let mut lowpan_packet = [0 as u8; radio::MAX_FRAME_SIZE as usize];
+        let (consumed, written) = if self.compress.get() {
+            let lowpan_result = lowpan_compress::compress(ctx_store,
+                                                 &ip6_packet,
+                                                 self.src_mac_addr.get(),
+                                                 self.dst_mac_addr.get(),
+                                                 &mut lowpan_packet);
+            match lowpan_result {
+                Err(_) => return Err((ReturnCode::FAIL, frame.into_buf())),
+                Ok(result) => result,
+            }
+        } else {
+            (0, 0)
+        };
+        let remaining_payload = ip6_packet.len() - consumed;
+        let lowpan_len = written + remaining_payload;
+        // TODO: This -2 is added to account for the FCS; this should be changed
+        // in the MAC code
+        let mut remaining_capacity = frame.remaining_data_capacity() - 2;
+
+        // Need to fragment
+        if lowpan_len > remaining_capacity {
+            if self.fragment.get() {
+                let mut frag_header = [0 as u8; lowpan_frag::FRAG1_HDR_SIZE];
+                set_frag_hdr(self.dgram_size.get(),
+                             self.dgram_tag.get(),
+                             /*offset = */
+                             0,
+                             &mut frag_header,
+                             true);
+                frame.append_payload(&frag_header[0..lowpan_frag::FRAG1_HDR_SIZE]);
+                remaining_capacity -= lowpan_frag::FRAG1_HDR_SIZE;
+            } else {
+                // Unable to fragment and packet too large
+                return Err((ReturnCode::ESIZE, frame.into_buf()));
+            }
+        }
+
+        // Write the 6lowpan header
+        if self.compress.get() {
+            if written <= remaining_capacity {
+                frame.append_payload(&lowpan_packet[0..written]);
+                remaining_capacity -= written;
+            } else {
+                return Err((ReturnCode::ESIZE, frame.into_buf()));
+            }
+        }
+
+        // Write the remainder of the payload, rounding down to a multiple
+        // of 8 if the entire payload won't fit
+        let payload_len = if remaining_payload > remaining_capacity {
+            remaining_capacity & !0b111
+        } else {
+            remaining_payload
+        };
+        frame.append_payload(&ip6_packet[consumed..consumed + payload_len]);
+        self.dgram_offset.set(consumed + payload_len);
+        let (result, buf) = radio.transmit(frame);
+        // If buf is returned, then map the error; otherwise, we return success
+        buf.map(|buf| Err((result, buf))).unwrap_or(Ok(ReturnCode::SUCCESS))
+    }
+
+    fn prepare_transmit_next_fragment(&self,
+                                      frag_buf: &'static mut [u8],
+                                      radio: &Mac)
+                                      -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
+        match radio.prepare_data_frame(frag_buf,
+                                       self.dst_pan.get(),
+                                       self.dst_mac_addr.get(),
+                                       self.src_pan.get(),
+                                       self.src_mac_addr.get(),
+                                       self.security.get()) {
+            Err(frame) => Err((ReturnCode::FAIL, frame)),
+            Ok(mut frame) => {
+                let dgram_offset = self.dgram_offset.get();
+                let remaining_capacity = frame.remaining_data_capacity() -
+                                         lowpan_frag::FRAGN_HDR_SIZE;
+                // This rounds payload_len down to the nearest multiple of 8 if it
+                // is not the last fragment (per RFC 4944)
+                let remaining_bytes = (self.dgram_size.get() as usize) - dgram_offset;
+                let payload_len = if remaining_bytes > remaining_capacity {
+                    remaining_capacity & !0b111
                 } else {
-                    // The length field is the number of 8-octet
-                    // groups after the first 8 octets
-                    header_len += (next_headers[1] as u32) * 8;
+                    remaining_bytes
+                };
+
+                // Take the packet temporarily
+                match self.packet.take() {
+                    None => Err((ReturnCode::ENOMEM, frame.into_buf())),
+                    Some(packet) => {
+                        let mut frag_header = [0 as u8; lowpan_frag::FRAGN_HDR_SIZE];
+                        set_frag_hdr(self.dgram_size.get(),
+                                     self.dgram_tag.get(),
+                                     dgram_offset,
+                                     &mut frag_header,
+                                     false);
+                        frame.append_payload(&frag_header);
+                        frame.append_payload(&packet[dgram_offset..dgram_offset + payload_len]);
+                        // Replace the packet
+                        self.packet.replace(packet);
+
+                        // Update the offset to be used for the next fragment
+                        self.dgram_offset.set(dgram_offset + payload_len);
+                        let (result, buf) = radio.transmit(frame);
+                        // If buf is returned, then map the error; otherwise, we return success
+                        buf.map(|buf| Err((result, buf))).unwrap_or(Ok(ReturnCode::SUCCESS))
+                    }
                 }
             }
-            if header_len <= 255 {
-                Ok((true, header_len as u8))
+        }
+    }
+
+    fn end_transmit(&self, acked: bool, result: ReturnCode) {
+        self.client.get().map(move |client| {
+            // The packet here should always be valid, as we borrow the packet
+            // from the upper layer for the duration of the transmission. It
+            // represents a significant bug if the packet is not there when
+            // transmission completes.
+            self.packet
+                .take()
+                .map(|packet| { client.send_done(packet, self, acked, result); })
+                .expect("Error: `packet` is None in call to end_transmit.");
+        });
+    }
+}
+
+/// struct RxState
+/// --------------
+/// This struct tracks the reassembly process for a given packet. The `busy`
+/// field marks whether the particular RxState is currently reassembling a
+/// packet or if it is currently free. The LowpanState struct maintains a list of
+/// RxState structs, which represents the number of packets that can be
+/// concurrently reassembled.
+pub struct RxState<'a> {
+    packet: TakeCell<'static, [u8]>,
+    bitmap: MapCell<Bitmap>,
+    dst_mac_addr: Cell<MacAddress>,
+    src_mac_addr: Cell<MacAddress>,
+    dgram_tag: Cell<u16>,
+    dgram_size: Cell<u16>,
+    busy: Cell<bool>,
+    timeout_counter: Cell<usize>,
+
+    next: ListLink<'a, RxState<'a>>,
+}
+
+impl<'a> ListNode<'a, RxState<'a>> for RxState<'a> {
+    fn next(&'a self) -> &'a ListLink<RxState<'a>> {
+        &self.next
+    }
+}
+
+impl<'a> RxState<'a> {
+    /// RxState::new
+    /// ------------
+    /// This function constructs a new RxState struct.
+    pub fn new(packet: &'static mut [u8]) -> RxState<'a> {
+        RxState {
+            packet: TakeCell::new(packet),
+            bitmap: MapCell::new(Bitmap::new()),
+            dst_mac_addr: Cell::new(MacAddress::Short(0)),
+            src_mac_addr: Cell::new(MacAddress::Short(0)),
+            dgram_tag: Cell::new(0),
+            dgram_size: Cell::new(0),
+            busy: Cell::new(false),
+            timeout_counter: Cell::new(0),
+            next: ListLink::empty(),
+        }
+    }
+
+    fn is_my_fragment(&self,
+                      src_mac_addr: MacAddress,
+                      dst_mac_addr: MacAddress,
+                      dgram_size: u16,
+                      dgram_tag: u16)
+                      -> bool {
+        self.busy.get() && (self.dgram_tag.get() == dgram_tag) &&
+        (self.dgram_size.get() == dgram_size) &&
+        (self.src_mac_addr.get() == src_mac_addr) &&
+        (self.dst_mac_addr.get() == dst_mac_addr)
+    }
+
+    fn start_receive(&self,
+                     src_mac_addr: MacAddress,
+                     dst_mac_addr: MacAddress,
+                     dgram_size: u16,
+                     dgram_tag: u16) {
+        self.dst_mac_addr.set(dst_mac_addr);
+        self.src_mac_addr.set(src_mac_addr);
+        self.dgram_tag.set(dgram_tag);
+        self.dgram_size.set(dgram_size);
+        self.busy.set(true);
+        self.bitmap.map(|bitmap| bitmap.clear());
+        self.timeout_counter.set(0);
+    }
+
+    // This function assumes that the payload is a slice starting from the
+    // actual payload (no 802.15.4 headers, no fragmentation headers), and
+    // returns true if the packet is completely reassembled.
+    fn receive_next_frame(&self,
+                          payload: &[u8],
+                          payload_len: usize,
+                          dgram_size: u16,
+                          dgram_offset: usize,
+                          ctx_store: &ContextStore)
+                          -> Result<bool, ReturnCode> {
+        let mut packet = self.packet.take().ok_or(ReturnCode::ENOMEM)?;
+        let uncompressed_len = if dgram_offset == 0 {
+            let (consumed, written) = lowpan_compress::decompress(ctx_store,
+                                                         &payload[0..payload_len as usize],
+                                                         self.src_mac_addr.get(),
+                                                         self.dst_mac_addr.get(),
+                                                         &mut packet,
+                                                         dgram_size,
+                                                         true).map_err(|_| ReturnCode::FAIL)?;
+            let remaining = payload_len - consumed;
+            packet[written..written + remaining]
+                .copy_from_slice(&payload[consumed..consumed + remaining]);
+            written + remaining
+
+        } else {
+            packet[dgram_offset..dgram_offset + payload_len]
+                .copy_from_slice(&payload[0..payload_len]);
+            payload_len
+        };
+        self.packet.replace(packet);
+        if !self.bitmap.map_or(false, |bitmap| {
+            bitmap.set_bits(dgram_offset / 8, (dgram_offset + uncompressed_len) / 8)
+        }) {
+            // If this fails, we received an overlapping fragment. We can simply
+            // drop the packet in this case.
+            Err(ReturnCode::FAIL)
+        } else {
+            self.bitmap
+                .map(|bitmap| bitmap.is_complete((dgram_size as usize) / 8))
+                .ok_or(ReturnCode::FAIL)
+        }
+    }
+
+    fn end_receive(&self, client: Option<&'static ReceiveClient>, result: ReturnCode) {
+        self.busy.set(false);
+        self.bitmap.map(|bitmap| bitmap.clear());
+        self.timeout_counter.set(0);
+        client.map(move |client| {
+            // Since packet is borrowed from the upper layer, failing to return it
+            // in the callback represents a significant error that should never
+            // occur - all other calls to `packet.take()` replace the packet,
+            // and thus the packet should always be here.
+            self.packet
+                .map(|packet| { client.receive(&packet, self.dgram_size.get(), result); })
+                .expect("Error: `packet` is None in call to end_receive.");
+        });
+    }
+}
+
+/// struct LowpanState
+/// ----------------
+/// This struct tracks the global sending/receiving state, and contains the
+/// lists of RxStates and TxStates.
+pub struct LowpanState<'a, A: time::Alarm + 'a> {
+    pub radio: &'a Mac<'a>,
+    ctx_store: &'a ContextStore,
+    alarm: &'a A,
+
+    // Transmit state
+    tx_states: List<'a, TxState<'a>>,
+    tx_dgram_tag: Cell<u16>,
+    tx_busy: Cell<bool>,
+    tx_buf: TakeCell<'static, [u8]>,
+
+    // Receive state
+    rx_states: List<'a, RxState<'a>>,
+    rx_client: Cell<Option<&'static ReceiveClient>>,
+}
+
+// This function is called after transmitting a frame
+#[allow(unused_must_use)]
+impl<'a, A: time::Alarm> TxClient for LowpanState<'a, A> {
+    fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
+        if result != ReturnCode::SUCCESS {
+            self.end_packet_transmit(tx_buf, acked, result);
+        } else if let Some(head) = self.tx_states.head() {
+            if head.is_transmit_done() {
+                // This must return Some if we are in the closure - in particular,
+                // tx_state == head
+                self.end_packet_transmit(tx_buf, acked, result);
             } else {
-                Ok((false, 0))
+                // Otherwise, we found an error
+                let result = head.prepare_transmit_next_fragment(tx_buf, self.radio);
+                result.map_err(|(retcode, tx_buf)| {
+                    // On error abort the transmission
+                    self.end_packet_transmit(tx_buf, acked, retcode);
+                });
+            }
+        } else {
+            // Is this state possible?
+            self.tx_buf.replace(tx_buf);
+        }
+    }
+}
+
+// This function is called after receiving a frame
+impl<'a, A: time::Alarm> RxClient for LowpanState<'a, A> {
+    fn receive<'b>(&self, buf: &'b [u8], header: Header<'b>, data_offset: usize, data_len: usize) {
+        // We return if retcode is not valid, as it does not make sense to issue
+        // a callback for an invalid frame reception
+        let data_offset = data_offset;
+        // TODO: Handle the case where the addresses are None/elided - they
+        // should not default to the zero address
+        let src_mac_addr = header.src_addr.unwrap_or(MacAddress::Short(0));
+        let dst_mac_addr = header.dst_addr.unwrap_or(MacAddress::Short(0));
+
+        let (rx_state, returncode) = self.receive_frame(&buf[data_offset..data_offset + data_len],
+                                                        data_len,
+                                                        src_mac_addr,
+                                                        dst_mac_addr);
+        // Reception completed if rx_state is not None. Note that this can
+        // also occur for some fail states (e.g. dropping an invalid packet)
+        rx_state.map(|state| state.end_receive(self.rx_client.get(), returncode));
+    }
+}
+
+impl<'a, A: time::Alarm> time::Client for LowpanState<'a, A> {
+    fn fired(&self) {
+        // Timeout any expired rx_states
+        for state in self.rx_states.iter() {
+            if state.busy.get() {
+                state.timeout_counter.set(state.timeout_counter.get() + TIMER_RATE);
+                if state.timeout_counter.get() >= FRAG_TIMEOUT {
+                    state.end_receive(self.rx_client.get(), ReturnCode::FAIL);
+                }
             }
         }
-        _ => Ok((false, 0)),
+        self.schedule_next_timer();
     }
 }
 
-trait OnesComplement {
-    fn ones_complement_add(self, other: Self) -> Self;
-}
+impl<'a, A: time::Alarm> LowpanState<'a, A> {
+    /// LowpanState::new
+    /// --------------
+    /// This function initializes and returns a new LowpanState struct.
+    pub fn new(radio: &'a Mac<'a>,
+               ctx_store: &'a ContextStore,
+               tx_buf: &'static mut [u8],
+               alarm: &'a A)
+               -> LowpanState<'a, A> {
+        LowpanState {
+            radio: radio,
+            ctx_store: ctx_store,
+            alarm: alarm,
 
-/// Implements one's complement addition for use in calculating the UDP checksum
-impl OnesComplement for u16 {
-    fn ones_complement_add(self, other: u16) -> u16 {
-        let (sum, overflow) = self.overflowing_add(other);
-        if overflow { sum + 1 } else { sum }
-    }
-}
+            tx_states: List::new(),
+            tx_dgram_tag: Cell::new(0),
+            tx_busy: Cell::new(false),
+            tx_buf: TakeCell::new(tx_buf),
 
-/// Computes the UDP checksum for a UDP packet sent over IPv6.
-/// Returns the checksum in host byte-order.
-fn compute_udp_checksum(ip6_header: &IP6Header,
-                        udp_header: &[u8],
-                        udp_length: u16,
-                        payload: &[u8])
-                        -> u16 {
-    // The UDP checksum is computed on the IPv6 pseudo-header concatenated
-    // with the UDP header and payload, but with the UDP checksum field
-    // zeroed out. Hence, this function assumes that `udp_header` has already
-    // been filled with the UDP header, except for the ignored checksum.
-    let mut checksum: u16 = 0;
-
-    // IPv6 pseudo-header
-    // +--16 bits--+--16 bits--+--16 bits--+--16 bits--+
-    // |                                               |
-    // +              Source IPv6 Address              +
-    // |                                               |
-    // +-----------+-----------+-----------+-----------+
-    // |                                               |
-    // +           Destination IPv6 Address            +
-    // |                                               |
-    // +-----------+-----------+-----------+-----------+
-    // |      UDP Length       |     0     |  NH type  |
-    // +-----------+-----------+-----------+-----------+
-
-    // Source and destination addresses
-    for two_bytes in ip6_header.src_addr.0.chunks(2) {
-        checksum = checksum.ones_complement_add(slice_to_u16(two_bytes));
-    }
-    for two_bytes in ip6_header.dst_addr.0.chunks(2) {
-        checksum = checksum.ones_complement_add(slice_to_u16(two_bytes));
+            rx_states: List::new(),
+            rx_client: Cell::new(None),
+        }
     }
 
-    // UDP length and UDP next header type. Note that we can avoid adding zeros,
-    // but the pseudo header must be in network byte-order.
-    checksum = checksum.ones_complement_add(udp_length.to_be());
-    checksum = checksum.ones_complement_add((ip6_nh::UDP as u16).to_be());
-
-    // UDP header without the checksum (which is the last two bytes)
-    for two_bytes in udp_header[0..6].chunks(2) {
-        checksum = checksum.ones_complement_add(slice_to_u16(two_bytes));
+    pub fn schedule_next_timer(&self) {
+        let seconds = A::Frequency::frequency() * (TIMER_RATE as u32);
+        let next = self.alarm.now().wrapping_add(seconds);
+        self.alarm.set_alarm(next);
     }
 
-    // UDP payload
-    for bytes in payload.chunks(2) {
-        checksum = checksum.ones_complement_add(if bytes.len() == 2 {
-            slice_to_u16(bytes)
+    /// LowpanState::add_rx_state
+    /// -----------------------
+    /// This function prepends the passed in RxState struct to the list of
+    /// RxStates maintained by the LowpanState struct. For the current use cases,
+    /// some number of RxStates are statically allocated and immediately
+    /// added to the list of RxStates.
+    pub fn add_rx_state(&self, rx_state: &'a RxState<'a>) {
+        self.rx_states.push_head(rx_state);
+    }
+
+    /// LowpanState::set_receive_client
+    /// -----------------------------
+    /// This function sets the client to receive the callback when a packet
+    /// has been fully reassembled. In the current design, the concept of a
+    /// receive client per RxState did not make sense; thus, there is a single
+    /// receive client that receives all reassembled packets.
+    pub fn set_receive_client(&self, client: &'static ReceiveClient) {
+        self.rx_client.set(Some(client));
+    }
+
+    /// LowpanState::transmit_packet
+    /// --------------------------
+    /// This function is called to send a fully-formed IPv6 packet. Arguments
+    /// to this function are used to determine various aspects of the MAC
+    /// layer frame and keep track of the transmission state.
+    pub fn transmit_packet(&self,
+                           src_mac_addr: MacAddress,
+                           dst_mac_addr: MacAddress,
+                           ip6_packet: &'static mut [u8],
+                           ip6_packet_len: usize,
+                           security: Option<(SecurityLevel, KeyId)>,
+                           tx_state: &'a TxState<'a>,
+                           fragment: bool,
+                           compress: bool)
+                           -> Result<ReturnCode, ReturnCode> {
+
+        tx_state.init_transmit(src_mac_addr,
+                               dst_mac_addr,
+                               ip6_packet,
+                               ip6_packet_len,
+                               security,
+                               fragment,
+                               compress);
+        // Queue tx_state
+        self.tx_states.push_tail(tx_state);
+        if self.tx_busy.get() {
+            Ok(ReturnCode::SUCCESS)
         } else {
-            (bytes[0] as u16).to_be()
+            // Set as current state and start transmit
+            self.start_packet_transmit();
+            Ok(ReturnCode::SUCCESS)
+        }
+    }
+
+    fn start_packet_transmit(&self) {
+        // Already transmitting
+        if self.tx_busy.get() {
+            return;
+        }
+
+        let dgram_tag = if (self.tx_dgram_tag.get() + 1) == 0 {
+            1
+        } else {
+            self.tx_dgram_tag.get() + 1
+        };
+
+        while self.tx_states.head().map_or(false, move |state| {
+            // We panic here, as it should never be the case that we start
+            // transmitting without the tx_buf, since the `tx_buf` is owned by
+            // the TxState struct and is passed to the radio during transmission.
+            // Failure to replace the `tx_buf` or failure to initialize TxState
+            // with a `tx_buf` represents a significant logic error, and we should
+            // panic.
+            let frag_buf = self.tx_buf
+                .take()
+                .expect("Error: `tx_buf` is None in call to start_packet_transmit.");
+
+            match state.start_transmit(dgram_tag, frag_buf, self.radio, self.ctx_store) {
+                // Successfully started transmitting
+                Ok(_) => {
+                    self.tx_dgram_tag.set(dgram_tag);
+                    self.tx_busy.set(true);
+                    // Break out of loop
+                    false
+                }
+                // Otherwise, if we failed to start transmitting, so attempt
+                // to send the next TxState
+                Err((returncode, new_frag_buf)) => {
+                    // Must replace the `tx_buf`, otherwise will panic on next
+                    // iteration
+                    self.tx_buf.replace(new_frag_buf);
+                    // Issue error callbacks and remove TxState from the list
+                    self.tx_states.pop_head().map(|head| { head.end_transmit(false, returncode); });
+                    // Continue loop
+                    true
+                }
+            }
+        }) {}
+    }
+
+    // This function ends the current packet transmission state, and starts
+    // sending the next queued packet before calling the current callback.
+    fn end_packet_transmit(&self, tx_buf: &'static mut [u8], acked: bool, returncode: ReturnCode) {
+        self.tx_busy.set(false);
+        self.tx_buf.replace(tx_buf);
+        // Note that tx_state can be None if a disassociation event occurred,
+        // in which case end_transmit was already called.
+        self.tx_states.pop_head().map(|tx_state| {
+            self.start_packet_transmit();
+            tx_state.end_transmit(acked, returncode);
         });
     }
 
-    // Return the complement of the checksum, unless it is 0, in which case we
-    // the checksum is one's complement -0 for a non-zero binary representation
-    if !checksum != 0 { !checksum } else { checksum }
-}
-
-/// Maps values of a IPv6 next header field to a corresponding LoWPAN
-/// NHC-encoding extension ID, if that next header type is NHC-compressible
-fn ip6_nh_to_nhc_eid(next_header: u8) -> Option<u8> {
-    match next_header {
-        ip6_nh::HOP_OPTS => Some(nhc::HOP_OPTS),
-        ip6_nh::ROUTING => Some(nhc::ROUTING),
-        ip6_nh::FRAGMENT => Some(nhc::FRAGMENT),
-        ip6_nh::DST_OPTS => Some(nhc::DST_OPTS),
-        ip6_nh::MOBILITY => Some(nhc::MOBILITY),
-        ip6_nh::IP6 => Some(nhc::IP6),
-        _ => None,
-    }
-}
-
-/// Maps a LoWPAN_NHC header the corresponding IPv6 next header type,
-/// or an error if the NHC header is invalid
-fn nhc_to_ip6_nh(nhc: u8) -> Result<u8, ()> {
-    match nhc & nhc::DISPATCH_MASK {
-        nhc::DISPATCH_NHC => {
-            match nhc & nhc::EID_MASK {
-                nhc::HOP_OPTS => Ok(ip6_nh::HOP_OPTS),
-                nhc::ROUTING => Ok(ip6_nh::ROUTING),
-                nhc::FRAGMENT => Ok(ip6_nh::FRAGMENT),
-                nhc::DST_OPTS => Ok(ip6_nh::DST_OPTS),
-                nhc::MOBILITY => Ok(ip6_nh::MOBILITY),
-                nhc::IP6 => Ok(ip6_nh::IP6),
-                _ => Err(()),
-            }
-        }
-        nhc::DISPATCH_UDP => Ok(ip6_nh::UDP),
-        _ => Err(()),
-    }
-}
-
-/// Constructs a 6LoWPAN header in `buf` from the given IPv6 datagram and
-/// 16-bit MAC addresses. If the compression was successful, returns
-/// `Ok((consumed, written))`, where `consumed` is the number of header
-/// bytes consumed from the IPv6 datagram `written` is the number of
-/// compressed header bytes written into `buf`. Payload bytes and
-/// non-compressed next headers are not written, so the remaining `buf.len()
-/// - consumed` bytes must still be copied over to `buf`.
-pub fn compress(ctx_store: &ContextStore,
-                ip6_datagram: &[u8],
-                src_mac_addr: MacAddress,
-                dst_mac_addr: MacAddress,
-                mut buf: &mut [u8])
-                -> Result<(usize, usize), ()> {
-    let ip6_header: &IP6Header = unsafe { mem::transmute(ip6_datagram.as_ptr()) };
-    let mut consumed: usize = mem::size_of::<IP6Header>();
-    let mut next_headers: &[u8] = &ip6_datagram[consumed..];
-
-    // The first two bytes are the LOWPAN_IPHC header
-    let mut written: usize = 2;
-
-    // Initialize the LOWPAN_IPHC header
-    buf[0..2].copy_from_slice(&iphc::DISPATCH);
-
-    let mut src_ctx: Option<Context> = ctx_store.get_context_from_addr(ip6_header.src_addr);
-    let mut dst_ctx: Option<Context> = if ip6_header.dst_addr.is_multicast() {
-        let prefix_len: u8 = ip6_header.dst_addr.0[3];
-        let prefix: &[u8] = &ip6_header.dst_addr.0[4..12];
-        // This also implicitly verifies that prefix_len <= 64
-        if util::verify_prefix_len(prefix, prefix_len) {
-            ctx_store.get_context_from_prefix(prefix, prefix_len)
-        } else {
-            None
-        }
-    } else {
-        ctx_store.get_context_from_addr(ip6_header.dst_addr)
-    };
-
-    // Do not contexts that are not marked to be available for compression
-    src_ctx = src_ctx.and_then(|ctx| if ctx.compress { Some(ctx) } else { None });
-    dst_ctx = dst_ctx.and_then(|ctx| if ctx.compress { Some(ctx) } else { None });
-
-    // Context Identifier Extension
-    compress_cie(&src_ctx, &dst_ctx, &mut buf, &mut written);
-
-    // Traffic Class & Flow Label
-    compress_tf(ip6_header, &mut buf, &mut written);
-
-    // Next Header
-    let (mut is_nhc, mut nh_len): (bool, u8) = is_ip6_nh_compressible(ip6_header.next_header,
-                                                                      next_headers)?;
-    compress_nh(ip6_header, is_nhc, &mut buf, &mut written);
-
-    // Hop Limit
-    compress_hl(ip6_header, &mut buf, &mut written);
-
-    // Source Address
-    compress_src(&ip6_header.src_addr,
-                 &src_mac_addr,
-                 &src_ctx,
-                 &mut buf,
-                 &mut written);
-
-    // Destination Address
-    if ip6_header.dst_addr.is_multicast() {
-        compress_multicast(&ip6_header.dst_addr, &dst_ctx, &mut buf, &mut written);
-    } else {
-        compress_dst(&ip6_header.dst_addr,
-                     &dst_mac_addr,
-                     &dst_ctx,
-                     &mut buf,
-                     &mut written);
-    }
-
-    // Next Headers
-    // At each iteration, next_headers begins at the first byte of the
-    // current uncompressed next header.
-    let mut ip6_nh_type: u8 = ip6_header.next_header;
-    while is_nhc {
-        match ip6_nh_type {
-            ip6_nh::IP6 => {
-                // For IPv6 encapsulation, the NH bit in the NHC ID is 0
-                let nhc_header = nhc::DISPATCH_NHC | nhc::IP6;
-                buf[written] = nhc_header;
-                written += 1;
-
-                // Recursively place IPHC-encoded IPv6 after the NHC ID
-                let (encap_consumed, encap_written) = compress(ctx_store,
-                                                               next_headers,
-                                                               src_mac_addr,
-                                                               dst_mac_addr,
-                                                               &mut buf[written..])?;
-                consumed += encap_consumed;
-                written += encap_written;
-
-                // The above recursion handles the rest of the packet
-                // headers, so we are done
-                break;
-            }
-            ip6_nh::UDP => {
-                let mut nhc_header = nhc::DISPATCH_UDP;
-
-                // Leave a space for the UDP LoWPAN_NHC byte
-                let udp_nh_offset = written;
-                written += 1;
-
-                // Compress ports and checksum
-                let udp_header = &next_headers[0..8];
-                nhc_header |= compress_udp_ports(udp_header, &mut buf, &mut written);
-                nhc_header |= compress_udp_checksum(udp_header, &mut buf, &mut written);
-
-                // Write the UDP LoWPAN_NHC byte
-                buf[udp_nh_offset] = nhc_header;
-                consumed += 8;
-
-                // There cannot be any more next headers after UDP
-                break;
-            }
-            ip6_nh::FRAGMENT | ip6_nh::HOP_OPTS | ip6_nh::ROUTING | ip6_nh::DST_OPTS |
-            ip6_nh::MOBILITY => {
-                // is_ip6_nh_compressible guarantees that the IPv6 next
-                // header corresponds to a valid LoWPAN_NHC EID
-                let mut nhc_header = nhc::DISPATCH_NHC |
-                                     match ip6_nh_to_nhc_eid(ip6_nh_type) {
-                    Some(eid) => eid,
-                    None => panic!("Unreachable case"),
-                };
-
-                // next_nh_offset includes the next header field and the
-                // length byte, while nh_len does not
-                let next_nh_offset = 2 + (nh_len as usize);
-
-                // Determine if the next header is compressible
-                let (next_is_nhc, next_nh_len) =
-                    is_ip6_nh_compressible(next_headers[0], &next_headers[next_nh_offset..])?;
-                if next_is_nhc {
-                    nhc_header |= nhc::NH;
-                }
-
-                // Place NHC ID in buffer
-                buf[written] = nhc_header;
-                if ip6_nh_type != ip6_nh::FRAGMENT {
-                    // Fragment extension does not have a length field
-                    buf[written + 1] = nh_len;
-                }
-                written += 2;
-
-                compress_and_elide_padding(ip6_nh_type,
-                                           nh_len as usize,
-                                           &next_headers,
-                                           &mut buf,
-                                           &mut written);
-
-                ip6_nh_type = next_headers[0];
-                is_nhc = next_is_nhc;
-                nh_len = next_nh_len;
-                next_headers = &next_headers[next_nh_offset..];
-                consumed += next_nh_offset;
-            }
-            // This case should not be reachable because
-            // is_ip6_nh_compressible guarantees that is_nhc is true
-            // only if ip6_nh_type is one of the types matched above
-            _ => panic!("Unreachable case"),
-        }
-    }
-    Ok((consumed, written))
-}
-
-fn compress_cie(src_ctx: &Option<Context>,
-                dst_ctx: &Option<Context>,
-                buf: &mut [u8],
-                written: &mut usize) {
-    let mut cie: u8 = 0;
-
-    src_ctx.as_ref().map(|ctx| if ctx.id != 0 {
-        cie |= ctx.id << 4;
-    });
-    dst_ctx.as_ref().map(|ctx| if ctx.id != 0 {
-        cie |= ctx.id;
-    });
-
-    if cie != 0 {
-        buf[1] |= iphc::CID;
-        buf[*written] = cie;
-        *written += 1;
-    }
-}
-
-fn compress_tf(ip6_header: &IP6Header, buf: &mut [u8], written: &mut usize) {
-    let ecn = ip6_header.get_ecn();
-    let dscp = ip6_header.get_dscp();
-    let flow = ip6_header.get_flow_label();
-
-    let mut tf_encoding = 0;
-    let old_offset = *written;
-
-    // If ECN != 0 we are forced to at least have one byte,
-    // otherwise we can elide dscp
-    if dscp == 0 && (ecn == 0 || flow != 0) {
-        tf_encoding |= iphc::TF_TRAFFIC_CLASS;
-    } else {
-        buf[*written] = dscp;
-        *written += 1;
-    }
-
-    // We can elide flow if it is 0
-    if flow == 0 {
-        tf_encoding |= iphc::TF_FLOW_LABEL;
-    } else {
-        buf[*written] = ((flow >> 16) & 0x0f) as u8;
-        buf[*written + 1] = (flow >> 8) as u8;
-        buf[*written + 2] = flow as u8;
-        *written += 3;
-    }
-
-    if *written != old_offset {
-        buf[old_offset] |= ecn << 6;
-    }
-    buf[0] |= tf_encoding;
-}
-
-fn compress_nh(ip6_header: &IP6Header, is_nhc: bool, buf: &mut [u8], written: &mut usize) {
-    if is_nhc {
-        buf[0] |= iphc::NH;
-    } else {
-        buf[*written] = ip6_header.next_header;
-        *written += 1;
-    }
-}
-
-fn compress_hl(ip6_header: &IP6Header, buf: &mut [u8], written: &mut usize) {
-    let hop_limit_flag = match ip6_header.hop_limit {
-        1 => iphc::HLIM_1,
-        64 => iphc::HLIM_64,
-        255 => iphc::HLIM_255,
-        _ => {
-            buf[*written] = ip6_header.hop_limit;
-            *written += 1;
-            iphc::HLIM_INLINE
-        }
-    };
-    buf[0] |= hop_limit_flag;
-}
-
-// TODO: We should check to see whether context or link local compression
-// schemes gives the better compression; currently, we will always match
-// on link local even if we could get better compression through context.
-fn compress_src(src_ip_addr: &IPAddr,
-                src_mac_addr: &MacAddress,
-                src_ctx: &Option<Context>,
-                buf: &mut [u8],
-                written: &mut usize) {
-    if src_ip_addr.is_unspecified() {
-        // SAC = 1, SAM = 00
-        buf[1] |= iphc::SAC;
-    } else if src_ip_addr.is_unicast_link_local() {
-        // SAC = 0, SAM = 01, 10, 11
-        compress_iid(src_ip_addr, src_mac_addr, true, buf, written);
-    } else if src_ctx.is_some() {
-        // SAC = 1, SAM = 01, 10, 11
-        buf[1] |= iphc::SAC;
-        compress_iid(src_ip_addr, src_mac_addr, true, buf, written);
-    } else {
-        // SAC = 0, SAM = 00
-        buf[*written..*written + 16].copy_from_slice(&src_ip_addr.0);
-        *written += 16;
-    }
-}
-
-// TODO: For the SAC = 0, SAM = 11 case in IPv6-encapsulated headers,
-// it might be that we have to compute the IID from the encapsulating
-// IPv6 header address instead of the EUI-64 from the 802.15.4 layer
-fn compress_iid(ip_addr: &IPAddr,
-                mac_addr: &MacAddress,
-                is_src: bool,
-                buf: &mut [u8],
-                written: &mut usize) {
-    let iid: [u8; 8] = compute_iid(mac_addr);
-    if ip_addr.0[8..16] == iid {
-        // SAM/DAM = 11, 0 bits
-        buf[1] |= if is_src {
-            iphc::SAM_MODE3
-        } else {
-            iphc::DAM_MODE3
-        };
-    } else if ip_addr.0[8..14] == iphc::MAC_BASE[0..6] {
-        // SAM/DAM = 10, 16 bits
-        buf[1] |= if is_src {
-            iphc::SAM_MODE2
-        } else {
-            iphc::DAM_MODE2
-        };
-        buf[*written..*written + 2].copy_from_slice(&ip_addr.0[14..16]);
-        *written += 2;
-    } else {
-        // SAM/DAM = 01, 64 bits
-        buf[1] |= if is_src {
-            iphc::SAM_MODE1
-        } else {
-            iphc::DAM_MODE1
-        };
-        buf[*written..*written + 8].copy_from_slice(&ip_addr.0[8..16]);
-        *written += 8;
-    }
-}
-
-// Compresses non-multicast destination address
-// TODO: We should check to see whether context or link local compression
-// schemes gives the better compression; currently, we will always match
-// on link local even if we could get better compression through context.
-fn compress_dst(dst_ip_addr: &IPAddr,
-                dst_mac_addr: &MacAddress,
-                dst_ctx: &Option<Context>,
-                buf: &mut [u8],
-                written: &mut usize) {
-    // Assumes dst_ip_addr is not a multicast address (prefix ffXX)
-    if dst_ip_addr.is_unicast_link_local() {
-        // Link local compression
-        // M = 0, DAC = 0, DAM = 01, 10, 11
-        compress_iid(dst_ip_addr, dst_mac_addr, false, buf, written);
-    } else if dst_ctx.is_some() {
-        // Context compression
-        // DAC = 1, DAM = 01, 10, 11
-        buf[1] |= iphc::DAC;
-        compress_iid(dst_ip_addr, dst_mac_addr, false, buf, written);
-    } else {
-        // Full address inline
-        // DAC = 0, DAM = 00
-        buf[*written..*written + 16].copy_from_slice(&dst_ip_addr.0);
-        *written += 16;
-    }
-}
-
-// Compresses multicast destination addresses
-fn compress_multicast(dst_ip_addr: &IPAddr,
-                      dst_ctx: &Option<Context>,
-                      buf: &mut [u8],
-                      written: &mut usize) {
-    // Assumes dst_ip_addr is indeed a multicast address (prefix ffXX)
-    buf[1] |= iphc::MULTICAST;
-    if dst_ctx.is_some() {
-        // M = 1, DAC = 1, DAM = 00
-        buf[1] |= iphc::DAC;
-        buf[*written..*written + 2].copy_from_slice(&dst_ip_addr.0[1..3]);
-        buf[*written + 2..*written + 6].copy_from_slice(&dst_ip_addr.0[12..16]);
-        *written += 6;
-    } else {
-        // M = 1, DAC = 0
-        if dst_ip_addr.0[1] == 0x02 && dst_ip_addr.0[2..15].iter().all(|&b| b == 0) {
-            // DAM = 11
-            buf[1] |= iphc::DAM_MODE3;
-            buf[*written] = dst_ip_addr.0[15];
-            *written += 1;
-        } else {
-            if !dst_ip_addr.0[2..11].iter().all(|&b| b == 0) {
-                // DAM = 00
-                buf[1] |= iphc::DAM_INLINE;
-                buf[*written..*written + 16].copy_from_slice(&dst_ip_addr.0);
-                *written += 16;
-            } else if !dst_ip_addr.0[11..13].iter().all(|&b| b == 0) {
-                // DAM = 01, ffXX::00XX:XXXX:XXXX
-                buf[1] |= iphc::DAM_MODE1;
-                buf[*written] = dst_ip_addr.0[1];
-                buf[*written + 1..*written + 6].copy_from_slice(&dst_ip_addr.0[11..16]);
-                *written += 6;
+    fn receive_frame(&self,
+                     packet: &[u8],
+                     packet_len: usize,
+                     src_mac_addr: MacAddress,
+                     dst_mac_addr: MacAddress)
+                     -> (Option<&RxState<'a>>, ReturnCode) {
+        if is_fragment(packet) {
+            let (is_frag1, dgram_size, dgram_tag, dgram_offset) = get_frag_hdr(&packet[0..5]);
+            let offset_to_payload = if is_frag1 {
+                lowpan_frag::FRAG1_HDR_SIZE
             } else {
-                // DAM = 10, ffXX::00XX:XXXX
-                buf[1] |= iphc::DAM_MODE2;
-                buf[*written] = dst_ip_addr.0[1];
-                buf[*written + 1..*written + 4].copy_from_slice(&dst_ip_addr.0[13..16]);
-                *written += 4;
-            }
-        }
-    }
-}
-
-fn compress_udp_ports(udp_header: &[u8], buf: &mut [u8], written: &mut usize) -> u8 {
-    let src_port = u16::from_be(slice_to_u16(&udp_header[0..2]));
-    let dst_port = u16::from_be(slice_to_u16(&udp_header[2..4]));
-
-    let mut udp_port_nhc = 0;
-    if (src_port & nhc::UDP_4BIT_PORT_MASK) == nhc::UDP_4BIT_PORT &&
-       (dst_port & nhc::UDP_4BIT_PORT_MASK) == nhc::UDP_4BIT_PORT {
-        // Both can be compressed to 4 bits
-        udp_port_nhc |= nhc::UDP_SRC_PORT_FLAG | nhc::UDP_DST_PORT_FLAG;
-        // This should compress the ports to a single 8-bit value,
-        // with the source port before the destination port
-        buf[*written] = (((src_port & !nhc::UDP_4BIT_PORT_MASK) << 4) |
-                         (dst_port & !nhc::UDP_4BIT_PORT_MASK)) as u8;
-        *written += 1;
-    } else if (src_port & nhc::UDP_8BIT_PORT_MASK) == nhc::UDP_8BIT_PORT {
-        // Source port compressed to 8 bits, destination port uncompressed
-        udp_port_nhc |= nhc::UDP_SRC_PORT_FLAG;
-        buf[*written] = (src_port & !nhc::UDP_8BIT_PORT_MASK) as u8;
-        u16_to_slice(dst_port.to_be(), &mut buf[*written + 1..*written + 3]);
-        *written += 3;
-    } else if (dst_port & nhc::UDP_8BIT_PORT_MASK) == nhc::UDP_8BIT_PORT {
-        udp_port_nhc |= nhc::UDP_DST_PORT_FLAG;
-        u16_to_slice(src_port.to_be(), &mut buf[*written..*written + 2]);
-        buf[*written + 3] = (dst_port & !nhc::UDP_8BIT_PORT_MASK) as u8;
-        *written += 3;
-    } else {
-        buf[*written..*written + 4].copy_from_slice(&udp_header[0..4]);
-        *written += 4;
-    }
-    return udp_port_nhc;
-}
-
-fn compress_udp_checksum(udp_header: &[u8], buf: &mut [u8], written: &mut usize) -> u8 {
-    // TODO: Checksum is always inline, elision is currently not supported
-    buf[*written] = udp_header[6];
-    buf[*written + 1] = udp_header[7];
-    *written += 2;
-    // Inline checksum corresponds to the 0 flag
-    0
-}
-
-fn compress_and_elide_padding(nh_type: u8,
-                              nh_len: usize,
-                              next_headers: &[u8],
-                              buf: &mut [u8],
-                              written: &mut usize) {
-    let total_len = nh_len + 2;
-    // is_multiple is true if the header length is a multiple of 8-octets
-    let is_multiple = (total_len % 8) == 0;
-    let correct_type = (nh_type == ip6_nh::HOP_OPTS) || (nh_type == ip6_nh::DST_OPTS);
-    let mut opt_offset = 2;
-    let mut is_padding = false;
-    if correct_type && is_multiple {
-        // Traverses the TLVs in the next header extension. We need to
-        // determine if there is a last padding TLV (Pad1 or PadN) that is
-        // not preceded by another padding TLV. Hence, we have a state
-        // machine that keeps track of whether the last TLV was a padding
-        // TLV. We only set is_padding to true if we encounter a padding
-        // byte that spans to the end of the TLV chain, and if the previous
-        // TLV was not a padding TLV. In that case, we break out of the loop
-        // so that opt_offset is the offset before the last padding TLV.
-        let mut prev_was_padding = false;
-        while opt_offset < total_len {
-            let opt_type = next_headers[opt_offset];
-            let new_opt_offset = match opt_type {
-                // Pad1, PadN
-                0 | 1 => {
-                    let new_opt_offset = match opt_type {
-                        0 => opt_offset + 1,
-                        1 => {
-                            let opt_len = next_headers[opt_offset + 1] as usize;
-                            opt_offset + opt_len + 2
-                        }
-                        _ => panic!("Unreachable case"),
-                    };
-                    if new_opt_offset == total_len {
-                        if !prev_was_padding {
-                            is_padding = true;
-                        }
-                        break;
-                    }
-                    prev_was_padding = true;
-                    new_opt_offset
-                }
-                // Any other TLV type
-                _ => {
-                    let opt_len = next_headers[opt_offset + 1] as usize;
-                    prev_was_padding = false;
-                    opt_offset + opt_len + 2
-                }
+                lowpan_frag::FRAGN_HDR_SIZE
             };
-            opt_offset = new_opt_offset;
+            self.receive_fragment(&packet[offset_to_payload..],
+                                  packet_len - offset_to_payload,
+                                  src_mac_addr,
+                                  dst_mac_addr,
+                                  dgram_size,
+                                  dgram_tag,
+                                  dgram_offset)
+        } else {
+            self.receive_single_packet(&packet, packet_len, src_mac_addr, dst_mac_addr)
         }
     }
 
-    // We only elide the padding if: 1) Encapsulating packet is a multiple
-    // of 8 octets in length, 2) the header is either hop options or dest
-    // options, and 3) if there is a single Pad1 or PadN trailing padding.
-    if is_multiple && correct_type && is_padding {
-        buf[*written..*written + opt_offset - 2].copy_from_slice(&next_headers[2..opt_offset]);
-        *written += opt_offset - 2;
-    } else {
-        // Copy over the remaining packet data
-        buf[*written..*written + nh_len].copy_from_slice(&next_headers[2..2 + nh_len]);
-        *written += nh_len;
-    }
-}
-
-/// Decodes a compressed header into a full IPv6 header given the 16-bit MAC
-/// addresses. `buf` is expected to be a slice containing only the 6LowPAN
-/// packet along with its payload.  If the decompression was successful,
-/// returns `Ok((consumed, written))`, where `consumed` is the number of
-/// header bytes consumed from the 6LoWPAN header and `written` is the
-/// number of uncompressed header bytes written into `out_buf`. Payload
-/// bytes and non-compressed next headers are not written, so the remaining
-/// `buf.len() - consumed` bytes must still be copied over to `out_buf`.
-/// Note that in the case of fragmentation, the total length of the IPv6
-/// packet cannot be inferred from a single frame, and is instead provided
-/// by the dgram_size field in the fragmentation header. Thus, if we are
-/// decompressing a fragment, we rely on the dgram_size field; otherwise,
-/// we infer the length from the size of buf.
-pub fn decompress(ctx_store: &ContextStore,
-                  buf: &[u8],
-                  src_mac_addr: MacAddress,
-                  dst_mac_addr: MacAddress,
-                  out_buf: &mut [u8],
-                  dgram_size: u16,
-                  is_fragment: bool)
-                  -> Result<(usize, usize), ()> {
-    // Get the LOWPAN_IPHC header (the first two bytes are the header)
-    let iphc_header_1: u8 = buf[0];
-    let iphc_header_2: u8 = buf[1];
-    let mut consumed: usize = 2;
-
-    // First, reset the IPv6 fixed header to the default values
-    let mut ip6_header: &mut IP6Header = unsafe { mem::transmute(out_buf.as_mut_ptr()) };
-    let mut written: usize = mem::size_of::<IP6Header>();
-    *ip6_header = IP6Header::new();
-
-    // Decompress CID and CIE fields if they exist
-    let (src_ctx, dst_ctx) = decompress_cie(ctx_store, iphc_header_1, &buf, &mut consumed)?;
-
-    // Traffic Class & Flow Label
-    decompress_tf(&mut ip6_header, iphc_header_1, &buf, &mut consumed);
-
-    // Next Header
-    let (mut is_nhc, mut next_header) = decompress_nh(iphc_header_1, &buf, &mut consumed);
-
-    // Hop Limit
-    decompress_hl(&mut ip6_header, iphc_header_1, &buf, &mut consumed)?;
-
-    // Source Address
-    decompress_src(&mut ip6_header,
-                   iphc_header_2,
-                   &src_mac_addr,
-                   &src_ctx,
-                   &buf,
-                   &mut consumed)?;
-
-    // Destination Address
-    if (iphc_header_2 & iphc::MULTICAST) != 0 {
-        decompress_multicast(&mut ip6_header,
-                             iphc_header_2,
-                             &dst_ctx,
-                             &buf,
-                             &mut consumed)?;
-    } else {
-        decompress_dst(&mut ip6_header,
-                       iphc_header_2,
-                       &dst_mac_addr,
-                       &dst_ctx,
-                       &buf,
-                       &mut consumed)?;
-    }
-
-    // next_header is already set if is_nhc is false, otherwise it can be
-    // determined from the LoWPAN NHC header byte
-    if is_nhc {
-        next_header = nhc_to_ip6_nh(buf[consumed])?;
-    }
-    ip6_header.set_next_header(next_header);
-
-    // Next headers after the IPv6 fixed header
-    // At each iteration, consumed points to the first byte of the compressed
-    // next header in buf.
-    while is_nhc {
-        // Advance past the LoWPAN NHC byte
-        let nhc_header = buf[consumed];
-        consumed += 1;
-
-        // Scoped mutable borrow of out_buf
-        let mut next_headers: &mut [u8] = &mut out_buf[written..];
-
-        match next_header {
-            ip6_nh::IP6 => {
-                let (encap_consumed, encap_written) = decompress(ctx_store,
-                                                                 &buf[consumed..],
-                                                                 src_mac_addr,
-                                                                 dst_mac_addr,
-                                                                 &mut next_headers,
-                                                                 dgram_size,
-                                                                 is_fragment)?;
-                consumed += encap_consumed;
-                written += encap_written;
-                break;
-            }
-            ip6_nh::UDP => {
-                // UDP length includes UDP header and data in bytes
-                let udp_length = (8 + (buf.len() - consumed)) as u16;
-                // Decompress UDP header fields
-                let (src_port, dst_port) = decompress_udp_ports(nhc_header, &buf, &mut consumed);
-                // Fill in uncompressed UDP header
-                u16_to_slice(src_port.to_be(), &mut next_headers[0..2]);
-                u16_to_slice(dst_port.to_be(), &mut next_headers[2..4]);
-                u16_to_slice(udp_length.to_be(), &mut next_headers[4..6]);
-                // Need to fill in header values before computing the checksum
-                let udp_checksum = decompress_udp_checksum(nhc_header,
-                                                           &next_headers[0..8],
-                                                           udp_length,
-                                                           &ip6_header,
-                                                           &buf,
-                                                           &mut consumed);
-                u16_to_slice(udp_checksum.to_be(), &mut next_headers[6..8]);
-
-                written += 8;
-                break;
-            }
-            ip6_nh::FRAGMENT | ip6_nh::HOP_OPTS | ip6_nh::ROUTING | ip6_nh::DST_OPTS |
-            ip6_nh::MOBILITY => {
-                // True if the next header is also compressed
-                is_nhc = (nhc_header & nhc::NH) != 0;
-
-                // len is the number of octets following the length field
-                let len = buf[consumed] as usize;
-                consumed += 1;
-
-                // Check that there is a next header in the buffer,
-                // which must be the case if the last next header specifies
-                // NH = 1
-                if consumed + len >= buf.len() {
-                    return Err(());
-                }
-
-                // Length in 8-octet units after the first 8 octets
-                // (per the IPv6 ext hdr spec)
-                let mut hdr_len_field = (len - 6) / 8;
-                if (len - 6) % 8 != 0 {
-                    hdr_len_field += 1;
-                }
-
-                // Gets the type of the subsequent next header.  If is_nhc
-                // is true, there must be a LoWPAN NHC header byte,
-                // otherwise there is either an uncompressed next header.
-                next_header = if is_nhc {
-                    // The next header is LoWPAN NHC-compressed
-                    nhc_to_ip6_nh(buf[consumed + len])?
+    fn receive_single_packet(&self,
+                             payload: &[u8],
+                             payload_len: usize,
+                             src_mac_addr: MacAddress,
+                             dst_mac_addr: MacAddress)
+                             -> (Option<&RxState<'a>>, ReturnCode) {
+        let rx_state = self.rx_states.iter().find(|state| !state.busy.get());
+        rx_state.map(|state| {
+                state.start_receive(src_mac_addr, dst_mac_addr, payload_len as u16, 0);
+                // The packet buffer should *always* be there; in particular,
+                // since this state is not busy, it must have the packet buffer.
+                // Otherwise, we are in an inconsistent state and can fail.
+                let mut packet = state.packet
+                    .take()
+                    .expect("Error: `packet` in RxState struct is `None` \
+                            in call to `receive_single_packet`.");
+                if is_lowpan(payload) {
+                    let decompressed = lowpan_compress::decompress(self.ctx_store,
+                                                          &payload[0..payload_len as usize],
+                                                          src_mac_addr,
+                                                          dst_mac_addr,
+                                                          &mut packet,
+                                                          0,
+                                                          false);
+                    match decompressed {
+                        Ok((consumed, written)) => {
+                            let remaining = payload_len - consumed;
+                            packet[written..written + remaining]
+                                .copy_from_slice(&payload[consumed..consumed + remaining]);
+                        }
+                        Err(_) => {
+                            return (None, ReturnCode::FAIL);
+                        }
+                    }
                 } else {
-                    // The next header is uncompressed
-                    buf[consumed + len]
-                };
+                    packet[0..payload_len].copy_from_slice(&payload[0..payload_len]);
+                }
+                state.packet.replace(packet);
+                (Some(state), ReturnCode::SUCCESS)
+            })
+            .unwrap_or((None, ReturnCode::ENOMEM))
+    }
 
-                // Fill in the extended header in uncompressed IPv6 format
-                next_headers[0] = next_header;
-                next_headers[1] = hdr_len_field as u8;
-                // Copies over the remaining options.
-                next_headers[2..2 + len].copy_from_slice(&buf[consumed..consumed + len]);
+    // This function returns an Err if an error occurred, returns Ok(Some(RxState))
+    // if the packet has been fully reassembled, or returns Ok(None) if there
+    // are still pending fragments
+    fn receive_fragment(&self,
+                        frag_payload: &[u8],
+                        payload_len: usize,
+                        src_mac_addr: MacAddress,
+                        dst_mac_addr: MacAddress,
+                        dgram_size: u16,
+                        dgram_tag: u16,
+                        dgram_offset: usize)
+                        -> (Option<&RxState<'a>>, ReturnCode) {
+        let mut rx_state = self.rx_states
+            .iter()
+            .find(|state| state.is_my_fragment(src_mac_addr, dst_mac_addr, dgram_size, dgram_tag));
 
-                // Fill in padding
-                let pad_bytes = hdr_len_field * 8 - len + 6;
-                if pad_bytes == 1 {
-                    // Pad1
-                    next_headers[2 + len] = 0;
-                } else {
-                    // PadN, 2 <= pad_bytes <= 7
-                    next_headers[2 + len] = 1;
-                    next_headers[2 + len + 1] = pad_bytes as u8 - 2;
-                    for i in 2..pad_bytes {
-                        next_headers[2 + len + i] = 0;
+        if rx_state.is_none() {
+            rx_state = self.rx_states.iter().find(|state| !state.busy.get());
+            // Initialize new state
+            rx_state.map(|state| {
+                state.start_receive(src_mac_addr, dst_mac_addr, dgram_size, dgram_tag)
+            });
+            if rx_state.is_none() {
+                return (None, ReturnCode::ENOMEM);
+            }
+        }
+        rx_state.map(|state| {
+                // Returns true if the full packet is reassembled
+                let res = state.receive_next_frame(frag_payload,
+                                                   payload_len,
+                                                   dgram_size,
+                                                   dgram_offset,
+                                                   self.ctx_store);
+                match res {
+                    // Some error occurred
+                    Err(_) => (Some(state), ReturnCode::FAIL),
+                    Ok(complete) => {
+                        if complete {
+                            // Packet fully reassembled
+                            (Some(state), ReturnCode::SUCCESS)
+                        } else {
+                            // Packet not fully reassembled
+                            (None, ReturnCode::SUCCESS)
+                        }
                     }
                 }
-
-                written += 8 + hdr_len_field * 8;
-                consumed += len;
-            }
-            _ => panic!("Unreachable case"),
-        }
+            })
+            .unwrap_or((None, ReturnCode::ENOMEM))
     }
 
-    // The IPv6 header length field is the size of the IPv6 payload,
-    // including extension headers. This is thus the uncompressed
-    // size of the IPv6 packet - the fixed IPv6 header.
-    let payload_len = if is_fragment {
-        (dgram_size as usize) - mem::size_of::<IP6Header>()
-    } else {
-        written + (buf.len() - consumed) - mem::size_of::<IP6Header>()
-    };
-    ip6_header.payload_len = (payload_len as u16).to_be();
-    Ok((consumed, written))
-}
-
-fn decompress_cie(ctx_store: &ContextStore,
-                  iphc_header: u8,
-                  buf: &[u8],
-                  consumed: &mut usize)
-                  -> Result<(Context, Context), ()> {
-    let ctx_0 = ctx_store.get_context_0();
-    let (mut src_ctx, mut dst_ctx) = (ctx_0, ctx_0);
-    if iphc_header & iphc::CID != 0 {
-        let sci = buf[*consumed] >> 4;
-        let dci = buf[*consumed] & 0xf;
-        *consumed += 1;
-
-        if sci != 0 {
-            src_ctx = ctx_store.get_context_from_id(sci).ok_or(())?;
+    #[allow(dead_code)]
+    // This function is called when a disassociation event occurs, as we need
+    // to expire all pending state.
+    fn discard_all_state(&self) {
+        for rx_state in self.rx_states.iter() {
+            rx_state.end_receive(None, ReturnCode::FAIL);
         }
-        if dci != 0 {
-            dst_ctx = ctx_store.get_context_from_id(dci).ok_or(())?;
+        for tx_state in self.tx_states.iter() {
+            tx_state.end_transmit(false, ReturnCode::FAIL);
         }
-    }
-    Ok((src_ctx, dst_ctx))
-}
-
-fn decompress_tf(ip6_header: &mut IP6Header, iphc_header: u8, buf: &[u8], consumed: &mut usize) {
-    let fl_compressed = (iphc_header & iphc::TF_FLOW_LABEL) != 0;
-    let tc_compressed = (iphc_header & iphc::TF_TRAFFIC_CLASS) != 0;
-
-    // Determine ECN and DSCP separately because the order is different
-    // from the IPv6 traffic class field.
-    if !fl_compressed || !tc_compressed {
-        let ecn = buf[*consumed] >> 6;
-        ip6_header.set_ecn(ecn);
-    }
-    if !tc_compressed {
-        let dscp = buf[*consumed] & 0b111111;
-        ip6_header.set_dscp(dscp);
-        *consumed += 1;
-    }
-
-    // Flow label is always in the same bit position relative to the last
-    // three bytes in the inline fields
-    if fl_compressed {
-        ip6_header.set_flow_label(0);
-    } else {
-        let flow = (((buf[*consumed] & 0x0f) as u32) << 16) | ((buf[*consumed + 1] as u32) << 8) |
-                   (buf[*consumed + 2] as u32);
-        *consumed += 3;
-        ip6_header.set_flow_label(flow);
-    }
-}
-
-fn decompress_nh(iphc_header: u8, buf: &[u8], consumed: &mut usize) -> (bool, u8) {
-    let is_nhc = (iphc_header & iphc::NH) != 0;
-    let mut next_header: u8 = 0;
-    if !is_nhc {
-        next_header = buf[*consumed];
-        *consumed += 1;
-    }
-    return (is_nhc, next_header);
-}
-
-fn decompress_hl(ip6_header: &mut IP6Header,
-                 iphc_header: u8,
-                 buf: &[u8],
-                 consumed: &mut usize)
-                 -> Result<(), ()> {
-    let hop_limit = match iphc_header & iphc::HLIM_MASK {
-        iphc::HLIM_1 => 1,
-        iphc::HLIM_64 => 64,
-        iphc::HLIM_255 => 255,
-        iphc::HLIM_INLINE => {
-            let hl = buf[*consumed];
-            *consumed += 1;
-            hl
-        }
-        _ => panic!("Unreachable case"),
-    };
-    ip6_header.set_hop_limit(hop_limit);
-    Ok(())
-}
-
-fn decompress_src(ip6_header: &mut IP6Header,
-                  iphc_header: u8,
-                  mac_addr: &MacAddress,
-                  ctx: &Context,
-                  buf: &[u8],
-                  consumed: &mut usize)
-                  -> Result<(), ()> {
-    let uses_context = (iphc_header & iphc::SAC) != 0;
-    let sam_mode = iphc_header & iphc::SAM_MASK;
-    if uses_context && sam_mode == iphc::SAM_INLINE {
-        // SAC = 1, SAM = 00: UNSPECIFIED (::), which is already the default
-    } else if uses_context {
-        // SAC = 1, SAM = 01, 10, 11
-        decompress_iid_context(sam_mode,
-                               &mut ip6_header.src_addr,
-                               mac_addr,
-                               ctx,
-                               buf,
-                               consumed)?;
-    } else {
-        // SAC = 0, SAM = 00, 01, 10, 11
-        decompress_iid_link_local(sam_mode, &mut ip6_header.src_addr, mac_addr, buf, consumed)?;
-    }
-    Ok(())
-}
-
-fn decompress_dst(ip6_header: &mut IP6Header,
-                  iphc_header: u8,
-                  mac_addr: &MacAddress,
-                  ctx: &Context,
-                  buf: &[u8],
-                  consumed: &mut usize)
-                  -> Result<(), ()> {
-    let uses_context = (iphc_header & iphc::DAC) != 0;
-    let dam_mode = iphc_header & iphc::DAM_MASK;
-    if uses_context && dam_mode == iphc::DAM_INLINE {
-        // DAC = 1, DAM = 00: Reserved
-        return Err(());
-    } else if uses_context {
-        // DAC = 1, DAM = 01, 10, 11
-        decompress_iid_context(dam_mode,
-                               &mut ip6_header.dst_addr,
-                               mac_addr,
-                               ctx,
-                               buf,
-                               consumed)?;
-    } else {
-        // DAC = 0, DAM = 00, 01, 10, 11
-        decompress_iid_link_local(dam_mode, &mut ip6_header.dst_addr, mac_addr, buf, consumed)?;
-    }
-    Ok(())
-}
-
-fn decompress_multicast(ip6_header: &mut IP6Header,
-                        iphc_header: u8,
-                        ctx: &Context,
-                        buf: &[u8],
-                        consumed: &mut usize)
-                        -> Result<(), ()> {
-    let uses_context = (iphc_header & iphc::DAC) != 0;
-    let dam_mode = iphc_header & iphc::DAM_MASK;
-    let ip_addr: &mut IPAddr = &mut ip6_header.dst_addr;
-    if uses_context {
-        match dam_mode {
-            iphc::DAM_INLINE => {
-                // DAC = 1, DAM = 00: 48 bits
-                // ffXX:XXLL:PPPP:PPPP:PPPP:PPPP:XXXX:XXXX
-                let prefix_bytes = ((ctx.prefix_len + 7) / 8) as usize;
-                if prefix_bytes > 8 {
-                    // The maximum prefix length for this mode is 64 bits.
-                    // If the specified prefix exceeds this length, the
-                    // compression is invalid.
-                    return Err(());
-                }
-                ip_addr.0[0] = 0xff;
-                ip_addr.0[1] = buf[*consumed];
-                ip_addr.0[2] = buf[*consumed + 1];
-                ip_addr.0[3] = ctx.prefix_len;
-                ip_addr.0[4..4 + prefix_bytes].copy_from_slice(&ctx.prefix[0..prefix_bytes]);
-                ip_addr.0[12..16].copy_from_slice(&buf[*consumed + 2..*consumed + 6]);
-                *consumed += 6;
-            }
-            _ => {
-                // DAC = 1, DAM = 01, 10, 11: Reserved
-                return Err(());
-            }
-        }
-    } else {
-        match dam_mode {
-            // DAC = 0, DAM = 00: Inline
-            iphc::DAM_INLINE => {
-                ip_addr.0.copy_from_slice(&buf[*consumed..*consumed + 16]);
-                *consumed += 16;
-            }
-            // DAC = 0, DAM = 01: 48 bits
-            // ffXX::00XX:XXXX:XXXX
-            iphc::DAM_MODE1 => {
-                ip_addr.0[0] = 0xff;
-                ip_addr.0[1] = buf[*consumed];
-                *consumed += 1;
-                ip_addr.0[11..16].copy_from_slice(&buf[*consumed..*consumed + 5]);
-                *consumed += 5;
-            }
-            // DAC = 0, DAM = 10: 32 bits
-            // ffXX::00XX:XXXX
-            iphc::DAM_MODE2 => {
-                ip_addr.0[0] = 0xff;
-                ip_addr.0[1] = buf[*consumed];
-                *consumed += 1;
-                ip_addr.0[13..16].copy_from_slice(&buf[*consumed..*consumed + 3]);
-                *consumed += 3;
-            }
-            // DAC = 0, DAM = 11: 8 bits
-            // ff02::00XX
-            iphc::DAM_MODE3 => {
-                ip_addr.0[0] = 0xff;
-                ip_addr.0[1] = 0x02;
-                ip_addr.0[15] = buf[*consumed];
-                *consumed += 1;
-            }
-            _ => panic!("Unreachable case"),
-        }
-    }
-    Ok(())
-}
-
-fn decompress_iid_link_local(addr_mode: u8,
-                             ip_addr: &mut IPAddr,
-                             mac_addr: &MacAddress,
-                             buf: &[u8],
-                             consumed: &mut usize)
-                             -> Result<(), ()> {
-    let mode = addr_mode & (iphc::SAM_MASK | iphc::DAM_MASK);
-    match mode {
-        // SAM, DAM = 00: Inline
-        iphc::SAM_INLINE => {
-            // SAM_INLINE is equivalent to DAM_INLINE
-            ip_addr.0.copy_from_slice(&buf[*consumed..*consumed + 16]);
-            *consumed += 16;
-        }
-        // SAM, DAM = 01: 64 bits
-        // Link-local prefix (64 bits) + 64 bits carried inline
-        iphc::SAM_MODE1 | iphc::DAM_MODE1 => {
-            ip_addr.set_unicast_link_local();
-            ip_addr.0[8..16].copy_from_slice(&buf[*consumed..*consumed + 8]);
-            *consumed += 8;
-        }
-        // SAM, DAM = 11: 16 bits
-        // Link-local prefix (112 bits) + 0000:00ff:fe00:XXXX
-        iphc::SAM_MODE2 | iphc::DAM_MODE2 => {
-            ip_addr.set_unicast_link_local();
-            ip_addr.0[11..13].copy_from_slice(&iphc::MAC_BASE[3..5]);
-            ip_addr.0[14..16].copy_from_slice(&buf[*consumed..*consumed + 2]);
-            *consumed += 2;
-        }
-        // SAM, DAM = 11: 0 bits
-        // Linx-local prefix (64 bits) + IID from outer header (64 bits)
-        iphc::SAM_MODE3 | iphc::DAM_MODE3 => {
-            ip_addr.set_unicast_link_local();
-            ip_addr.0[8..16].copy_from_slice(&compute_iid(mac_addr));
-        }
-        _ => panic!("Unreachable case"),
-    }
-    Ok(())
-}
-
-fn decompress_iid_context(addr_mode: u8,
-                          ip_addr: &mut IPAddr,
-                          mac_addr: &MacAddress,
-                          ctx: &Context,
-                          buf: &[u8],
-                          consumed: &mut usize)
-                          -> Result<(), ()> {
-    let mode = addr_mode & (iphc::SAM_MASK | iphc::DAM_MASK);
-    match mode {
-        // DAM = 00: Reserved
-        // SAM = 0 is handled separately outside this method
-        iphc::DAM_INLINE => {
-            return Err(());
-        }
-        // SAM, DAM = 01: 64 bits
-        // Suffix is the 64 bits carried inline
-        iphc::SAM_MODE1 | iphc::DAM_MODE1 => {
-            ip_addr.0[8..16].copy_from_slice(&buf[*consumed..*consumed + 8]);
-            *consumed += 8;
-        }
-        // SAM, DAM = 10: 16 bits
-        // Suffix is 0000:00ff:fe00:XXXX
-        iphc::SAM_MODE2 | iphc::DAM_MODE2 => {
-            ip_addr.0[8..16].copy_from_slice(&iphc::MAC_BASE);
-            ip_addr.0[14..16].copy_from_slice(&buf[*consumed..*consumed + 2]);
-            *consumed += 2;
-        }
-        // SAM, DAM = 11: 0 bits
-        // Suffix is the IID computed from the encapsulating header
-        iphc::SAM_MODE3 | iphc::DAM_MODE3 => {
-            let iid = compute_iid(mac_addr);
-            ip_addr.0[8..16].copy_from_slice(&iid[0..8]);
-        }
-        _ => panic!("Unreachable case"),
-    }
-    // The bits covered by the provided context are always used, so we copy
-    // the context bits into the address after the non-context bits are set.
-    ip_addr.set_prefix(&ctx.prefix, ctx.prefix_len);
-    Ok(())
-}
-
-// Returns the UDP ports in host byte-order
-fn decompress_udp_ports(udp_nhc: u8, buf: &[u8], consumed: &mut usize) -> (u16, u16) {
-    let src_compressed = (udp_nhc & nhc::UDP_SRC_PORT_FLAG) != 0;
-    let dst_compressed = (udp_nhc & nhc::UDP_DST_PORT_FLAG) != 0;
-
-    let src_port;
-    let dst_port;
-    if src_compressed && dst_compressed {
-        // Both src and dst are compressed to 4 bits
-        let src_short = ((buf[*consumed] >> 4) & 0xf) as u16;
-        let dst_short = (buf[*consumed] & 0xf) as u16;
-        src_port = nhc::UDP_4BIT_PORT | src_short;
-        dst_port = nhc::UDP_4BIT_PORT | dst_short;
-        *consumed += 1;
-    } else if src_compressed {
-        // Source port is compressed to 8 bits
-        src_port = nhc::UDP_8BIT_PORT | (buf[*consumed] as u16);
-        // Destination port is uncompressed
-        dst_port = u16::from_be(slice_to_u16(&buf[*consumed + 1..*consumed + 3]));
-        *consumed += 3;
-    } else if dst_compressed {
-        // Source port is uncompressed
-        src_port = u16::from_be(slice_to_u16(&buf[*consumed..*consumed + 2]));
-        // Destination port is compressed to 8 bits
-        dst_port = nhc::UDP_8BIT_PORT | (buf[*consumed + 2] as u16);
-        *consumed += 3;
-    } else {
-        // Both ports are uncompressed
-        src_port = u16::from_be(slice_to_u16(&buf[*consumed..*consumed + 2]));
-        dst_port = u16::from_be(slice_to_u16(&buf[*consumed + 2..*consumed + 4]));
-        *consumed += 4;
-    }
-    (src_port, dst_port)
-}
-
-// Returns the UDP checksum in host byte-order
-fn decompress_udp_checksum(udp_nhc: u8,
-                           udp_header: &[u8],
-                           udp_length: u16,
-                           ip6_header: &IP6Header,
-                           buf: &[u8],
-                           consumed: &mut usize)
-                           -> u16 {
-    if (udp_nhc & nhc::UDP_CHECKSUM_FLAG) != 0 {
-        // TODO: Need to verify that the packet was sent with *some* kind
-        // of integrity check at a lower level (otherwise, we need to drop
-        // the packet)
-        compute_udp_checksum(ip6_header, udp_header, udp_length, &buf[*consumed..])
-    } else {
-        let checksum = u16::from_be(slice_to_u16(&buf[*consumed..*consumed + 2]));
-        *consumed += 2;
-        checksum
     }
 }

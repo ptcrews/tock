@@ -17,13 +17,13 @@
 //! frames will prevent the test from completing successfully.
 //!
 //! To use this test suite, allocate space for a new LowpanTest structure, and
-//! set it as the client for the FragState struct and for the respective TxState
+//! set it as the client for the LowpanState struct and for the respective TxState
 //! struct. For the transmit side, call the LowpanTest::start method. The
 //! `initialize_all` function performs this initialization; simply call this
 //! function in `boards/imix/src/main.rs` as follows:
 //!
 //! Alternatively, you can call the `initialize_all` function, which performs
-//! the initialization routines for the 6LoWPAN, TxState, RxState, and FragState
+//! the initialization routines for the 6LoWPAN, TxState, RxState, and LowpanState
 //! structs. Insert the code into `boards/imix/src/main.rs` as follows:
 //!
 //! ...
@@ -44,9 +44,9 @@ use capsules::ieee802154::mac;
 use capsules::ieee802154::mac::Mac;
 use capsules::net::ieee802154::MacAddress;
 use capsules::net::ip::{IP6Header, IPAddr, ip6_nh};
-use capsules::net::lowpan;
-use capsules::net::lowpan::{ContextStore, Context};
-use capsules::net::lowpan_fragment::{FragState, TxState, TransmitClient, ReceiveClient};
+use capsules::net::lowpan_compress;
+use capsules::net::lowpan_compress::{ContextStore, Context};
+use capsules::net::lowpan::{LowpanState, TxState, TransmitClient, ReceiveClient};
 use capsules::net::util;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use core::cell::Cell;
@@ -158,7 +158,7 @@ pub const TEST_LOOP: bool = false;
 pub struct LowpanTest<'a, A: time::Alarm + 'a> {
     radio: &'a mac::Mac<'a>,
     alarm: &'a A,
-    frag_state: &'a FragState<'a, A>,
+    frag_state: &'a LowpanState<'a, A>,
     tx_state: &'a TxState<'a>,
     test_counter: Cell<usize>,
 }
@@ -168,7 +168,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         -> &'static LowpanTest<'static,
         capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {
     let dummy_ctx_store = static_init!(DummyStore,
-                                       DummyStore::new(capsules::net::lowpan::Context {
+                                       DummyStore::new(capsules::net::lowpan_compress::Context {
                                            prefix: DEFAULT_CTX_PREFIX,
                                            prefix_len: DEFAULT_CTX_PREFIX_LEN as u8,
                                            id: 0,
@@ -176,13 +176,13 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
                                        }));
 
     let default_tx_state = static_init!(
-        capsules::net::lowpan_fragment::TxState<'static>,
-        capsules::net::lowpan_fragment::TxState::new()
+        capsules::net::lowpan::TxState<'static>,
+        capsules::net::lowpan::TxState::new()
         );
 
     let default_rx_state = static_init!(
-        capsules::net::lowpan_fragment::RxState<'static>,
-        capsules::net::lowpan_fragment::RxState::new(&mut RX_STATE_BUF)
+        capsules::net::lowpan::RxState<'static>,
+        capsules::net::lowpan::RxState::new(&mut RX_STATE_BUF)
         );
 
     let frag_state_alarm = static_init!(
@@ -196,11 +196,11 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         );
 
     let frag_state = static_init!(
-        capsules::net::lowpan_fragment::FragState<'static,
+        capsules::net::lowpan::LowpanState<'static,
         VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
-        capsules::net::lowpan_fragment::FragState::new(
+        capsules::net::lowpan::LowpanState::new(
             radio_mac,
-            dummy_ctx_store as &'static capsules::net::lowpan::ContextStore,
+            dummy_ctx_store as &'static capsules::net::lowpan_compress::ContextStore,
             &mut RADIO_BUF_TMP,
             frag_state_alarm)
         );
@@ -229,7 +229,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 
 impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
     pub fn new(radio: &'a mac::Mac<'a>,
-               frag_state: &'a FragState<'a, A>,
+               frag_state: &'a LowpanState<'a, A>,
                tx_state: &'a TxState<'a>,
                alarm: &'a A)
                -> LowpanTest<'a, A> {
@@ -509,7 +509,7 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
             SAC::LLPIID => {
                 // LLP::IID
                 ip6_header.src_addr.set_unicast_link_local();
-                ip6_header.src_addr.0[8..16].copy_from_slice(&lowpan::compute_iid(&SRC_MAC_ADDR));
+                ip6_header.src_addr.0[8..16].copy_from_slice(&lowpan_compress::compute_iid(&SRC_MAC_ADDR));
             }
             SAC::Unspecified => {}
             SAC::Ctx64 => {
@@ -528,7 +528,7 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
             SAC::CtxIID => {
                 // MLP::IID
                 ip6_header.src_addr.set_prefix(&MLP, 64);
-                ip6_header.src_addr.0[8..16].copy_from_slice(&lowpan::compute_iid(&SRC_MAC_ADDR));
+                ip6_header.src_addr.0[8..16].copy_from_slice(&lowpan_compress::compute_iid(&SRC_MAC_ADDR));
             }
         }
 
@@ -552,7 +552,7 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
             DAC::LLPIID => {
                 // LLP::IID
                 ip6_header.dst_addr.set_unicast_link_local();
-                ip6_header.dst_addr.0[8..16].copy_from_slice(&lowpan::compute_iid(&DST_MAC_ADDR));
+                ip6_header.dst_addr.0[8..16].copy_from_slice(&lowpan_compress::compute_iid(&DST_MAC_ADDR));
             }
             DAC::Ctx64 => {
                 // MLP::xxxx:xxxx:xxxx:xxxx
@@ -570,7 +570,7 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
             DAC::CtxIID => {
                 // MLP::IID
                 ip6_header.dst_addr.set_prefix(&MLP, 64);
-                ip6_header.dst_addr.0[8..16].copy_from_slice(&lowpan::compute_iid(&DST_MAC_ADDR));
+                ip6_header.dst_addr.0[8..16].copy_from_slice(&lowpan_compress::compute_iid(&DST_MAC_ADDR));
             }
             DAC::McastInline => {
                 // first byte is ff, that's all we know
