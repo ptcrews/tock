@@ -44,7 +44,7 @@ use capsules::ieee802154::mac;
 use capsules::ieee802154::mac::Mac;
 use capsules::net::ieee802154::MacAddress;
 use capsules::net::ip::{IP6Header, IPAddr, ip6_nh};
-use capsules::net::sixlowpan::{Sixlowpan, TxState, TransmitClient, ReceiveClient};
+use capsules::net::sixlowpan::{Sixlowpan, TxState, SixlowpanClient};
 use capsules::net::sixlowpan_compression;
 use capsules::net::sixlowpan_compression::{ContextStore, Context};
 use capsules::net::util;
@@ -214,8 +214,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
                         frag_dummy_alarm)
     );
 
-    frag_state.set_receive_client(lowpan_frag_test);
-    frag_state.set_transmit_client(lowpan_frag_test);
+    frag_state.set_client(lowpan_frag_test);
     frag_dummy_alarm.set_client(lowpan_frag_test);
 
     lowpan_frag_test
@@ -412,19 +411,17 @@ impl<'a, A: time::Alarm, T: time::Alarm + 'a> time::Client for LowpanTest<'a, A,
     }
 }
 
-impl<'a, A: time::Alarm, T: time::Alarm + 'a> TransmitClient for LowpanTest<'a, A, T> {
-    fn send_done(&self, _: &'static mut [u8], _: bool, _: ReturnCode) {
-        debug!("Send completed");
-        self.schedule_next();
-    }
-}
-
-impl<'a, A: time::Alarm, T: time::Alarm + 'a> ReceiveClient for LowpanTest<'a, A, T> {
+impl<'a, A: time::Alarm, T: time::Alarm + 'a> SixlowpanClient for LowpanTest<'a, A, T> {
     fn receive<'b>(&self, buf: &'b [u8], len: u16, retcode: ReturnCode) {
         debug!("Receive completed: {:?}", retcode);
         let test_num = self.test_counter.get();
         self.test_counter.set((test_num + 1) % self.num_tests());
         self.run_check_test(test_num, buf, len)
+    }
+
+    fn send_done(&self, _: &'static mut [u8], _: bool, _: ReturnCode) {
+        debug!("Send completed");
+        self.schedule_next();
     }
 }
 

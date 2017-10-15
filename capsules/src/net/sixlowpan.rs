@@ -114,11 +114,8 @@ use net::util::{slice_to_u16, u16_to_slice};
 // Reassembly timeout in seconds
 const FRAG_TIMEOUT: u32 = 60;
 
-pub trait ReceiveClient {
+pub trait SixlowpanClient {
     fn receive<'a>(&self, buf: &'a [u8], len: u16, result: ReturnCode);
-}
-
-pub trait TransmitClient {
     fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode);
 }
 
@@ -187,7 +184,6 @@ pub struct TxState {
     tx_dgram_tag: Cell<u16>,
     tx_busy: Cell<bool>, // TODO: Can remove?
     tx_buf: TakeCell<'static, [u8]>,
-    client: Cell<Option<&'static TransmitClient>>,
 }
 
 impl TxState {
@@ -211,7 +207,6 @@ impl TxState {
             tx_dgram_tag: Cell::new(0),
             tx_busy: Cell::new(false),
             tx_buf: TakeCell::new(tx_buf),
-            client: Cell::new(None),
         }
     }
 
@@ -388,8 +383,8 @@ impl TxState {
         }
     }
 
-    fn end_transmit(&self, acked: bool, result: ReturnCode) {
-        self.client.get().map(move |client| {
+    fn end_transmit(&self, client: Option<&'static SixlowpanClient>, acked: bool, result: ReturnCode) {
+        client.map(move |client| {
             // The packet here should always be valid, as we borrow the packet
             // from the upper layer for the duration of the transmission. It
             // represents a significant bug if the packet is not there when
@@ -527,7 +522,7 @@ impl<'a> RxState<'a> {
         }
     }
 
-    fn end_receive(&self, client: Option<&'static ReceiveClient>, result: ReturnCode) {
+    fn end_receive(&self, client: Option<&'static SixlowpanClient>, result: ReturnCode) {
         self.busy.set(false);
         self.bitmap.map(|bitmap| bitmap.clear());
         self.start_time.set(0);
@@ -551,13 +546,12 @@ pub struct Sixlowpan<'a, A: time::Alarm + 'a> {
     pub radio: &'a Mac<'a>,
     ctx_store: &'a ContextStore,
     clock: &'a A,
+    client: Cell<Option<&'static SixlowpanClient>>,
 
     // Transmit state
     tx_state: &'a TxState,
-
     // Receive state
     rx_states: List<'a, RxState<'a>>,
-    rx_client: Cell<Option<&'static ReceiveClient>>,
 }
 
 // This function is called after transmitting a frame
@@ -596,7 +590,7 @@ impl<'a, A: time::Alarm> RxClient for Sixlowpan<'a, A> {
                                                         dst_mac_addr);
         // Reception completed if rx_state is not None. Note that this can
         // also occur for some fail states (e.g. dropping an invalid packet)
-        rx_state.map(|state| state.end_receive(self.rx_client.get(), returncode));
+        rx_state.map(|state| state.end_receive(self.client.get(), returncode));
     }
 }
 
@@ -613,16 +607,10 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
             radio: radio,
             ctx_store: ctx_store,
             clock: clock,
+            client: Cell::new(None),
 
             tx_state: tx_state,
-            /*
-            tx_dgram_tag: Cell::new(0),
-            tx_busy: Cell::new(false),
-            tx_buf: TakeCell::new(tx_buf),
-            */
-
             rx_states: List::new(),
-            rx_client: Cell::new(None),
         }
     }
 
@@ -636,22 +624,9 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
         self.rx_states.push_head(rx_state);
     }
 
-    /// Sixlowpan::set_receive_client
-    /// -----------------------------
-    /// This function sets the client to receive the callback when a packet
-    /// has been fully reassembled. In the current design, the concept of a
-    /// receive client per RxState did not make sense; thus, there is a single
-    /// receive client that receives all reassembled packets.
-    pub fn set_receive_client(&self, client: &'static ReceiveClient) {
-        self.rx_client.set(Some(client));
-    }
-
-    /// Sixlowpan::set_transmit_client
-    /// ------------------------------
-    /// This function sets the client to receive the callback when a packet
-    /// has finished transmitting. Since there is 
-    pub fn set_transmit_client(&self, client: &'static TransmitClient) {
-        self.tx_state.client.set(Some(client));
+    /// TODO
+    pub fn set_client(&self, client: &'static SixlowpanClient) {
+        self.client.set(Some(client));
     }
 
     /// Sixlowpan::transmit_packet
@@ -712,7 +687,7 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
             // Otherwise, we failed
             Err((returncode, new_frag_buf)) => {
                 self.tx_state.tx_buf.replace(new_frag_buf);
-                self.tx_state.end_transmit(false, returncode);
+                self.tx_state.end_transmit(self.client.get(), false, returncode);
             }
         }
     }
@@ -723,7 +698,7 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
         self.tx_state.tx_busy.set(false);
         self.tx_state.tx_buf.replace(tx_buf);
         // TODO: Consider disassociation event case
-        self.tx_state.end_transmit(acked, returncode);
+        self.tx_state.end_transmit(self.client.get(), acked, returncode);
     }
 
     fn receive_frame(&self,
@@ -855,6 +830,6 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
         for rx_state in self.rx_states.iter() {
             rx_state.end_receive(None, ReturnCode::FAIL);
         }
-        self.tx_state.end_transmit(false, ReturnCode::FAIL);
+        self.tx_state.end_transmit(self.client.get(), false, ReturnCode::FAIL);
     }
 }
