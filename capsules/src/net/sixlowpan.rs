@@ -111,8 +111,6 @@ use net::sixlowpan_compression;
 use net::sixlowpan_compression::{ContextStore, is_lowpan};
 use net::util::{slice_to_u16, u16_to_slice};
 
-// Timer fire rate in seconds
-const TIMER_RATE: usize = 10;
 // Reassembly timeout in seconds
 const FRAG_TIMEOUT: u32 = 60;
 
@@ -121,7 +119,7 @@ pub trait ReceiveClient {
 }
 
 pub trait TransmitClient {
-    fn send_done(&self, buf: &'static mut [u8], state: &TxState, acked: bool, result: ReturnCode);
+    fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode);
 }
 
 pub mod lowpan_frag {
@@ -171,7 +169,8 @@ fn is_fragment(packet: &[u8]) -> bool {
 /// This struct tracks the per-client transmit state for a single IPv6 packet.
 /// The Sixlowpan struct maintains a list of TxState structs, sending each in
 /// order.
-pub struct TxState<'a> {
+pub struct TxState {
+    // State for a single transmission
     packet: TakeCell<'static, [u8]>,
     src_pan: Cell<PanID>,
     dst_pan: Cell<PanID>,
@@ -183,22 +182,19 @@ pub struct TxState<'a> {
     dgram_offset: Cell<usize>,
     fragment: Cell<bool>,
     compress: Cell<bool>,
+
+    // Global transmit state
+    tx_dgram_tag: Cell<u16>,
+    tx_busy: Cell<bool>, // TODO: Can remove?
+    tx_buf: TakeCell<'static, [u8]>,
     client: Cell<Option<&'static TransmitClient>>,
-
-    next: ListLink<'a, TxState<'a>>,
 }
 
-impl<'a> ListNode<'a, TxState<'a>> for TxState<'a> {
-    fn next(&'a self) -> &'a ListLink<TxState<'a>> {
-        &self.next
-    }
-}
-
-impl<'a> TxState<'a> {
+impl TxState {
     /// TxState::new
     /// ------------
     /// This constructs a new, default TxState struct.
-    pub fn new() -> TxState<'a> {
+    pub fn new(tx_buf: &'static mut [u8]) -> TxState {
         TxState {
             packet: TakeCell::empty(),
             src_pan: Cell::new(0),
@@ -211,16 +207,12 @@ impl<'a> TxState<'a> {
             dgram_offset: Cell::new(0),
             fragment: Cell::new(false),
             compress: Cell::new(false),
-            client: Cell::new(None),
-            next: ListLink::empty(),
-        }
-    }
 
-    /// TxState::set_transmit_client
-    /// ----------------------------
-    /// Sets the TransmitClient callback field of the respective TxState struct.
-    pub fn set_transmit_client(&self, client: &'static TransmitClient) {
-        self.client.set(Some(client));
+            tx_dgram_tag: Cell::new(0),
+            tx_busy: Cell::new(false),
+            tx_buf: TakeCell::new(tx_buf),
+            client: Cell::new(None),
+        }
     }
 
     fn is_transmit_done(&self) -> bool {
@@ -404,7 +396,7 @@ impl<'a> TxState<'a> {
             // transmission completes.
             self.packet
                 .take()
-                .map(|packet| { client.send_done(packet, self, acked, result); })
+                .map(|packet| { client.send_done(packet, acked, result); })
                 .expect("Error: `packet` is None in call to end_transmit.");
         });
     }
@@ -561,10 +553,7 @@ pub struct Sixlowpan<'a, A: time::Alarm + 'a> {
     clock: &'a A,
 
     // Transmit state
-    tx_states: List<'a, TxState<'a>>,
-    tx_dgram_tag: Cell<u16>,
-    tx_busy: Cell<bool>,
-    tx_buf: TakeCell<'static, [u8]>,
+    tx_state: &'a TxState,
 
     // Receive state
     rx_states: List<'a, RxState<'a>>,
@@ -575,24 +564,17 @@ pub struct Sixlowpan<'a, A: time::Alarm + 'a> {
 #[allow(unused_must_use)]
 impl<'a, A: time::Alarm> TxClient for Sixlowpan<'a, A> {
     fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
-        if result != ReturnCode::SUCCESS {
+        // If we are done sending the entire packet, or if the transmit failed,
+        // end the transmit state and issue callbacks.
+        if result != ReturnCode::SUCCESS || self.tx_state.is_transmit_done() {
             self.end_packet_transmit(tx_buf, acked, result);
-        } else if let Some(head) = self.tx_states.head() {
-            if head.is_transmit_done() {
-                // This must return Some if we are in the closure - in particular,
-                // tx_state == head
-                self.end_packet_transmit(tx_buf, acked, result);
-            } else {
-                // Otherwise, we found an error
-                let result = head.prepare_transmit_next_fragment(tx_buf, self.radio);
-                result.map_err(|(retcode, tx_buf)| {
-                    // On error abort the transmission
-                    self.end_packet_transmit(tx_buf, acked, retcode);
-                });
-            }
+        // Otherwise, send next fragment
         } else {
-            // Is this state possible?
-            self.tx_buf.replace(tx_buf);
+            let result = self.tx_state.prepare_transmit_next_fragment(tx_buf, self.radio);
+            result.map_err(|(retcode, tx_buf)| {
+                // If we have an error, abort
+                self.end_packet_transmit(tx_buf, acked, retcode);
+            });
         }
     }
 }
@@ -624,7 +606,7 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
     /// This function initializes and returns a new Sixlowpan struct.
     pub fn new(radio: &'a Mac<'a>,
                ctx_store: &'a ContextStore,
-               tx_buf: &'static mut [u8],
+               tx_state: &'a TxState,
                clock: &'a A)
                -> Sixlowpan<'a, A> {
         Sixlowpan {
@@ -632,10 +614,12 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
             ctx_store: ctx_store,
             clock: clock,
 
-            tx_states: List::new(),
+            tx_state: tx_state,
+            /*
             tx_dgram_tag: Cell::new(0),
             tx_busy: Cell::new(false),
             tx_buf: TakeCell::new(tx_buf),
+            */
 
             rx_states: List::new(),
             rx_client: Cell::new(None),
@@ -662,6 +646,14 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
         self.rx_client.set(Some(client));
     }
 
+    /// Sixlowpan::set_transmit_client
+    /// ------------------------------
+    /// This function sets the client to receive the callback when a packet
+    /// has finished transmitting. Since there is 
+    pub fn set_transmit_client(&self, client: &'static TransmitClient) {
+        self.tx_state.client.set(Some(client));
+    }
+
     /// Sixlowpan::transmit_packet
     /// --------------------------
     /// This function is called to send a fully-formed IPv6 packet. Arguments
@@ -673,86 +665,65 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
                            ip6_packet: &'static mut [u8],
                            ip6_packet_len: usize,
                            security: Option<(SecurityLevel, KeyId)>,
-                           tx_state: &'a TxState<'a>,
                            fragment: bool,
                            compress: bool)
                            -> Result<ReturnCode, ReturnCode> {
 
-        tx_state.init_transmit(src_mac_addr,
+        self.tx_state.init_transmit(src_mac_addr,
                                dst_mac_addr,
                                ip6_packet,
                                ip6_packet_len,
                                security,
                                fragment,
                                compress);
-        // Queue tx_state
-        self.tx_states.push_tail(tx_state);
-        if self.tx_busy.get() {
-            Ok(ReturnCode::SUCCESS)
+        // TODO: Lose buffer if busy
+        if self.tx_state.tx_busy.get() {
+            Err(ReturnCode::EBUSY)
         } else {
-            // Set as current state and start transmit
             self.start_packet_transmit();
             Ok(ReturnCode::SUCCESS)
         }
     }
 
     fn start_packet_transmit(&self) {
-        // Already transmitting
-        if self.tx_busy.get() {
+        // TODO:
+        // Already transmitting - this should never happen
+        if self.tx_state.tx_busy.get() {
             return;
         }
 
-        let dgram_tag = if (self.tx_dgram_tag.get() + 1) == 0 {
+        // Increment dgram_tag
+        let dgram_tag = if (self.tx_state.tx_dgram_tag.get() + 1) == 0 {
             1
         } else {
-            self.tx_dgram_tag.get() + 1
+            self.tx_state.tx_dgram_tag.get() + 1
         };
 
-        while self.tx_states.head().map_or(false, move |state| {
-            // We panic here, as it should never be the case that we start
-            // transmitting without the tx_buf, since the `tx_buf` is owned by
-            // the TxState struct and is passed to the radio during transmission.
-            // Failure to replace the `tx_buf` or failure to initialize TxState
-            // with a `tx_buf` represents a significant logic error, and we should
-            // panic.
-            let frag_buf = self.tx_buf
-                .take()
-                .expect("Error: `tx_buf` is None in call to start_packet_transmit.");
+        let frag_buf = self.tx_state.tx_buf
+            .take()
+            .expect("Error: `tx_buf` is None in call to start_packet_transmit.");
 
-            match state.start_transmit(dgram_tag, frag_buf, self.radio, self.ctx_store) {
-                // Successfully started transmitting
-                Ok(_) => {
-                    self.tx_dgram_tag.set(dgram_tag);
-                    self.tx_busy.set(true);
-                    // Break out of loop
-                    false
-                }
-                // Otherwise, if we failed to start transmitting, so attempt
-                // to send the next TxState
-                Err((returncode, new_frag_buf)) => {
-                    // Must replace the `tx_buf`, otherwise will panic on next
-                    // iteration
-                    self.tx_buf.replace(new_frag_buf);
-                    // Issue error callbacks and remove TxState from the list
-                    self.tx_states.pop_head().map(|head| { head.end_transmit(false, returncode); });
-                    // Continue loop
-                    true
-                }
+        match self.tx_state.start_transmit(dgram_tag, frag_buf, self.radio, self.ctx_store) {
+            // Successfully started transmitting
+            Ok(_) => {
+                self.tx_state.tx_dgram_tag.set(dgram_tag);
+                self.tx_state.tx_busy.set(true);
             }
-        }) {}
+            // Otherwise, we failed
+            Err((returncode, new_frag_buf)) => {
+                self.tx_state.tx_buf.replace(new_frag_buf);
+                self.tx_state.end_transmit(false, returncode);
+            }
+        }
     }
 
     // This function ends the current packet transmission state, and starts
     // sending the next queued packet before calling the current callback.
     fn end_packet_transmit(&self, tx_buf: &'static mut [u8], acked: bool, returncode: ReturnCode) {
-        self.tx_busy.set(false);
-        self.tx_buf.replace(tx_buf);
-        // Note that tx_state can be None if a disassociation event occurred,
-        // in which case end_transmit was already called.
-        self.tx_states.pop_head().map(|tx_state| {
-            self.start_packet_transmit();
-            tx_state.end_transmit(acked, returncode);
-        });
+        self.tx_state.tx_busy.set(false);
+        self.tx_state.tx_buf.replace(tx_buf);
+        // TODO: Consider disassociation event case
+        self.tx_state.end_transmit(acked, returncode);
     }
 
     fn receive_frame(&self,
@@ -884,8 +855,6 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
         for rx_state in self.rx_states.iter() {
             rx_state.end_receive(None, ReturnCode::FAIL);
         }
-        for tx_state in self.tx_states.iter() {
-            tx_state.end_transmit(false, ReturnCode::FAIL);
-        }
+        self.tx_state.end_transmit(false, ReturnCode::FAIL);
     }
 }

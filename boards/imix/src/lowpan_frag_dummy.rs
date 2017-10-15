@@ -159,7 +159,7 @@ pub struct LowpanTest<'a, A: time::Alarm + 'a, T: time::Alarm + 'a> {
     radio: &'a mac::Mac<'a>,
     alarm: &'a A,
     frag_state: &'a Sixlowpan<'a, T>,
-    tx_state: &'a TxState<'a>,
+    tx_state: &'a TxState,
     test_counter: Cell<usize>,
 }
 
@@ -177,8 +177,8 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
                                        }));
 
     let default_tx_state = static_init!(
-        capsules::net::sixlowpan::TxState<'static>,
-        capsules::net::sixlowpan::TxState::new()
+        capsules::net::sixlowpan::TxState,
+        capsules::net::sixlowpan::TxState::new(&mut RADIO_BUF_TMP)
         );
 
     let default_rx_state = static_init!(
@@ -196,7 +196,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         capsules::net::sixlowpan::Sixlowpan::new(
             radio_mac,
             dummy_ctx_store as &'static capsules::net::sixlowpan_compression::ContextStore,
-            &mut RADIO_BUF_TMP,
+            default_tx_state,
             &sam4l::ast::AST)
         );
 
@@ -215,7 +215,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     );
 
     frag_state.set_receive_client(lowpan_frag_test);
-    default_tx_state.set_transmit_client(lowpan_frag_test);
+    frag_state.set_transmit_client(lowpan_frag_test);
     frag_dummy_alarm.set_client(lowpan_frag_test);
 
     lowpan_frag_test
@@ -224,7 +224,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 impl<'a, A: time::Alarm, T: time::Alarm + 'a> LowpanTest<'a, A, T> {
     pub fn new(radio: &'a mac::Mac<'a>,
                frag_state: &'a Sixlowpan<'a, T>,
-               tx_state: &'a TxState<'a>,
+               tx_state: &'a TxState,
                alarm: &'a A)
                -> LowpanTest<'a, A, T> {
         LowpanTest {
@@ -394,14 +394,12 @@ impl<'a, A: time::Alarm, T: time::Alarm + 'a> LowpanTest<'a, A, T> {
                                src_mac_addr: MacAddress,
                                dst_mac_addr: MacAddress) {
         let frag_state = self.frag_state;
-        let tx_state = self.tx_state;
         //frag_state.radio.config_set_pan(0xABCD);
         let ret_code = frag_state.transmit_packet(src_mac_addr,
                                                   dst_mac_addr,
                                                   &mut IP6_DGRAM,
                                                   IP6_DGRAM.len(),
                                                   None,
-                                                  tx_state,
                                                   true,
                                                   true);
         debug!("Ret code: {:?}", ret_code);
@@ -415,7 +413,7 @@ impl<'a, A: time::Alarm, T: time::Alarm + 'a> time::Client for LowpanTest<'a, A,
 }
 
 impl<'a, A: time::Alarm, T: time::Alarm + 'a> TransmitClient for LowpanTest<'a, A, T> {
-    fn send_done(&self, _: &'static mut [u8], _: &TxState, _: bool, _: ReturnCode) {
+    fn send_done(&self, _: &'static mut [u8], _: bool, _: ReturnCode) {
         debug!("Send completed");
         self.schedule_next();
     }
