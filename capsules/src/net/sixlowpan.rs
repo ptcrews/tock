@@ -107,8 +107,8 @@ use kernel::hil::time;
 use kernel::hil::time::Frequency;
 use net::frag_utils::Bitmap;
 use net::ieee802154::{PanID, MacAddress, SecurityLevel, KeyId, Header};
-use net::lowpan;
-use net::lowpan::{ContextStore, is_lowpan};
+use net::sixlowpan_compression;
+use net::sixlowpan_compression::{ContextStore, is_lowpan};
 use net::util::{slice_to_u16, u16_to_slice};
 
 // Timer fire rate in seconds
@@ -286,7 +286,7 @@ impl<'a> TxState<'a> {
         // fragment. This is consistent with RFC 6282.
         let mut lowpan_packet = [0 as u8; radio::MAX_FRAME_SIZE as usize];
         let (consumed, written) = if self.compress.get() {
-            let lowpan_result = lowpan::compress(ctx_store,
+            let lowpan_result = sixlowpan_compression::compress(ctx_store,
                                                  &ip6_packet,
                                                  self.src_mac_addr.get(),
                                                  self.dst_mac_addr.get(),
@@ -492,7 +492,7 @@ impl<'a> RxState<'a> {
                           -> Result<bool, ReturnCode> {
         let mut packet = self.packet.take().ok_or(ReturnCode::ENOMEM)?;
         let uncompressed_len = if dgram_offset == 0 {
-            let (consumed, written) = lowpan::decompress(ctx_store,
+            let (consumed, written) = sixlowpan_compression::decompress(ctx_store,
                                                          &payload[0..payload_len as usize],
                                                          self.src_mac_addr.get(),
                                                          self.dst_mac_addr.get(),
@@ -806,7 +806,7 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
                     .expect("Error: `packet` in RxState struct is `None` \
                             in call to `receive_single_packet`.");
                 if is_lowpan(payload) {
-                    let decompressed = lowpan::decompress(self.ctx_store,
+                    let decompressed = sixlowpan_compression::decompress(self.ctx_store,
                                                           &payload[0..payload_len as usize],
                                                           src_mac_addr,
                                                           dst_mac_addr,
