@@ -17,13 +17,13 @@
 //! frames will prevent the test from completing successfully.
 //!
 //! To use this test suite, allocate space for a new LowpanTest structure, and
-//! set it as the client for the FragState struct and for the respective TxState
+//! set it as the client for the Sixlowpan struct and for the respective TxState
 //! struct. For the transmit side, call the LowpanTest::start method. The
 //! `initialize_all` function performs this initialization; simply call this
 //! function in `boards/imix/src/main.rs` as follows:
 //!
 //! Alternatively, you can call the `initialize_all` function, which performs
-//! the initialization routines for the 6LoWPAN, TxState, RxState, and FragState
+//! the initialization routines for the 6LoWPAN, TxState, RxState, and Sixlowpan
 //! structs. Insert the code into `boards/imix/src/main.rs` as follows:
 //!
 //! ...
@@ -44,7 +44,7 @@ use capsules::ieee802154::mac;
 use capsules::ieee802154::mac::Mac;
 use capsules::net::ieee802154::MacAddress;
 use capsules::net::ip::{IP6Header, IPAddr, ip6_nh};
-use capsules::net::sixlowpan::{FragState, TxState, TransmitClient, ReceiveClient};
+use capsules::net::sixlowpan::{Sixlowpan, TxState, TransmitClient, ReceiveClient};
 use capsules::net::sixlowpan_compression;
 use capsules::net::sixlowpan_compression::{ContextStore, Context};
 use capsules::net::util;
@@ -158,7 +158,7 @@ pub const TEST_LOOP: bool = false;
 pub struct LowpanTest<'a, A: time::Alarm + 'a> {
     radio: &'a mac::Mac<'a>,
     alarm: &'a A,
-    frag_state: &'a FragState<'a, A>,
+    frag_state: &'a Sixlowpan<'a, A>,
     tx_state: &'a TxState<'a>,
     test_counter: Cell<usize>,
 }
@@ -196,9 +196,9 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         );
 
     let frag_state = static_init!(
-        capsules::net::sixlowpan::FragState<'static,
+        capsules::net::sixlowpan::Sixlowpan<'static,
         VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
-        capsules::net::sixlowpan::FragState::new(
+        capsules::net::sixlowpan::Sixlowpan::new(
             radio_mac,
             dummy_ctx_store as &'static capsules::net::sixlowpan_compression::ContextStore,
             &mut RADIO_BUF_TMP,
@@ -229,7 +229,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 
 impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
     pub fn new(radio: &'a mac::Mac<'a>,
-               frag_state: &'a FragState<'a, A>,
+               frag_state: &'a Sixlowpan<'a, A>,
                tx_state: &'a TxState<'a>,
                alarm: &'a A)
                -> LowpanTest<'a, A> {

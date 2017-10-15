@@ -20,32 +20,32 @@
 //! ------
 //! At a high level, this layer exposes a transmit and receive functionality
 //! that takes IPv6 packets and converts them into chunks that are passed to
-//! the 802.15.4 MAC layer. The FragState struct represents the global
+//! the 802.15.4 MAC layer. The Sixlowpan struct represents the global
 //! transmission state, and contains tag information, queued TxState structs,
 //! and in-process RxState structs. In order for a client to send via this
 //! interface, it must supply a TxState struct, the IPv6 packet, and arguments
 //! relating to lower layers. This layer then fragments and compresses the
 //! packet if necessary, then transmits it over a Mac-layer device. In order
 //! for a packet to be received, the client must call set_receive_client
-//! on the FragState struct. Currently, there is a single, global receive
+//! on the Sixlowpan struct. Currently, there is a single, global receive
 //! client that receives callbacks for all reassembled packets (unlike for
 //! the transmit path, where each TxState struct contains a separate client).
-//! The FragState struct contains a list of RxState structs which are statically
+//! The Sixlowpan struct contains a list of RxState structs which are statically
 //! allocated and added to the list; these structs represent the number of
 //! concurrent reassembly operations that can be in progress at the same time.
 //!
-//! This layer adds several new structs, FragState, TxState, and RxState,
+//! This layer adds several new structs, Sixlowpan, TxState, and RxState,
 //! as well as interfaces for them.
 //!
-//! FragState:
+//! Sixlowpan:
 //! - Methods:
-//! -- new(..): Initializes a new FragState struct
+//! -- new(..): Initializes a new Sixlowpan struct
 //! -- transmit_packet(..): Transmits the given IPv6 packet, using the provided
 //!      TxState struct to track its progress, fragmenting if necessary
 //! -- set_receive_client(..): Sets the global receive client, which receives
 //!      a callback whenever a packet is fully reassembled
 //!
-//! The FragState struct represents a single, global struct that tracks the state
+//! The Sixlowpan struct represents a single, global struct that tracks the state
 //! of transmission and reception for the various clients. This struct manages
 //! global state, including references to the radio and lowpan structs, along
 //! with lists of TxStates and RxStates, buffers, and various other state.
@@ -69,11 +69,11 @@
 //! The RxState struct contains information relating to packet reception and
 //! reassembly. Unlike with the TxState structs, there is no concept of
 //! individual clients "owning" these structs; instead, some number of RxStates
-//! are statically allocated and added to the FragState's RxState list. These
+//! are statically allocated and added to the Sixlowpan's RxState list. These
 //! states are then used to keep track of different reassembly flows; the
 //! number of simultaneous packet receptions is dependent on the number of
 //! allocated RxState structs. When a packet is fully reassembled, the global
-//! receive client inside FragState receives a callback.
+//! receive client inside Sixlowpan receives a callback.
 //!
 //! In addition to structs and their methods, this layer also defines several
 //! traits for the transmit and receive callbacks.
@@ -169,7 +169,7 @@ fn is_fragment(packet: &[u8]) -> bool {
 /// struct TxState
 /// --------------
 /// This struct tracks the per-client transmit state for a single IPv6 packet.
-/// The FragState struct maintains a list of TxState structs, sending each in
+/// The Sixlowpan struct maintains a list of TxState structs, sending each in
 /// order.
 pub struct TxState<'a> {
     packet: TakeCell<'static, [u8]>,
@@ -414,7 +414,7 @@ impl<'a> TxState<'a> {
 /// --------------
 /// This struct tracks the reassembly process for a given packet. The `busy`
 /// field marks whether the particular RxState is currently reassembling a
-/// packet or if it is currently free. The FragState struct maintains a list of
+/// packet or if it is currently free. The Sixlowpan struct maintains a list of
 /// RxState structs, which represents the number of packets that can be
 /// concurrently reassembled.
 pub struct RxState<'a> {
@@ -539,11 +539,11 @@ impl<'a> RxState<'a> {
     }
 }
 
-/// struct FragState
+/// struct Sixlowpan
 /// ----------------
 /// This struct tracks the global sending/receiving state, and contains the
 /// lists of RxStates and TxStates.
-pub struct FragState<'a, A: time::Alarm + 'a> {
+pub struct Sixlowpan<'a, A: time::Alarm + 'a> {
     pub radio: &'a Mac<'a>,
     ctx_store: &'a ContextStore,
     alarm: &'a A,
@@ -561,7 +561,7 @@ pub struct FragState<'a, A: time::Alarm + 'a> {
 
 // This function is called after transmitting a frame
 #[allow(unused_must_use)]
-impl<'a, A: time::Alarm> TxClient for FragState<'a, A> {
+impl<'a, A: time::Alarm> TxClient for Sixlowpan<'a, A> {
     fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         if result != ReturnCode::SUCCESS {
             self.end_packet_transmit(tx_buf, acked, result);
@@ -586,7 +586,7 @@ impl<'a, A: time::Alarm> TxClient for FragState<'a, A> {
 }
 
 // This function is called after receiving a frame
-impl<'a, A: time::Alarm> RxClient for FragState<'a, A> {
+impl<'a, A: time::Alarm> RxClient for Sixlowpan<'a, A> {
     fn receive<'b>(&self, buf: &'b [u8], header: Header<'b>, data_offset: usize, data_len: usize) {
         // We return if retcode is not valid, as it does not make sense to issue
         // a callback for an invalid frame reception
@@ -606,7 +606,7 @@ impl<'a, A: time::Alarm> RxClient for FragState<'a, A> {
     }
 }
 
-impl<'a, A: time::Alarm> time::Client for FragState<'a, A> {
+impl<'a, A: time::Alarm> time::Client for Sixlowpan<'a, A> {
     fn fired(&self) {
         // Timeout any expired rx_states
         for state in self.rx_states.iter() {
@@ -621,16 +621,16 @@ impl<'a, A: time::Alarm> time::Client for FragState<'a, A> {
     }
 }
 
-impl<'a, A: time::Alarm> FragState<'a, A> {
-    /// FragState::new
+impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
+    /// Sixlowpan::new
     /// --------------
-    /// This function initializes and returns a new FragState struct.
+    /// This function initializes and returns a new Sixlowpan struct.
     pub fn new(radio: &'a Mac<'a>,
                ctx_store: &'a ContextStore,
                tx_buf: &'static mut [u8],
                alarm: &'a A)
-               -> FragState<'a, A> {
-        FragState {
+               -> Sixlowpan<'a, A> {
+        Sixlowpan {
             radio: radio,
             ctx_store: ctx_store,
             alarm: alarm,
@@ -651,17 +651,17 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
         self.alarm.set_alarm(next);
     }
 
-    /// FragState::add_rx_state
+    /// Sixlowpan::add_rx_state
     /// -----------------------
     /// This function prepends the passed in RxState struct to the list of
-    /// RxStates maintained by the FragState struct. For the current use cases,
+    /// RxStates maintained by the Sixlowpan struct. For the current use cases,
     /// some number of RxStates are statically allocated and immediately
     /// added to the list of RxStates.
     pub fn add_rx_state(&self, rx_state: &'a RxState<'a>) {
         self.rx_states.push_head(rx_state);
     }
 
-    /// FragState::set_receive_client
+    /// Sixlowpan::set_receive_client
     /// -----------------------------
     /// This function sets the client to receive the callback when a packet
     /// has been fully reassembled. In the current design, the concept of a
@@ -671,7 +671,7 @@ impl<'a, A: time::Alarm> FragState<'a, A> {
         self.rx_client.set(Some(client));
     }
 
-    /// FragState::transmit_packet
+    /// Sixlowpan::transmit_packet
     /// --------------------------
     /// This function is called to send a fully-formed IPv6 packet. Arguments
     /// to this function are used to determine various aspects of the MAC

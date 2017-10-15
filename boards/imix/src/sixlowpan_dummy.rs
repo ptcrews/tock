@@ -403,7 +403,7 @@ unsafe fn send_ipv6_packet<'a>(radio: &'a Radio,
             compress: true,
         },
     };
-    //let frag_state = FragState::new(radio, &lowpan, TX_BUF, &self.alarm);
+    //let frag_state = Sixlowpan::new(radio, &lowpan, TX_BUF, &self.alarm);
     let (consumed, written) =
         sixlowpan_compression::compress(&store,
                          &ip6_datagram,
