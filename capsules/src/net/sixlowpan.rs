@@ -126,6 +126,11 @@ pub mod lowpan_frag {
     pub const FRAGN_HDR_SIZE: usize = 5;
 }
 
+pub enum TransmitState {
+    Idle { tx_buf: &'static [u8] },
+    Transmitting { packet: &'static [u8] }
+}
+
 fn set_frag_hdr(dgram_size: u16,
                 dgram_tag: u16,
                 dgram_offset: usize,
@@ -184,6 +189,8 @@ pub struct TxState {
     tx_dgram_tag: Cell<u16>,
     tx_busy: Cell<bool>, // TODO: Can remove?
     tx_buf: TakeCell<'static, [u8]>,
+
+    //state: MapCell<TransmitState>,
 }
 
 impl TxState {
@@ -207,6 +214,8 @@ impl TxState {
             tx_dgram_tag: Cell::new(0),
             tx_busy: Cell::new(false),
             tx_buf: TakeCell::new(tx_buf),
+
+            //state: MapCell::new(TransmitState::Idle { tx_buf: tx_buf),
         }
     }
 
@@ -383,7 +392,14 @@ impl TxState {
         }
     }
 
-    fn end_transmit(&self, client: Option<&'static SixlowpanClient>, acked: bool, result: ReturnCode) {
+    fn end_transmit(&self,
+                    tx_buf: &'static mut [u8],
+                    client: Option<&'static SixlowpanClient>,
+                    acked: bool,
+                    result: ReturnCode) {
+
+        self.tx_busy.set(false);
+        self.tx_buf.replace(tx_buf);
         client.map(move |client| {
             // The packet here should always be valid, as we borrow the packet
             // from the upper layer for the duration of the transmission. It
@@ -561,13 +577,13 @@ impl<'a, A: time::Alarm> TxClient for Sixlowpan<'a, A> {
         // If we are done sending the entire packet, or if the transmit failed,
         // end the transmit state and issue callbacks.
         if result != ReturnCode::SUCCESS || self.tx_state.is_transmit_done() {
-            self.end_packet_transmit(tx_buf, acked, result);
+            self.tx_state.end_transmit(tx_buf, self.client.get(), acked, result);
         // Otherwise, send next fragment
         } else {
             let result = self.tx_state.prepare_transmit_next_fragment(tx_buf, self.radio);
             result.map_err(|(retcode, tx_buf)| {
                 // If we have an error, abort
-                self.end_packet_transmit(tx_buf, acked, retcode);
+                self.tx_state.end_transmit(tx_buf, self.client.get(), acked, retcode);
             });
         }
     }
@@ -686,19 +702,9 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
             }
             // Otherwise, we failed
             Err((returncode, new_frag_buf)) => {
-                self.tx_state.tx_buf.replace(new_frag_buf);
-                self.tx_state.end_transmit(self.client.get(), false, returncode);
+                self.tx_state.end_transmit(new_frag_buf, self.client.get(), false, returncode);
             }
         }
-    }
-
-    // This function ends the current packet transmission state, and starts
-    // sending the next queued packet before calling the current callback.
-    fn end_packet_transmit(&self, tx_buf: &'static mut [u8], acked: bool, returncode: ReturnCode) {
-        self.tx_state.tx_busy.set(false);
-        self.tx_state.tx_buf.replace(tx_buf);
-        // TODO: Consider disassociation event case
-        self.tx_state.end_transmit(self.client.get(), acked, returncode);
     }
 
     fn receive_frame(&self,
@@ -830,6 +836,8 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
         for rx_state in self.rx_states.iter() {
             rx_state.end_receive(None, ReturnCode::FAIL);
         }
-        self.tx_state.end_transmit(self.client.get(), false, ReturnCode::FAIL);
+        // TODO: May lose tx_buf here
+        // TODO: Need to get buffer back from Mac layer on disassociation
+        //self.tx_state.end_transmit(self.client.get(), false, ReturnCode::FAIL);
     }
 }
