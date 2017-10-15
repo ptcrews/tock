@@ -114,7 +114,7 @@ use net::util::{slice_to_u16, u16_to_slice};
 // Timer fire rate in seconds
 const TIMER_RATE: usize = 10;
 // Reassembly timeout in seconds
-const FRAG_TIMEOUT: usize = 60;
+const FRAG_TIMEOUT: u32 = 60;
 
 pub trait ReceiveClient {
     fn receive<'a>(&self, buf: &'a [u8], len: u16, result: ReturnCode);
@@ -425,7 +425,7 @@ pub struct RxState<'a> {
     dgram_tag: Cell<u16>,
     dgram_size: Cell<u16>,
     busy: Cell<bool>,
-    timeout_counter: Cell<usize>,
+    start_time: Cell<u32>,
 
     next: ListLink<'a, RxState<'a>>,
 }
@@ -449,7 +449,7 @@ impl<'a> RxState<'a> {
             dgram_tag: Cell::new(0),
             dgram_size: Cell::new(0),
             busy: Cell::new(false),
-            timeout_counter: Cell::new(0),
+            start_time: Cell::new(0),
             next: ListLink::empty(),
         }
     }
@@ -466,18 +466,30 @@ impl<'a> RxState<'a> {
         (self.dst_mac_addr.get() == dst_mac_addr)
     }
 
+    // Checks if a given RxState is free or expired (and thus, can be freed).
+    // This function implements the reassembly timeout for 6LoWPAN lazily.
+    fn is_busy(&self, frequency: u32, current_time: u32) -> bool {
+        let expired = current_time >= (self.start_time.get()
+                                        + FRAG_TIMEOUT * frequency); 
+        if expired {
+            self.end_receive(None, ReturnCode::FAIL);
+        }
+        self.busy.get()
+    }
+
     fn start_receive(&self,
                      src_mac_addr: MacAddress,
                      dst_mac_addr: MacAddress,
                      dgram_size: u16,
-                     dgram_tag: u16) {
+                     dgram_tag: u16,
+                     current_tics: u32) {
         self.dst_mac_addr.set(dst_mac_addr);
         self.src_mac_addr.set(src_mac_addr);
         self.dgram_tag.set(dgram_tag);
         self.dgram_size.set(dgram_size);
         self.busy.set(true);
         self.bitmap.map(|bitmap| bitmap.clear());
-        self.timeout_counter.set(0);
+        self.start_time.set(current_tics);
     }
 
     // This function assumes that the payload is a slice starting from the
@@ -526,7 +538,7 @@ impl<'a> RxState<'a> {
     fn end_receive(&self, client: Option<&'static ReceiveClient>, result: ReturnCode) {
         self.busy.set(false);
         self.bitmap.map(|bitmap| bitmap.clear());
-        self.timeout_counter.set(0);
+        self.start_time.set(0);
         client.map(move |client| {
             // Since packet is borrowed from the upper layer, failing to return it
             // in the callback represents a significant error that should never
@@ -546,7 +558,7 @@ impl<'a> RxState<'a> {
 pub struct Sixlowpan<'a, A: time::Alarm + 'a> {
     pub radio: &'a Mac<'a>,
     ctx_store: &'a ContextStore,
-    alarm: &'a A,
+    clock: &'a A,
 
     // Transmit state
     tx_states: List<'a, TxState<'a>>,
@@ -606,21 +618,6 @@ impl<'a, A: time::Alarm> RxClient for Sixlowpan<'a, A> {
     }
 }
 
-impl<'a, A: time::Alarm> time::Client for Sixlowpan<'a, A> {
-    fn fired(&self) {
-        // Timeout any expired rx_states
-        for state in self.rx_states.iter() {
-            if state.busy.get() {
-                state.timeout_counter.set(state.timeout_counter.get() + TIMER_RATE);
-                if state.timeout_counter.get() >= FRAG_TIMEOUT {
-                    state.end_receive(self.rx_client.get(), ReturnCode::FAIL);
-                }
-            }
-        }
-        self.schedule_next_timer();
-    }
-}
-
 impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
     /// Sixlowpan::new
     /// --------------
@@ -628,12 +625,12 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
     pub fn new(radio: &'a Mac<'a>,
                ctx_store: &'a ContextStore,
                tx_buf: &'static mut [u8],
-               alarm: &'a A)
+               clock: &'a A)
                -> Sixlowpan<'a, A> {
         Sixlowpan {
             radio: radio,
             ctx_store: ctx_store,
-            alarm: alarm,
+            clock: clock,
 
             tx_states: List::new(),
             tx_dgram_tag: Cell::new(0),
@@ -643,12 +640,6 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
             rx_states: List::new(),
             rx_client: Cell::new(None),
         }
-    }
-
-    pub fn schedule_next_timer(&self) {
-        let seconds = A::Frequency::frequency() * (TIMER_RATE as u32);
-        let next = self.alarm.now().wrapping_add(seconds);
-        self.alarm.set_alarm(next);
     }
 
     /// Sixlowpan::add_rx_state
@@ -795,9 +786,10 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
                              src_mac_addr: MacAddress,
                              dst_mac_addr: MacAddress)
                              -> (Option<&RxState<'a>>, ReturnCode) {
-        let rx_state = self.rx_states.iter().find(|state| !state.busy.get());
+        let rx_state = self.rx_states.iter().find(|state|
+                                                  !state.is_busy(self.clock.now(), A::Frequency::frequency()));
         rx_state.map(|state| {
-                state.start_receive(src_mac_addr, dst_mac_addr, payload_len as u16, 0);
+                state.start_receive(src_mac_addr, dst_mac_addr, payload_len as u16, 0, self.clock.now());
                 // The packet buffer should *always* be there; in particular,
                 // since this state is not busy, it must have the packet buffer.
                 // Otherwise, we are in an inconsistent state and can fail.
@@ -844,15 +836,18 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
                         dgram_tag: u16,
                         dgram_offset: usize)
                         -> (Option<&RxState<'a>>, ReturnCode) {
+        // First try to find an rx_state in the middle of assembly
         let mut rx_state = self.rx_states
             .iter()
             .find(|state| state.is_my_fragment(src_mac_addr, dst_mac_addr, dgram_size, dgram_tag));
 
+        // Else find a free state
         if rx_state.is_none() {
-            rx_state = self.rx_states.iter().find(|state| !state.busy.get());
+            rx_state = self.rx_states.iter().find(|state|
+                                                  !state.is_busy(self.clock.now(), A::Frequency::frequency()));
             // Initialize new state
             rx_state.map(|state| {
-                state.start_receive(src_mac_addr, dst_mac_addr, dgram_size, dgram_tag)
+                state.start_receive(src_mac_addr, dst_mac_addr, dgram_size, dgram_tag, self.clock.now())
             });
             if rx_state.is_none() {
                 return (None, ReturnCode::ENOMEM);

@@ -155,10 +155,10 @@ enum DAC {
 pub const TEST_DELAY_MS: u32 = 10000;
 pub const TEST_LOOP: bool = false;
 
-pub struct LowpanTest<'a, A: time::Alarm + 'a> {
+pub struct LowpanTest<'a, A: time::Alarm + 'a, T: time::Alarm + 'a> {
     radio: &'a mac::Mac<'a>,
     alarm: &'a A,
-    frag_state: &'a Sixlowpan<'a, A>,
+    frag_state: &'a Sixlowpan<'a, T>,
     tx_state: &'a TxState<'a>,
     test_counter: Cell<usize>,
 }
@@ -166,7 +166,8 @@ pub struct LowpanTest<'a, A: time::Alarm + 'a> {
 pub unsafe fn initialize_all(radio_mac: &'static Mac,
                       mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
         -> &'static LowpanTest<'static,
-        capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {
+        capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>,
+        sam4l::ast::Ast<'static>> {
     let dummy_ctx_store = static_init!(DummyStore,
                                        DummyStore::new(capsules::net::sixlowpan_compression::Context {
                                            prefix: DEFAULT_CTX_PREFIX,
@@ -185,24 +186,18 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         capsules::net::sixlowpan::RxState::new(&mut RX_STATE_BUF)
         );
 
-    let frag_state_alarm = static_init!(
-        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
-        VirtualMuxAlarm::new(mux_alarm)
-        );
-
     let frag_dummy_alarm = static_init!(
         VirtualMuxAlarm<'static, sam4l::ast::Ast>,
         VirtualMuxAlarm::new(mux_alarm)
         );
 
     let frag_state = static_init!(
-        capsules::net::sixlowpan::Sixlowpan<'static,
-        VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+        capsules::net::sixlowpan::Sixlowpan<'static, sam4l::ast::Ast>,
         capsules::net::sixlowpan::Sixlowpan::new(
             radio_mac,
             dummy_ctx_store as &'static capsules::net::sixlowpan_compression::ContextStore,
             &mut RADIO_BUF_TMP,
-            frag_state_alarm)
+            &sam4l::ast::AST)
         );
 
     frag_state.add_rx_state(default_rx_state);
@@ -211,7 +206,8 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 
     let lowpan_frag_test = static_init!(
         LowpanTest<'static,
-        VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        sam4l::ast::Ast>,
         LowpanTest::new(radio_mac as &'static Mac,
                         frag_state,
                         default_tx_state,
@@ -220,19 +216,17 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 
     frag_state.set_receive_client(lowpan_frag_test);
     default_tx_state.set_transmit_client(lowpan_frag_test);
-    frag_state_alarm.set_client(frag_state);
     frag_dummy_alarm.set_client(lowpan_frag_test);
-    frag_state.schedule_next_timer();
 
     lowpan_frag_test
 }
 
-impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
+impl<'a, A: time::Alarm, T: time::Alarm + 'a> LowpanTest<'a, A, T> {
     pub fn new(radio: &'a mac::Mac<'a>,
-               frag_state: &'a Sixlowpan<'a, A>,
+               frag_state: &'a Sixlowpan<'a, T>,
                tx_state: &'a TxState<'a>,
                alarm: &'a A)
-               -> LowpanTest<'a, A> {
+               -> LowpanTest<'a, A, T> {
         LowpanTest {
             radio: radio,
             alarm: alarm,
@@ -414,20 +408,20 @@ impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
     }
 }
 
-impl<'a, A: time::Alarm + 'a> time::Client for LowpanTest<'a, A> {
+impl<'a, A: time::Alarm, T: time::Alarm + 'a> time::Client for LowpanTest<'a, A, T> {
     fn fired(&self) {
         self.run_test_and_increment();
     }
 }
 
-impl<'a, A: time::Alarm + 'a> TransmitClient for LowpanTest<'a, A> {
+impl<'a, A: time::Alarm, T: time::Alarm + 'a> TransmitClient for LowpanTest<'a, A, T> {
     fn send_done(&self, _: &'static mut [u8], _: &TxState, _: bool, _: ReturnCode) {
         debug!("Send completed");
         self.schedule_next();
     }
 }
 
-impl<'a, A: time::Alarm + 'a> ReceiveClient for LowpanTest<'a, A> {
+impl<'a, A: time::Alarm, T: time::Alarm + 'a> ReceiveClient for LowpanTest<'a, A, T> {
     fn receive<'b>(&self, buf: &'b [u8], len: u16, retcode: ReturnCode) {
         debug!("Receive completed: {:?}", retcode);
         let test_num = self.test_counter.get();
