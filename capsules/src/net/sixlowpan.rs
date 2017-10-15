@@ -549,7 +549,7 @@ pub struct Sixlowpan<'a, A: time::Alarm + 'a> {
     client: Cell<Option<&'static SixlowpanClient>>,
 
     // Transmit state
-    tx_state: &'a TxState,
+    tx_state: TxState,
     // Receive state
     rx_states: List<'a, RxState<'a>>,
 }
@@ -600,7 +600,7 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
     /// This function initializes and returns a new Sixlowpan struct.
     pub fn new(radio: &'a Mac<'a>,
                ctx_store: &'a ContextStore,
-               tx_state: &'a TxState,
+               tx_buf: &'static mut [u8],
                clock: &'a A)
                -> Sixlowpan<'a, A> {
         Sixlowpan {
@@ -609,7 +609,7 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
             clock: clock,
             client: Cell::new(None),
 
-            tx_state: tx_state,
+            tx_state: TxState::new(tx_buf),
             rx_states: List::new(),
         }
     }

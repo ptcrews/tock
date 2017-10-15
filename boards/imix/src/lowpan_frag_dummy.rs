@@ -44,7 +44,7 @@ use capsules::ieee802154::mac;
 use capsules::ieee802154::mac::Mac;
 use capsules::net::ieee802154::MacAddress;
 use capsules::net::ip::{IP6Header, IPAddr, ip6_nh};
-use capsules::net::sixlowpan::{Sixlowpan, TxState, SixlowpanClient};
+use capsules::net::sixlowpan::{Sixlowpan, SixlowpanClient};
 use capsules::net::sixlowpan_compression;
 use capsules::net::sixlowpan_compression::{ContextStore, Context};
 use capsules::net::util;
@@ -159,7 +159,6 @@ pub struct LowpanTest<'a, A: time::Alarm + 'a, T: time::Alarm + 'a> {
     radio: &'a mac::Mac<'a>,
     alarm: &'a A,
     frag_state: &'a Sixlowpan<'a, T>,
-    tx_state: &'a TxState,
     test_counter: Cell<usize>,
 }
 
@@ -176,11 +175,6 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
                                            compress: false,
                                        }));
 
-    let default_tx_state = static_init!(
-        capsules::net::sixlowpan::TxState,
-        capsules::net::sixlowpan::TxState::new(&mut RADIO_BUF_TMP)
-        );
-
     let default_rx_state = static_init!(
         capsules::net::sixlowpan::RxState<'static>,
         capsules::net::sixlowpan::RxState::new(&mut RX_STATE_BUF)
@@ -196,7 +190,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         capsules::net::sixlowpan::Sixlowpan::new(
             radio_mac,
             dummy_ctx_store as &'static capsules::net::sixlowpan_compression::ContextStore,
-            default_tx_state,
+            &mut RADIO_BUF_TMP,
             &sam4l::ast::AST)
         );
 
@@ -210,7 +204,6 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         sam4l::ast::Ast>,
         LowpanTest::new(radio_mac as &'static Mac,
                         frag_state,
-                        default_tx_state,
                         frag_dummy_alarm)
     );
 
@@ -223,14 +216,12 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 impl<'a, A: time::Alarm, T: time::Alarm + 'a> LowpanTest<'a, A, T> {
     pub fn new(radio: &'a mac::Mac<'a>,
                frag_state: &'a Sixlowpan<'a, T>,
-               tx_state: &'a TxState,
                alarm: &'a A)
                -> LowpanTest<'a, A, T> {
         LowpanTest {
             radio: radio,
             alarm: alarm,
             frag_state: frag_state,
-            tx_state: tx_state,
             test_counter: Cell::new(0),
         }
     }
