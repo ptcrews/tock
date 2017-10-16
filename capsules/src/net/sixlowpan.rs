@@ -660,28 +660,24 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
                            compress: bool)
                            -> Result<ReturnCode, ReturnCode> {
 
-        self.tx_state.init_transmit(src_mac_addr,
-                               dst_mac_addr,
-                               ip6_packet,
-                               ip6_packet_len,
-                               security,
-                               fragment,
-                               compress);
         // TODO: Lose buffer if busy
+        
         if self.tx_state.tx_busy.get() {
             Err(ReturnCode::EBUSY)
         } else {
+            self.tx_state.init_transmit(src_mac_addr,
+                                        dst_mac_addr,
+                                        ip6_packet,
+                                        ip6_packet_len,
+                                        security,
+                                        fragment,
+                                        compress);
             self.start_packet_transmit();
             Ok(ReturnCode::SUCCESS)
         }
     }
 
     fn start_packet_transmit(&self) {
-        // TODO:
-        // Already transmitting - this should never happen
-        if self.tx_state.tx_busy.get() {
-            return;
-        }
 
         // Increment dgram_tag
         let dgram_tag = if (self.tx_state.tx_dgram_tag.get() + 1) == 0 {
