@@ -594,7 +594,6 @@ impl<'a, A: time::Alarm> RxClient for Sixlowpan<'a, A> {
     fn receive<'b>(&self, buf: &'b [u8], header: Header<'b>, data_offset: usize, data_len: usize) {
         // We return if retcode is not valid, as it does not make sense to issue
         // a callback for an invalid frame reception
-        let data_offset = data_offset;
         // TODO: Handle the case where the addresses are None/elided - they
         // should not default to the zero address
         let src_mac_addr = header.src_addr.unwrap_or(MacAddress::Short(0));
@@ -661,7 +660,6 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
                            -> Result<ReturnCode, ReturnCode> {
 
         // TODO: Lose buffer if busy
-        
         if self.tx_state.tx_busy.get() {
             Err(ReturnCode::EBUSY)
         } else {
@@ -678,7 +676,6 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
     }
 
     fn start_packet_transmit(&self) {
-
         // Increment dgram_tag
         let dgram_tag = if (self.tx_state.tx_dgram_tag.get() + 1) == 0 {
             1
