@@ -16,6 +16,66 @@
 //!     occurs below the Mac layer, and prevents the packet from being fully
 //!     reassembled.
 //!
+//! User Interface
+//! --------------
+//! This layer exposes IP transmit and receive functionality to the upper
+//! layers. The main interface to this layer is the `Sixlowpan` struct and
+//! the `SixlowpanClient` trait. In general terms, the `Sixlowpan` struct
+//! exposes a way to send IPv6 packets, while the `SixlowpanClient` trait
+//! is responsible for delivering the `send_done` and `received` callbacks,
+//! which are invoked when a full IPv6 packet has been sent or received
+//! respectively.
+//!
+//! *Sixlowpan Struct:* For the `Sixlowpan` struct, we divide the
+//! user interface into two parts: standard usage and initialization. First,
+//! for standard usage (transmission), the `Sixlowpan` struct supplies the
+//! following method:
+//!
+//! ```
+//! Sixlowpan::transmit_packet(&self,
+//!                            src_mac_addr: MacAddress,
+//!                            dst_mac_addr: MacAddress,
+//!                            ip6_packet: &'static mut [u8],
+//!                            ip6_packet_len: usize,
+//!                            security: Option<(SecurityLevel, KeyId)>,
+//!                            fragment: bool,
+//!                            compress: bool)
+//!                            -> Result<ReturnCode, ReturnCode>;
+//! ```
+//! This function exposes the primary packet transmission fuctionality. The
+//! source and destination mac address arguments specify the link-layer
+//! addresses of the packet, while the `security`, `fragment`, and `compress`
+//! options specify the security level (if any), whether to fragment the packet
+//! if it is too large, and whether to compress the packet respectively.
+//!
+//! The `ip6_packet` argument contains a pointer to a buffer containing a valid
+//! IPv6 packet, while the `ip6_packet_len` argument specifies the number of
+//! bytes to send. Note that `ip6_packet.len() > ip6_packet_len`, but we check
+//! the invariant that `ip6_packet_len <= ip6_packet.len()`.
+//!
+//! ```
+//!
+//! To initialize the `Sixlowpan` struct, the following methods are exposed:
+//!
+//! ```
+//! Sixlowpan::new(radio: &'a Mac<'a>,
+//!                ctx_store: &'a ContextStore,
+//!                tx_buf: &'static mut [u8],
+//!                clock: &'a A)
+//!                -> Sixlowpan<'a, A>;
+//! ```
+//! The new function returns a new Sixlowpan struct. The radio argument is any
+//! object implementing the Mac trait, while the clock implements the 
+//!
+//! ```
+//! Sixlowpan::add_rx_state(..)
+//! ```
+//!
+//! ```
+//! Sixlowpan::set_client(..)
+//! ```
+//!
+//!
 //! Design
 //! ------
 //! At a high level, this layer exposes a transmit and receive functionality
@@ -392,9 +452,9 @@ impl TxState {
         }
     }
 
-    fn end_transmit(&self,
+    fn end_transmit<'a>(&self,
                     tx_buf: &'static mut [u8],
-                    client: Option<&'static SixlowpanClient>,
+                    client: Option<&'a SixlowpanClient>,
                     acked: bool,
                     result: ReturnCode) {
 
@@ -538,7 +598,7 @@ impl<'a> RxState<'a> {
         }
     }
 
-    fn end_receive(&self, client: Option<&'static SixlowpanClient>, result: ReturnCode) {
+    fn end_receive(&self, client: Option<&'a SixlowpanClient>, result: ReturnCode) {
         self.busy.set(false);
         self.bitmap.map(|bitmap| bitmap.clear());
         self.start_time.set(0);
@@ -558,11 +618,11 @@ impl<'a> RxState<'a> {
 /// ----------------
 /// This struct tracks the global sending/receiving state, and contains the
 /// lists of RxStates and TxStates.
-pub struct Sixlowpan<'a, A: time::Alarm + 'a> {
+pub struct Sixlowpan<'a, A: time::Alarm + 'a, C: ContextStore> {
     pub radio: &'a Mac<'a>,
-    ctx_store: &'a ContextStore,
+    ctx_store: C,
     clock: &'a A,
-    client: Cell<Option<&'static SixlowpanClient>>,
+    client: Cell<Option<&'a SixlowpanClient>>,
 
     // Transmit state
     tx_state: TxState,
@@ -572,7 +632,7 @@ pub struct Sixlowpan<'a, A: time::Alarm + 'a> {
 
 // This function is called after transmitting a frame
 #[allow(unused_must_use)]
-impl<'a, A: time::Alarm> TxClient for Sixlowpan<'a, A> {
+impl<'a, A: time::Alarm, C: ContextStore> TxClient for Sixlowpan<'a, A, C> {
     fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         // If we are done sending the entire packet, or if the transmit failed,
         // end the transmit state and issue callbacks.
@@ -590,7 +650,7 @@ impl<'a, A: time::Alarm> TxClient for Sixlowpan<'a, A> {
 }
 
 // This function is called after receiving a frame
-impl<'a, A: time::Alarm> RxClient for Sixlowpan<'a, A> {
+impl<'a, A: time::Alarm, C: ContextStore> RxClient for Sixlowpan<'a, A, C> {
     fn receive<'b>(&self, buf: &'b [u8], header: Header<'b>, data_offset: usize, data_len: usize) {
         // We return if retcode is not valid, as it does not make sense to issue
         // a callback for an invalid frame reception
@@ -609,15 +669,15 @@ impl<'a, A: time::Alarm> RxClient for Sixlowpan<'a, A> {
     }
 }
 
-impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
+impl<'a, A: time::Alarm, C: ContextStore> Sixlowpan<'a, A, C> {
     /// Sixlowpan::new
     /// --------------
     /// This function initializes and returns a new Sixlowpan struct.
     pub fn new(radio: &'a Mac<'a>,
-               ctx_store: &'a ContextStore,
+               ctx_store: C,
                tx_buf: &'static mut [u8],
                clock: &'a A)
-               -> Sixlowpan<'a, A> {
+               -> Sixlowpan<'a, A, C> {
         Sixlowpan {
             radio: radio,
             ctx_store: ctx_store,
@@ -640,7 +700,7 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
     }
 
     /// TODO
-    pub fn set_client(&self, client: &'static SixlowpanClient) {
+    pub fn set_client(&'a self, client: &'a SixlowpanClient) {
         self.client.set(Some(client));
     }
 
@@ -662,6 +722,8 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
         // TODO: Lose buffer if busy
         if self.tx_state.tx_busy.get() {
             Err(ReturnCode::EBUSY)
+        } else if ip6_packet_len > ip6_packet.len() {
+            Err(ReturnCode::ENOMEM)
         } else {
             self.tx_state.init_transmit(src_mac_addr,
                                         dst_mac_addr,
@@ -687,7 +749,7 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
             .take()
             .expect("Error: `tx_buf` is None in call to start_packet_transmit.");
 
-        match self.tx_state.start_transmit(dgram_tag, frag_buf, self.radio, self.ctx_store) {
+        match self.tx_state.start_transmit(dgram_tag, frag_buf, self.radio, &self.ctx_store) {
             // Successfully started transmitting
             Ok(_) => {
                 self.tx_state.tx_dgram_tag.set(dgram_tag);
@@ -743,7 +805,7 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
                     .expect("Error: `packet` in RxState struct is `None` \
                             in call to `receive_single_packet`.");
                 if is_lowpan(payload) {
-                    let decompressed = sixlowpan_compression::decompress(self.ctx_store,
+                    let decompressed = sixlowpan_compression::decompress(&self.ctx_store,
                                                           &payload[0..payload_len as usize],
                                                           src_mac_addr,
                                                           dst_mac_addr,
@@ -804,7 +866,7 @@ impl<'a, A: time::Alarm> Sixlowpan<'a, A> {
                                                    payload_len,
                                                    dgram_size,
                                                    dgram_offset,
-                                                   self.ctx_store);
+                                                   &self.ctx_store);
                 match res {
                     // Some error occurred
                     Err(_) => (Some(state), ReturnCode::FAIL),

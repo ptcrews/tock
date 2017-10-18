@@ -40,7 +40,6 @@
 
 use capsules;
 extern crate sam4l;
-use capsules::ieee802154::mac;
 use capsules::ieee802154::mac::Mac;
 use capsules::net::ieee802154::MacAddress;
 use capsules::net::ip::{IP6Header, IPAddr, ip6_nh};
@@ -110,7 +109,7 @@ pub const PAYLOAD_LEN: usize = 200;
 pub static mut RF233_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_SIZE];
 
 /* 6LoWPAN Constants */
-const DEFAULT_CTX_PREFIX_LEN: usize = 8;
+const DEFAULT_CTX_PREFIX_LEN: u8 = 8;
 static DEFAULT_CTX_PREFIX: [u8; 16] = [0x0 as u8; 16];
 static mut RX_STATE_BUF: [u8; 1280] = [0x0; 1280];
 static mut RADIO_BUF_TMP: [u8; radio::MAX_BUF_SIZE] = [0x0; radio::MAX_BUF_SIZE];
@@ -156,9 +155,8 @@ pub const TEST_DELAY_MS: u32 = 10000;
 pub const TEST_LOOP: bool = false;
 
 pub struct LowpanTest<'a, A: time::Alarm + 'a, T: time::Alarm + 'a> {
-    radio: &'a mac::Mac<'a>,
-    alarm: &'a A,
-    frag_state: &'a Sixlowpan<'a, T>,
+    alarm: A,
+    frag_state: Sixlowpan<'a, T, DummyStore>,
     test_counter: Cell<usize>,
 }
 
@@ -167,63 +165,55 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         -> &'static LowpanTest<'static,
         capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>,
         sam4l::ast::Ast<'static>> {
-    let dummy_ctx_store = static_init!(DummyStore,
-                                       DummyStore::new(capsules::net::sixlowpan_compression::Context {
-                                           prefix: DEFAULT_CTX_PREFIX,
-                                           prefix_len: DEFAULT_CTX_PREFIX_LEN as u8,
-                                           id: 0,
-                                           compress: false,
-                                       }));
 
     let default_rx_state = static_init!(
         capsules::net::sixlowpan::RxState<'static>,
         capsules::net::sixlowpan::RxState::new(&mut RX_STATE_BUF)
         );
 
-    let frag_dummy_alarm = static_init!(
-        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
-        VirtualMuxAlarm::new(mux_alarm)
-        );
-
-    let frag_state = static_init!(
-        capsules::net::sixlowpan::Sixlowpan<'static, sam4l::ast::Ast>,
-        capsules::net::sixlowpan::Sixlowpan::new(
+    let frag_state = capsules::net::sixlowpan::Sixlowpan::new(
             radio_mac,
-            dummy_ctx_store as &'static capsules::net::sixlowpan_compression::ContextStore,
+            DummyStore::new(capsules::net::sixlowpan_compression::Context {
+                prefix: DEFAULT_CTX_PREFIX,
+                prefix_len: DEFAULT_CTX_PREFIX_LEN,
+                id: 0,
+                compress: false,
+            }),
             &mut RADIO_BUF_TMP,
-            &sam4l::ast::AST)
+            &sam4l::ast::AST
         );
-
-    frag_state.add_rx_state(default_rx_state);
-    radio_mac.set_transmit_client(frag_state);
-    radio_mac.set_receive_client(frag_state);
 
     let lowpan_frag_test = static_init!(
         LowpanTest<'static,
         VirtualMuxAlarm<'static, sam4l::ast::Ast>,
         sam4l::ast::Ast>,
-        LowpanTest::new(radio_mac as &'static Mac,
-                        frag_state,
-                        frag_dummy_alarm)
+        LowpanTest::new(frag_state,
+                        VirtualMuxAlarm::new(mux_alarm))
     );
 
-    frag_state.set_client(lowpan_frag_test);
-    frag_dummy_alarm.set_client(lowpan_frag_test);
+    lowpan_frag_test.frag_state.add_rx_state(default_rx_state);
+    lowpan_frag_test.alarm.set_client(lowpan_frag_test);
 
+    radio_mac.set_transmit_client(&lowpan_frag_test.frag_state);
+    radio_mac.set_receive_client(&lowpan_frag_test.frag_state);
+
+    lowpan_frag_test.init();
     lowpan_frag_test
 }
 
 impl<'a, A: time::Alarm, T: time::Alarm + 'a> LowpanTest<'a, A, T> {
-    pub fn new(radio: &'a mac::Mac<'a>,
-               frag_state: &'a Sixlowpan<'a, T>,
-               alarm: &'a A)
+    pub fn new(frag_state: Sixlowpan<'a, T, DummyStore>,
+               alarm: A)
                -> LowpanTest<'a, A, T> {
         LowpanTest {
-            radio: radio,
             alarm: alarm,
             frag_state: frag_state,
             test_counter: Cell::new(0),
         }
+    }
+
+    pub fn init(&'a self) {
+        self.frag_state.set_client(self);
     }
 
     pub fn start(&self) {
@@ -383,7 +373,7 @@ impl<'a, A: time::Alarm, T: time::Alarm + 'a> LowpanTest<'a, A, T> {
                                _: &[u8],
                                src_mac_addr: MacAddress,
                                dst_mac_addr: MacAddress) {
-        let frag_state = self.frag_state;
+        let frag_state = &self.frag_state;
         //frag_state.radio.config_set_pan(0xABCD);
         let ret_code = frag_state.transmit_packet(src_mac_addr,
                                                   dst_mac_addr,
