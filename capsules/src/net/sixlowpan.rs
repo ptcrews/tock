@@ -24,7 +24,64 @@
 //! exposes a way to send IPv6 packets, while the `SixlowpanClient` trait
 //! is responsible for delivering the `send_done` and `received` callbacks,
 //! which are invoked when a full IPv6 packet has been sent or received
-//! respectively.
+//! respectively. Note that this layer should be treated as a synchronous
+//! interface; only one object should be transmitting or receiving packets
+//! (the SixlowpanClient object). Any virtualization is performed above this
+//! layer, along with additional packet processing (e.g. dispatching to some
+//! receive client based on IP address). At this time, this layer is not
+//! exposed to userspace.
+//!
+//! The high-level control flow looks as follows:
+//!
+//! Transmit:
+//!           -------------
+//!           |Upper Layer|
+//!           -------------
+//!                 |
+//!       transmit_packet(..packet..)
+//!                 |
+//!                 v
+//!            -----------
+//!            |Sixlowpan|
+//!            -----------
+//! ...
+//!         -----------------
+//!         |SixlowpanClient|
+//!         -----------------
+//!                 ^
+//!                 |
+//!            send_done(..) 
+//!                 |
+//!            -----------
+//!            |Sixlowpan|
+//!            -----------
+//!
+//! Receive:
+//!         -----------------
+//!         |SixlowpanClient|
+//!         -----------------
+//!                ^
+//!                |
+//!          receive(..buf..)
+//!                |
+//!           -----------
+//!           |Sixlowpan|
+//!           -----------
+//!
+//! Initialization:
+//!           -------------
+//!           |Upper Layer|
+//!           -------------
+//!                 |
+//!          set_client(client) 
+//!                 |
+//!                 v
+//!            -----------
+//!            |Sixlowpan|
+//!            -----------
+//!
+//!
+//! The interface is explored in more detail below.
 //!
 //! *Sixlowpan Struct:* For the `Sixlowpan` struct, we divide the
 //! user interface into two parts: standard usage and initialization. First,
@@ -46,7 +103,10 @@
 //! source and destination mac address arguments specify the link-layer
 //! addresses of the packet, while the `security`, `fragment`, and `compress`
 //! options specify the security level (if any), whether to fragment the packet
-//! if it is too large, and whether to compress the packet respectively.
+//! if it is too large, and whether to compress the packet respectively. These
+//! different options are exposed to provide the caller with more control over
+//! how this layer modifies packets; no compression and no fragmentation can
+//! be set, and the packet will be sent to the radio as a raw IPv6 packet.
 //!
 //! The `ip6_packet` argument contains a pointer to a buffer containing a valid
 //! IPv6 packet, while the `ip6_packet_len` argument specifies the number of
@@ -59,96 +119,33 @@
 //!
 //! ```
 //! Sixlowpan::new(radio: &'a Mac<'a>,
-//!                ctx_store: &'a ContextStore,
+//!                ctx_store: C,
 //!                tx_buf: &'static mut [u8],
 //!                clock: &'a A)
-//!                -> Sixlowpan<'a, A>;
+//!                -> Sixlowpan<'a, A, C>;
 //! ```
 //! The new function returns a new Sixlowpan struct. The radio argument is any
-//! object implementing the Mac trait, while the clock implements the 
+//! object implementing the Mac trait, while the clock implements the Alarm
+//! functionality. The ctx_store argument is any object that implements the
+//! ContextStore trait.
 //!
 //! ```
-//! Sixlowpan::add_rx_state(..)
+//! Sixlowpan::add_rx_state(&self, rx_state: &'a RxState<'a>);
 //! ```
+//! This method adds an RxState to the RxState pool maintained by the Sixlowpan
+//! object. Each RxState struct represents the ability to reconstruct a single
+//! IP packet at a time; if two RxState structs are allocated, two IPv6 packets
+//! can be reconstructed simultaneously (likewise for 3+ RxStates). If only
+//! a single RxState is allocated, only one IP packet can be reconstructed at
+//! a time. Note that if no RxStates are initialized, no IP packets can be
+//! received.
 //!
 //! ```
-//! Sixlowpan::set_client(..)
+//! Sixlowpan::set_client(&'a self, client: &'a SixlowpanClient);
 //! ```
-//!
-//!
-//! Design
-//! ------
-//! At a high level, this layer exposes a transmit and receive functionality
-//! that takes IPv6 packets and converts them into chunks that are passed to
-//! the 802.15.4 MAC layer. The Sixlowpan struct represents the global
-//! transmission state, and contains tag information, queued TxState structs,
-//! and in-process RxState structs. In order for a client to send via this
-//! interface, it must supply a TxState struct, the IPv6 packet, and arguments
-//! relating to lower layers. This layer then fragments and compresses the
-//! packet if necessary, then transmits it over a Mac-layer device. In order
-//! for a packet to be received, the client must call set_receive_client
-//! on the Sixlowpan struct. Currently, there is a single, global receive
-//! client that receives callbacks for all reassembled packets (unlike for
-//! the transmit path, where each TxState struct contains a separate client).
-//! The Sixlowpan struct contains a list of RxState structs which are statically
-//! allocated and added to the list; these structs represent the number of
-//! concurrent reassembly operations that can be in progress at the same time.
-//!
-//! This layer adds several new structs, Sixlowpan, TxState, and RxState,
-//! as well as interfaces for them.
-//!
-//! Sixlowpan:
-//! - Methods:
-//! -- new(..): Initializes a new Sixlowpan struct
-//! -- transmit_packet(..): Transmits the given IPv6 packet, using the provided
-//!      TxState struct to track its progress, fragmenting if necessary
-//! -- set_receive_client(..): Sets the global receive client, which receives
-//!      a callback whenever a packet is fully reassembled
-//!
-//! The Sixlowpan struct represents a single, global struct that tracks the state
-//! of transmission and reception for the various clients. This struct manages
-//! global state, including references to the radio and lowpan structs, along
-//! with lists of TxStates and RxStates, buffers, and various other state.
-//!
-//! TxState:
-//! - Methods:
-//! -- new(..): Initializes a new TxState struct
-//! -- set_transmit_client(..): Sets the per-state transmit client, which
-//!      receives a callback after an entire IPv6 packet has been transmitted
-//!
-//! In order to send a packet, each client must allocate space for a TxState
-//! struct. Whenever a client sends a packet, it must pass in a reference to
-//! its TxState struct, and clients should not directly modify any fields within
-//! the TxState struct. The fragmentation layer uses this struct to store state
-//! about packets currently being sent.
-//!
-//! RxState:
-//! - Methods:
-//! -- new(..): Initializes a new RxState struct
-//!
-//! The RxState struct contains information relating to packet reception and
-//! reassembly. Unlike with the TxState structs, there is no concept of
-//! individual clients "owning" these structs; instead, some number of RxStates
-//! are statically allocated and added to the Sixlowpan's RxState list. These
-//! states are then used to keep track of different reassembly flows; the
-//! number of simultaneous packet receptions is dependent on the number of
-//! allocated RxState structs. When a packet is fully reassembled, the global
-//! receive client inside Sixlowpan receives a callback.
-//!
-//! In addition to structs and their methods, this layer also defines several
-//! traits for the transmit and receive callbacks.
-//!
-//! TransmitClient Trait:
-//! - send_done(..): Called after the entire IPv6 packet has been sent. Returns
-//!     the IPv6 buffer, a reference to the TxState struct, and additional
-//!     information relating to the sent packet
-//!
-//! ReceiveClient Trait:
-//! - receive(..): Called after an entire IPv6 packet has been reassembled.
-//!     Returns the IPv6 buffer containing the decompressed packet, as well as
-//!     additional information. Note that this function is required to return a
-//!     static buffer, as the buffer passed into this function is owned by the
-//!     RxState and not the client
+//! The `set_client` method sets the SixlowpanClient for the Sixlowpan object.
+//! Whatever object is set as the client receives both `receive` and `send_done`
+//! callbacks.
 //!
 //! Usage
 //! -----
@@ -156,6 +153,124 @@
 //! `boards/imixv1/src/lowpan_frag_dummy.rs`. Significant set-up is required
 //! in `boards/imixv1/src/main.rs` to initialize the various state for the
 //! layer and its clients.
+
+// Internal Design
+// ---------------
+// The overall 6LoWPAN protocol is non-trivial, and as a result, this layer
+// is fairly complex. There are two main aspects of the 6LoWPAN layer; first
+// is compression, which is abstracted as a distinct library (found at
+// `capsules/src/net/sixlowpan_compression.rs`), and second is the
+// fragmentation and reassembly layer, which is implemented in this file.
+// The documentation below describes the different components of the
+// fragmentation/reassembly functionality (for 6LoWPAN compression
+// documentation, please consult `capsules/src/net/sixlowpan_compression.rs`).
+//
+// This layer adds several new structures; principally, it implements the
+// Sixlowpan, TxState, and RxState structs. Further, this layer also defines
+// the SixlowpanClient trait. The Sixlowpan struct is responsible
+// for keeping track of the global state of this layer, and contains references
+// to the TxState and the list of RxStates. The TxState is responsible for
+// maintaining the current transmit state, and how much of the current
+// IPv6 packet has been transmitted. The RxState structs maintain the
+// reassembly state corresponding to a single IPv6 packet. Note that since
+// they are maintained as a list, several RxStates can be allocated at compile
+// time, and each RxState corresponds to a distinct IPv6 packet that can be
+// reassembled simultaneously. Finally, the SixlowpanClient trait defines
+// the interface between the upper (IP) layer and the Sixlowpan layer. 
+// Each object is examined in greater detail below:
+//
+// Sixlowpan:
+// Examination of the public methods on the `Sixlowpan` struct are examined
+// above in the User Interface section. Instead, here we detail the internal
+// design of the struct. First, the `Sixlowpan` object is designed to be a
+// single, global object which sits between the Mac and IP layers. It receives
+// and transmits frames through the Mac layer, while reassembling or
+// fragmenting IPv6 packets via the IP layer. As a result, the `Sixlowpan`
+// struct maintains the single, global state relevent for this layer, including
+// a reference to the radio, the context store (for (de)compressing 6LoWPAN-
+// compressed fragments), a clock, and the upper-layer client callback.
+// Additionally, this object maintains references to a single TxState, and
+// a list of RxStates.
+//
+// TxState:
+// The TxState struct maintains the state necessary to incrementally fragment
+// and send a full IPv6 packet. This includes the source/destination Mac
+// addresses and PanIDs, frame-level security options, a total datagram size,
+// and the current offset into the datagram. This struct also maintains some
+// minimal global transmit state, including the global datagram tag and a
+// buffer to pass to the radio. This object is visible only to the
+// Sixlowpan struct, and abstracts away the details for transmitting and
+// fragmenting packets.
+//
+// RxState:
+// The RxState struct is analogous to the TxState struct, in that it maintains
+// state specific to reassembling an IPv6 packet. Unlike the TxState struct
+// however, the Sixlowpan object manages multiple RxState structs. These
+// RxStates serve as a pool of objects, and when a fragment arrives, the
+// Sixlowpan object either dispatches it to an in-progress packet reassembly
+// managed by a busy RxState struct, or initializes a free RxState struct
+// to start reassembling the rest of the fragments. Similar to TxState,
+// RxState objects should only be visible to the Sixlowpan object, aside
+// from one caveat - the initialization of RxStates must occur statically
+// outside the Sixlowpan struct (this may change in the future).
+//
+// The RxState struct maintains the in-progress packet buffer, a bitmap
+// indicating which 8-byte chunks have not yet been received, the source/dest
+// mac address pair, datagram size and tag, and a start time (to lazily
+// expire timed-out reassembly processes).
+//
+// SixlowpanClient:
+// The SixlowpanClient trait has two functions; `send_done` and `receive`.
+// The Sixlowpan struct maintains a reference to the (current) SixlowpanClient,
+// and issues callbacks when transmissions have completed (`send_done`) or
+// a full IPv6 packet has been reassembled (`receive`). Note that the
+// Sixlowpan object allows for the client to change at runtime, but the
+// current assumption is a single layer sitting above the 6LoWPAN layer.
+//
+//
+// Design Decisions
+// ----------------
+// Throughout designing this layer, there were a number of critical design
+// decisions made. Several of the most prominent are listed below, with a
+// short rationale as to why they were necessary or the most optimal solution.
+//
+// Multiple RxStates:
+// This design decision is one of the more complicated and contentious ones.
+// Due to the wording of the 6LoWPAN specification and the data associated
+// with 6LoWPAN fragments, it is entirely reasonable to expect that even
+// an edge node (a node not doing routing) might receive 6LoWPAN fragments
+// for different IP packets interleaved. In particular, a 6LoWPAN fragment
+// header contains a datagram tag, which is different for each IPv6 packet
+// fragmented even from the same layer 2 source/destination pairs. Thus,
+// a single node could send multiple, distinct, fragmented IPv6 packets
+// simultaneously (or at least, a node is not prohibited from doing so). In
+// addition, the reassembly timeout for 6LoWPAN fragments is on the order of
+// seconds, and with a single RxState, a single lost fragment could
+// substantially hamper or delay the ability of a client to receive additional
+// packets. As a result of these two issues, the ability to add several
+// RxStates to the 6LoWPAN layer was provided. Unfortunately, this
+// increased the complexity of this layer substantially, and further,
+// necessitated additional initialization complexity by the upper layer.
+//
+// Single TxState:
+// Although both the RxState and TxState structs are treated similarly by
+// the Sixlowpan layer, many aspects of their control flow differ
+// significantly. The final design decision was to have a single upper layer
+// that serialized (or virtualized) both the reception and transmission of
+// IPv6 packets. As a result, only a single outstanding transmission made
+// sense, and thus the layer was designed to have a serial transmit path.
+// Note that this differs greatly from the RxState model, but since we
+// cannot serialize reception in the same way, it did not make sense to treat
+// both RxState and TxState structs identically.
+//
+// SixlowpanClient Receives both Callbacks:
+// Another major design decision was to combine both the `receive` and
+// `send_done` callbacks into a single trait. This reduced overall complexity
+// as only a single client was necessary, and further, the current design
+// of the 6LoWPAN layer assumes a serialized, single-client model. Thus,
+// combining both callbacks into a single interface represented no major
+// drawbacks, and served to simplify the code. Note that this design may
+// change as additional functionality is implemented on top of this layer.
 
 use core::cell::Cell;
 use ieee802154::mac::{Mac, Frame, TxClient, RxClient};
@@ -239,11 +354,11 @@ pub struct TxState {
     src_mac_addr: Cell<MacAddress>,
     dst_mac_addr: Cell<MacAddress>,
     security: Cell<Option<(SecurityLevel, KeyId)>>,
-    dgram_tag: Cell<u16>,
+    dgram_tag: Cell<u16>, // TODO: Redundant
     dgram_size: Cell<u16>,
     dgram_offset: Cell<usize>,
-    fragment: Cell<bool>,
-    compress: Cell<bool>,
+    fragment: Cell<bool>, // TODO: Unnecessary?
+    compress: Cell<bool>, // TODO: Unnecessary?
 
     // Global transmit state
     tx_dgram_tag: Cell<u16>,
