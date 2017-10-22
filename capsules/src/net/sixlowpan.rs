@@ -150,9 +150,9 @@
 //! Usage
 //! -----
 //! Examples of how to interface and use this layer are included in the file
-//! `boards/imixv1/src/lowpan_frag_dummy.rs`. Significant set-up is required
-//! in `boards/imixv1/src/main.rs` to initialize the various state for the
-//! layer and its clients.
+//! `boards/imix/src/lowpan_frag_dummy.rs`. Some set up is required in
+//! the `boards/imix/src/main.rs` file, but for the testing suite, a helper
+//! initialization function is included in the `lowpan_frag_dummy.rs` file.
 
 // Internal Design
 // ---------------
