@@ -301,11 +301,6 @@ pub mod lowpan_frag {
     pub const FRAGN_HDR_SIZE: usize = 5;
 }
 
-pub enum TransmitState {
-    Idle { tx_buf: &'static [u8] },
-    Transmitting { packet: &'static [u8] }
-}
-
 fn set_frag_hdr(dgram_size: u16,
                 dgram_tag: u16,
                 dgram_offset: usize,
@@ -343,29 +338,32 @@ fn is_fragment(packet: &[u8]) -> bool {
 
 /// struct TxState
 /// --------------
-/// This struct tracks the per-client transmit state for a single IPv6 packet.
-/// The Sixlowpan struct maintains a list of TxState structs, sending each in
-/// order.
+/// This struct tracks the global transmit state for a single IPv6 packet.
+/// Since transmit is serialized, the `Sixlowpan` struct only contains
+/// a reference to a single TxState (that is, we can only have a single
+/// outstanding transmission at the same time).
+///
+/// This struct maintains a reference to the full IPv6 packet, the source/dest
+/// MAC addresses and PanIDs, security/compression/fragmentation options,
+/// per-fragmentation state, and some global state.
 pub struct TxState {
-    // State for a single transmission
+    // State for the current transmission
     packet: TakeCell<'static, [u8]>,
     src_pan: Cell<PanID>,
     dst_pan: Cell<PanID>,
     src_mac_addr: Cell<MacAddress>,
     dst_mac_addr: Cell<MacAddress>,
     security: Cell<Option<(SecurityLevel, KeyId)>>,
-    dgram_tag: Cell<u16>, // TODO: Redundant
+    dgram_tag: Cell<u16>, // Used to identify particular fragment streams
     dgram_size: Cell<u16>,
     dgram_offset: Cell<usize>,
-    fragment: Cell<bool>, // TODO: Unnecessary?
-    compress: Cell<bool>, // TODO: Unnecessary?
+    fragment: Cell<bool>,
+    compress: Cell<bool>,
 
     // Global transmit state
     tx_dgram_tag: Cell<u16>,
-    tx_busy: Cell<bool>, // TODO: Can remove?
+    tx_busy: Cell<bool>,
     tx_buf: TakeCell<'static, [u8]>,
-
-    //state: MapCell<TransmitState>,
 }
 
 impl TxState {
@@ -389,8 +387,6 @@ impl TxState {
             tx_dgram_tag: Cell::new(0),
             tx_busy: Cell::new(false),
             tx_buf: TakeCell::new(tx_buf),
-
-            //state: MapCell::new(TransmitState::Idle { tx_buf: tx_buf),
         }
     }
 
