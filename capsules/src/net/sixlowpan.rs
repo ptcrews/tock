@@ -11,6 +11,7 @@
 //! Remaining Tasks and Known Problems
 //! ----------------------------------
 //! TODO: Implement and expose a ConfigClient interface?
+//! TODO: Implement the disassociation event, integrate with lower layer
 //!
 //! Problem: The receiving Imix sometimes fails to receive a fragment. This
 //!     occurs below the Mac layer, and prevents the packet from being fully
@@ -1001,8 +1002,9 @@ impl<'a, A: time::Alarm, C: ContextStore> Sixlowpan<'a, A, C> {
     }
 
     #[allow(dead_code)]
+    // FIXME
     // This function is called when a disassociation event occurs, as we need
-    // to expire all pending state.
+    // to expire all pending state. This is not fully implemented.
     fn discard_all_state(&self) {
         for rx_state in self.rx_states.iter() {
             rx_state.end_receive(None, ReturnCode::FAIL);
