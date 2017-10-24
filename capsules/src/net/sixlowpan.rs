@@ -369,7 +369,8 @@ pub struct TxState {
 impl TxState {
     /// TxState::new
     /// ------------
-    /// This constructs a new, default TxState struct.
+    /// This constructs a new, default TxState struct. The buffer passed in
+    /// serves as the buffer passed between the TxState layer and the radio.
     pub fn new(tx_buf: &'static mut [u8]) -> TxState {
         TxState {
             packet: TakeCell::empty(),
@@ -613,7 +614,9 @@ impl<'a> ListNode<'a, RxState<'a>> for RxState<'a> {
 impl<'a> RxState<'a> {
     /// RxState::new
     /// ------------
-    /// This function constructs a new RxState struct.
+    /// This function constructs a new RxState struct. The `packet` argument
+    /// is a buffer for an IPv6 packet. Currently, we assume this to be
+    /// 1280 bytes (minimum IPv6 MTU), but this may change in the future.
     pub fn new(packet: &'static mut [u8]) -> RxState<'a> {
         RxState {
             packet: TakeCell::new(packet),
@@ -728,7 +731,7 @@ impl<'a> RxState<'a> {
 /// struct Sixlowpan
 /// ----------------
 /// This struct tracks the global sending/receiving state, and contains the
-/// lists of RxStates and TxStates.
+/// lists of RxStates and singular TxState.
 pub struct Sixlowpan<'a, A: time::Alarm + 'a, C: ContextStore> {
     pub radio: &'a Mac<'a>,
     ctx_store: C,
@@ -810,7 +813,10 @@ impl<'a, A: time::Alarm, C: ContextStore> Sixlowpan<'a, A, C> {
         self.rx_states.push_head(rx_state);
     }
 
-    /// TODO
+    /// Sixlowpan::set_client
+    /// ---------------------
+    /// This function sets the SixlowpanClient, which receives the `send_done`
+    /// and `received` callbacks.
     pub fn set_client(&'a self, client: &'a SixlowpanClient) {
         self.client.set(Some(client));
     }
@@ -828,13 +834,12 @@ impl<'a, A: time::Alarm, C: ContextStore> Sixlowpan<'a, A, C> {
                            security: Option<(SecurityLevel, KeyId)>,
                            fragment: bool,
                            compress: bool)
-                           -> Result<ReturnCode, ReturnCode> {
+                           -> Result<ReturnCode, (ReturnCode, &'static mut [u8])> {
 
-        // TODO: Lose buffer if busy
         if self.tx_state.tx_busy.get() {
-            Err(ReturnCode::EBUSY)
+            Err((ReturnCode::EBUSY, ip6_packet))
         } else if ip6_packet_len > ip6_packet.len() {
-            Err(ReturnCode::ENOMEM)
+            Err((ReturnCode::ENOMEM, ip6_packet))
         } else {
             self.tx_state.init_transmit(src_mac_addr,
                                         dst_mac_addr,
