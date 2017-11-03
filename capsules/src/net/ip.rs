@@ -1,3 +1,7 @@
+use net::stream::{decode_bytes};
+use net::stream::{encode_bytes};
+use net::stream::SResult;
+
 #[derive(Copy,Clone,PartialEq)]
 pub enum MacAddr {
     ShortAddr(u16),
@@ -93,6 +97,17 @@ impl IP6Header {
     pub fn new() -> IP6Header {
         IP6Header::default()
     }
+
+    pub fn decode(buf: &[u8]) -> SResult<IP6Header> {
+        // TODO: size of header
+        stream_len_cond!(buf, 40);
+
+        let mut ip6_header = Self::new();
+
+        let off = dec_consume!(buf, 0; decode_bytes, &mut ip6_header.version_class_flow);
+        stream_done!(off, ip6_header);
+    }
+
     // Version should always be 6
     pub fn get_version(&self) -> u8 {
         (self.version_class_flow[0] & 0xf0) >> 4
