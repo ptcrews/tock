@@ -1,5 +1,5 @@
-use net::stream::{decode_bytes};
-use net::stream::{encode_bytes};
+use net::stream::{decode_u16, decode_u8, decode_bytes};
+use net::stream::{encode_u16, encode_u8, encode_bytes};
 use net::stream::SResult;
 
 #[derive(Copy,Clone,PartialEq)]
@@ -99,13 +99,35 @@ impl IP6Header {
     }
 
     pub fn decode(buf: &[u8]) -> SResult<IP6Header> {
-        // TODO: size of header
+        // TODO: Let size of header be a constant
         stream_len_cond!(buf, 40);
 
         let mut ip6_header = Self::new();
-
+        // Note that `dec_consume!` uses the length of the output buffer to
+        // determine how many bytes are to be read.
         let off = dec_consume!(buf, 0; decode_bytes, &mut ip6_header.version_class_flow);
+        let (off, payload_len_be) = dec_try!(buf, off; decode_u16);
+        ip6_header.payload_len = u16::from_be(payload_len_be);
+        let (off, next_header) = dec_try!(buf, off; decode_u8);
+        ip6_header.next_header = next_header;
+        let (off, hop_limit) = dec_try!(buf, off; decode_u8);
+        ip6_header.hop_limit = hop_limit;
+        let off = dec_consume!(buf, off; decode_bytes, &mut ip6_header.src_addr.0);
+        let off = dec_consume!(buf, off; decode_bytes, &mut ip6_header.dst_addr.0);
         stream_done!(off, ip6_header);
+    }
+
+    // Returns the offset wrapped in an SResult
+    pub fn encode(buf: &mut [u8], ip6_header: IP6Header) -> SResult<usize> {
+        stream_len_cond!(buf, 40);
+
+        let mut off = enc_consume!(buf, 0; encode_bytes, &ip6_header.version_class_flow);
+        off = enc_consume!(buf, off; encode_u16, ip6_header.payload_len.to_be());
+        off = enc_consume!(buf, off; encode_u8, ip6_header.next_header);
+        off = enc_consume!(buf, off; encode_u8, ip6_header.hop_limit);
+        off = enc_consume!(buf, off; encode_bytes, &ip6_header.src_addr.0);
+        off = enc_consume!(buf, off; encode_bytes, &ip6_header.dst_addr.0);
+        stream_done!(off, off);
     }
 
     // Version should always be 6
