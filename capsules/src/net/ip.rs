@@ -65,6 +65,15 @@ impl IPAddr {
     pub fn is_multicast(&self) -> bool {
         self.0[0] == 0xff
     }
+
+    // TODO: Extend to include subnet equality
+    pub fn is_equal(&self, addr: IPAddr) -> bool {
+        let mut is_equal = true;
+        for i in 0..16 {
+            is_equal = is_equal && (self.0[i] == addr.0[i]);
+        }
+        is_equal
+    }
 }
 
 #[repr(C, packed)]
