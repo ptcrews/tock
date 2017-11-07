@@ -77,7 +77,8 @@ impl<'a> IPState<'a> {
     }
 
     // TODO: This should return an error? Yes
-    fn initialize_packet(&self, ip6_packet: &'static mut [u8], payload: &[u8], payload_len: usize) -> usize {
+    fn initialize_packet<'b>(&self, ip6_packet: &'b mut [u8], payload: &[u8], payload_len: usize)
+            -> usize {
         let mut ip6_header = IP6Header::new();
         // TODO: THIS IS WRONG - needs to be in octets
         ip6_header.set_payload_len(payload_len as u16);
@@ -158,6 +159,7 @@ impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
     }
 
     pub fn send(&self, ip_state: &'a IPState<'a>, buf: &'static mut [u8], len: usize) {
+        // TODO: Return err if not idle
         ip_state.state.map(move |state| {
             match *state {
                 IPSendingState::Idle => { *state = IPSendingState::Ready(buf, len); },
@@ -172,28 +174,26 @@ impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
 
     // On error, ip6_packet is returned
     fn send_pending_packets(&self, ip6_packet: &'static mut [u8]) {
-        /*
-        self.ip_states.iter()
-            .for_each(|ip_state| {
-                ip_state.state.map(|state| {
-                    match state {
-                        &mut IPSendingState::Ready(buf, len) => {
-                            let mut payload = buf;
-                            let total_len = ip_state.initialize_packet(ip6_packet, payload, len);
-                            self.sixlowpan.transmit_packet(SRC_MAC_ADDR,
-                                                           DST_MAC_ADDR,
-                                                           ip6_packet,
-                                                           total_len,
-                                                           None,
-                                                           true,
-                                                           true);
-                            return;
-                        },
-                        // If not Ready, continue
-                        _ => {},
-                    };
-                });
+        self.ip_states.iter().for_each(|ip_state| {
+            ip_state.state.map(move |state| {
+                match *state {
+                    IPSendingState::Ready(ref buf, len) => {
+                        let mut payload = buf;
+                        let total_len = ip_state.initialize_packet(ip6_packet, payload, len);
+                        self.sixlowpan.transmit_packet(SRC_MAC_ADDR,
+                                                       DST_MAC_ADDR,
+                                                       ip6_packet,
+                                                       total_len,
+                                                       None,
+                                                       true,
+                                                       true);
+                        *state = IPSendingState::Sending;
+                        return;
+                    },
+                    // If not Ready, continue
+                    _ => {},
+                };
             });
-            */
+        });
     }
 }
