@@ -12,6 +12,7 @@ use net::ip::{IPAddr, IP6Header};
 use net::sixlowpan;
 use net::sixlowpan::{SixlowpanClient, Sixlowpan};
 use net::sixlowpan_compression::ContextStore;
+use net::ieee802154::MacAddress;
 use kernel::ReturnCode;
 use kernel::hil::time;
 use kernel::common::list::{List, ListLink, ListNode};
@@ -78,9 +79,10 @@ impl<'a> IPState<'a> {
     // TODO: This should return an error? Yes
     fn initialize_packet(&self, ip6_packet: &'static mut [u8], payload: &[u8], payload_len: usize) -> usize {
         let mut ip6_header = IP6Header::new();
-        ip6_header.set_payload_len(len);
+        // TODO: THIS IS WRONG - needs to be in octets
+        ip6_header.set_payload_len(payload_len as u16);
         ip6_header.src_addr = self.addr.get();
-        ip6_header.encode(ip6_packet);
+        ip::IP6Header::encode(ip6_packet, ip6_header);
         ip6_packet[40..40+payload_len].copy_from_slice(&payload[0..payload_len]);
         // TODO: Get from ip6_header
         40 + payload_len
@@ -97,6 +99,7 @@ impl<'a> IPState<'a> {
 pub struct IPLayer<'a, A: time::Alarm + 'a, C: ContextStore> {
     ip_states: List<'a, IPState<'a>>,
     sending: Cell<bool>,
+    ip6_buffer: TakeCell<'static, [u8]>,
     // TODO: I think that the ContextStore should be a Thread-level (or
     // application level) thing, and so passed-in during intialization
     sixlowpan: Sixlowpan<'a, A, C>,
@@ -134,15 +137,18 @@ impl<'a, A: time::Alarm, C: ContextStore> SixlowpanClient for IPLayer<'a, A, C> 
         // as the client may have called `send` again in the `send_done`
         // callback
         // TODO: Is this desired behavior?
-        self.send_pending_packets();
+        let mut ip6_buf = self.ip6_buffer.take().unwrap();
+        self.send_pending_packets(ip6_buf);
     }
 }
 
 impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
-    pub fn new(sixlowpan: Sixlowpan<'a, A, C>) -> IPLayer<'a, A, C> {
+    pub fn new(ip6_buffer: &'static mut [u8], sixlowpan: Sixlowpan<'a, A, C>)
+            -> IPLayer<'a, A, C> {
         IPLayer {
             ip_states: List::new(),
             sending: Cell::new(false),
+            ip6_buffer: TakeCell::new(ip6_buffer),
             sixlowpan: sixlowpan,
         }
     }
@@ -152,7 +158,12 @@ impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
     }
 
     pub fn send(&self, ip_state: &'a IPState<'a>, buf: &'static mut [u8], len: usize) {
-        ip_state.state.set(IPSendingState::Ready(buf, len));
+        ip_state.state.map(move |state| {
+            match *state {
+                IPSendingState::Idle => { *state = IPSendingState::Ready(buf, len); },
+                _ => {},
+            };
+        });
         // If we are not currently transmitting
         if !self.sending.get() {
             self.sending.set(true);
@@ -161,6 +172,7 @@ impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
 
     // On error, ip6_packet is returned
     fn send_pending_packets(&self, ip6_packet: &'static mut [u8]) {
+        /*
         self.ip_states.iter()
             .for_each(|ip_state| {
                 ip_state.state.map(|state| {
@@ -180,7 +192,8 @@ impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
                         // If not Ready, continue
                         _ => {},
                     };
+                });
             });
-        );
+            */
     }
 }
