@@ -222,9 +222,9 @@ impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
                                                        true);
                         ip_state.state.replace(IPSendingState::Sending);
                         return;
-                    },
+                    }
                     // If not Ready, then TODO error
-                    _ => {},
+                    _ => {}
                 };
             });
         });
