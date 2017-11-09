@@ -23,10 +23,11 @@ pub const SRC_MAC_ADDR: MacAddress = MacAddress::Long([0x10, 0x11, 0x12, 0x13, 0
 pub const DST_MAC_ADDR: MacAddress = MacAddress::Long([0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
                                                        0x1f]);
 
-#[derive(Eq,PartialEq,Debug)]
+// TODO: Eventually codify buffers into this construct
+#[derive(Copy,Clone,Eq,PartialEq,Debug)]
 enum IPSendingState {
     Idle,
-    Ready(&'static mut [u8], usize),
+    Ready,
     Sending,
 }
 
@@ -37,8 +38,11 @@ pub trait IPClient {
 
 pub struct IPState<'a> {
     addr: Cell<IPAddr>,
+    // TODO: Change this to MapCell
     client: Cell<Option<&'a IPClient>>,
     state: MapCell<IPSendingState>,
+    len: Cell<usize>,
+    transmit_buf: TakeCell<'static, [u8]>,
     next: ListLink<'a, IPState<'a>>,
 }
 
@@ -54,6 +58,8 @@ impl<'a> IPState<'a> {
             addr: Cell::new(addr),
             client: Cell::new(None),
             state: MapCell::new(IPSendingState::Idle),
+            len: Cell::new(0),
+            transmit_buf: TakeCell::empty(),
             next: ListLink::empty(),
         }
     }
@@ -80,7 +86,6 @@ impl<'a> IPState<'a> {
     fn initialize_packet<'b>(&self, ip6_packet: &'b mut [u8], payload: &[u8], payload_len: usize)
             -> usize {
         let mut ip6_header = IP6Header::new();
-        // TODO: THIS IS WRONG - needs to be in octets
         ip6_header.set_payload_len(payload_len as u16);
         ip6_header.src_addr = self.addr.get();
         ip::IP6Header::encode(ip6_packet, ip6_header);
@@ -89,7 +94,23 @@ impl<'a> IPState<'a> {
         40 + payload_len
     }
 
-    fn received_packet<'b>(&self, ip6_header: &IP6Header, buf: &'b [u8]) {
+    // TODO: Error code
+    fn prepare_transmit(&self, transmit_buf: &'static mut [u8], len: usize) -> Result<(), ()> {
+        self.state.map(move |state| {
+            match *state {
+                IPSendingState::Idle => {
+                    self.transmit_buf.replace(transmit_buf);
+                    self.len.set(len);
+                    self.state.replace(IPSendingState::Ready);
+                    Ok(())
+                },
+                _ => { Err(()) }, 
+            }
+        }).unwrap_or(Err(()))
+    }
+
+    fn received_packet<'b>(&self, ip6_header: &IP6Header, buf: &'b [u8], len: u16, result: ReturnCode) {
+        self.client.get().map(move |client| client.receive(&buf[40..], len, result));
     }
 
     fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
@@ -99,7 +120,6 @@ impl<'a> IPState<'a> {
 
 pub struct IPLayer<'a, A: time::Alarm + 'a, C: ContextStore> {
     ip_states: List<'a, IPState<'a>>,
-    sending: Cell<bool>,
     ip6_buffer: TakeCell<'static, [u8]>,
     // TODO: I think that the ContextStore should be a Thread-level (or
     // application level) thing, and so passed-in during intialization
@@ -115,7 +135,7 @@ impl<'a, A: time::Alarm, C: ContextStore> SixlowpanClient for IPLayer<'a, A, C> 
             let addr = ip6_header.dst_addr;
             let ip_state = self.ip_states.iter().find(|state| state.is_my_addr(addr));
             // If there is no matching `IPState`, silently drop the packet
-            ip_state.map(|ip_state| ip_state.received_packet(&ip6_header, buf));
+            ip_state.map(|ip_state| ip_state.received_packet(&ip6_header, buf, len, result));
         });
     }
 
@@ -123,23 +143,27 @@ impl<'a, A: time::Alarm, C: ContextStore> SixlowpanClient for IPLayer<'a, A, C> 
     // the invariant that buf is not modified by lower layers
     // TODO: Or change the callback to include state data
     fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
-        // The IPLayer is no longer sending
-        self.sending.set(false);
+        // If the header is invalid, silently discard
+        // TODO: This behavior should be changed
+        let ip6_header_option = IP6Header::decode(buf).done();
+        self.ip6_buffer.replace(buf);
 
-        IP6Header::decode(buf).done().map(|(_, ip6_header)| {
+        ip6_header_option.map(|(_, ip6_header)| {
             // TODO: Check validity of IP header
             let addr = ip6_header.src_addr;
             // If there is no matching `IPState`, silently drop the packet
-            let ip_state = self.ip_states.iter().find(|state| state.is_my_addr(addr));
-            ip_state.map(move |ip_state| ip_state.send_done(buf, acked, result));
+            self.ip_states.iter().find(|ip_state|
+                                       ip_state.is_my_addr(addr))
+                .map(move |ip_state| ip_state.send_done(ip_state.transmit_buf.take().unwrap(), acked, result));
         });
 
         // Start transmitting next packet - note that this *might not* succeed
         // as the client may have called `send` again in the `send_done`
         // callback
         // TODO: Is this desired behavior?
-        let mut ip6_buf = self.ip6_buffer.take().unwrap();
-        self.send_pending_packets(ip6_buf);
+        self.ip6_buffer.take().map(move |ip6_buffer| {
+            self.send_pending_packet(ip6_buffer);    
+        });
     }
 }
 
@@ -148,7 +172,6 @@ impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
             -> IPLayer<'a, A, C> {
         IPLayer {
             ip_states: List::new(),
-            sending: Cell::new(false),
             ip6_buffer: TakeCell::new(ip6_buffer),
             sixlowpan: sixlowpan,
         }
@@ -160,26 +183,27 @@ impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
 
     pub fn send(&self, ip_state: &'a IPState<'a>, buf: &'static mut [u8], len: usize) {
         // TODO: Return err if not idle
-        ip_state.state.map(move |state| {
-            match *state {
-                IPSendingState::Idle => { *state = IPSendingState::Ready(buf, len); },
-                _ => {},
-            };
-        });
+        // Transforms ip_state to be ready
+        // TODO: Handle err
+        ip_state.prepare_transmit(buf, len);
+        
         // If we are not currently transmitting
-        if !self.sending.get() {
-            self.sending.set(true);
-        }
+        self.ip6_buffer.take().map(move |ip6_buffer| {
+            self.send_pending_packet(ip6_buffer);
+        });
     }
 
-    // On error, ip6_packet is returned
-    fn send_pending_packets(&self, ip6_packet: &'static mut [u8]) {
+    // TODO: On error, ip6_packet should be returned
+    fn send_pending_packet(&self, transmit_buf: &'static mut [u8]) {
         self.ip_states.iter().for_each(|ip_state| {
-            ip_state.state.map(move |state| {
+            ip_state.state.map(|state| {
                 match *state {
-                    IPSendingState::Ready(ref buf, len) => {
-                        let mut payload = buf;
-                        let total_len = ip_state.initialize_packet(ip6_packet, payload, len);
+                    // Ready, can send the packet
+                    IPSendingState::Ready => {
+                        // TODO: Fix unwrap
+                        let ip6_packet = self.ip6_buffer.take().unwrap();
+                        let total_len = ip_state.initialize_packet(ip6_packet, transmit_buf, ip_state.len.get());
+                        // TODO: Error handling
                         self.sixlowpan.transmit_packet(SRC_MAC_ADDR,
                                                        DST_MAC_ADDR,
                                                        ip6_packet,
@@ -187,10 +211,10 @@ impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
                                                        None,
                                                        true,
                                                        true);
-                        *state = IPSendingState::Sending;
+                        ip_state.state.replace(IPSendingState::Sending);
                         return;
                     },
-                    // If not Ready, continue
+                    // If not Ready, then TODO error
                     _ => {},
                 };
             });
