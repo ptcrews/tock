@@ -208,8 +208,10 @@ impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
                     IPSendingState::Ready => {
                         // TODO: Fix unwrap
                         let ip6_packet = self.ip6_buffer.take().unwrap();
-                        let total_len 
-                            = ip_state.initialize_packet(ip6_packet, transmit_buf, ip_state.len.get());
+                        let total_len
+                            = ip_state.initialize_packet(ip6_packet,
+                                                         transmit_buf,
+                                                         ip_state.len.get());
                         // TODO: Error handling
                         self.sixlowpan.transmit_packet(SRC_MAC_ADDR,
                                                        DST_MAC_ADDR,
