@@ -77,6 +77,11 @@ impl<'a> IPState<'a> {
         self.client.set(Some(client));
     }
 
+    // TODO: This interface will change
+    pub fn get_header_length(&self) -> usize {
+        40
+    }
+
     // This helper function determines address equality; at some point, this
     // should be expanded to include subnet equality
     fn is_my_addr(&self, addr: IPAddr) -> bool {
