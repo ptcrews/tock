@@ -282,7 +282,7 @@ pub fn compress(ctx_store: &ContextStore,
                 dst_mac_addr: MacAddress,
                 mut buf: &mut [u8])
                 -> Result<(usize, usize), ()> {
-    let (offset, ip6_header) = IP6Header::decode(buf).done().ok_or(())?;
+    let (offset, ip6_header) = IP6Header::decode(ip6_datagram).done().ok_or(())?;
     // This should equal offset
     let mut consumed: usize = mem::size_of::<IP6Header>();
     let mut next_headers: &[u8] = &ip6_datagram[consumed..];
