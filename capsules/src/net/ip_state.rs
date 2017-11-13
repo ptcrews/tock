@@ -34,7 +34,7 @@ enum IPSendingState {
 
 pub trait IPClient {
     fn receive<'a>(&self, buf: &'a [u8], len: u16, result: ReturnCode);
-    fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode);
+    fn send_done(&self, buf: &'static mut [u8], result: ReturnCode);
 }
 
 pub struct IPState<'a> {
@@ -126,17 +126,17 @@ impl<'a> IPState<'a> {
         self.client.get().map(move |client| client.receive(&buf[40..], len, result));
     }
 
-    fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
-        self.client.get().map(move |client| client.send_done(buf, acked, result));
+    fn send_done(&self, buf: &'static mut [u8], result: ReturnCode) {
+        self.client.get().map(move |client| client.send_done(buf, result));
     }
 }
 
-pub struct IPLayer<'a, A: time::Alarm + 'a, C: ContextStore> {
+pub struct IPLayer<'a, A: time::Alarm + 'a, C: ContextStore + 'a> {
     ip_states: List<'a, IPState<'a>>,
     ip6_buffer: TakeCell<'static, [u8]>,
     // TODO: I think that the ContextStore should be a Thread-level (or
     // application level) thing, and so passed-in during intialization
-    sixlowpan: Sixlowpan<'a, A, C>,
+    sixlowpan: &'a Sixlowpan<'a, A, C>,
 }
 
 impl<'a, A: time::Alarm, C: ContextStore> SixlowpanClient for IPLayer<'a, A, C> {
@@ -155,7 +155,7 @@ impl<'a, A: time::Alarm, C: ContextStore> SixlowpanClient for IPLayer<'a, A, C> 
     // TODO: In order to determine *who* sent the packet, we need to maintain
     // the invariant that buf is not modified by lower layers
     // TODO: Or change the callback to include state data
-    fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
+    fn send_done(&self, buf: &'static mut [u8], _: bool, result: ReturnCode) {
         // If the header is invalid, silently discard
         // TODO: This behavior should be changed
         let ip6_header_option = IP6Header::decode(buf).done();
@@ -169,7 +169,7 @@ impl<'a, A: time::Alarm, C: ContextStore> SixlowpanClient for IPLayer<'a, A, C> 
                 .iter()
                 .find(|ip_state| ip_state.is_my_addr(addr))
                 .map(move |ip_state| {
-                    ip_state.send_done(ip_state.transmit_buf.take().unwrap(), acked, result)
+                    ip_state.send_done(ip_state.transmit_buf.take().unwrap(), result)
                 });
         });
 
@@ -182,7 +182,7 @@ impl<'a, A: time::Alarm, C: ContextStore> SixlowpanClient for IPLayer<'a, A, C> 
 }
 
 impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
-    pub fn new(ip6_buffer: &'static mut [u8], sixlowpan: Sixlowpan<'a, A, C>) -> IPLayer<'a, A, C> {
+    pub fn new(ip6_buffer: &'static mut [u8], sixlowpan: &'a Sixlowpan<'a, A, C>) -> IPLayer<'a, A, C> {
         IPLayer {
             ip_states: List::new(),
             ip6_buffer: TakeCell::new(ip6_buffer),
