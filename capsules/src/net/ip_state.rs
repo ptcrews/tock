@@ -5,6 +5,7 @@
 //! - Does *not* perform fair scheduling on the ready "queue" - simply sends
 //!   the next packet immediately. Should be changed to do something more
 //!   round-robin style
+//! - Set destination IP address...
 
 use core::cell::Cell;
 use kernel::ReturnCode;
@@ -133,6 +134,7 @@ impl<'a> IPState<'a> {
 
 pub struct IPLayer<'a, A: time::Alarm + 'a, C: ContextStore + 'a> {
     ip_states: List<'a, IPState<'a>>,
+    // This buffer is passed to the transmit function
     ip6_buffer: TakeCell<'static, [u8]>,
     // TODO: I think that the ContextStore should be a Thread-level (or
     // application level) thing, and so passed-in during intialization
@@ -205,33 +207,35 @@ impl<'a, A: time::Alarm, C: ContextStore> IPLayer<'a, A, C> {
     }
 
     // TODO: On error, ip6_packet should be returned
-    fn send_pending_packet(&self, transmit_buf: &'static mut [u8]) {
-        self.ip_states.iter().for_each(|ip_state| {
+    fn send_pending_packet(&self, ip6_packet: &'static mut [u8]) {
+        let found_state = self.ip_states.iter().find(|ip_state| {
             ip_state.state.map(|state| {
                 match *state {
                     // Ready, can send the packet
                     IPSendingState::Ready => {
                         // TODO: Fix unwrap
-                        let ip6_packet = self.ip6_buffer.take().unwrap();
-                        let total_len
-                            = ip_state.initialize_packet(ip6_packet,
-                                                         transmit_buf,
-                                                         ip_state.len.get());
-                        // TODO: Error handling
-                        self.sixlowpan.transmit_packet(SRC_MAC_ADDR,
-                                                       DST_MAC_ADDR,
-                                                       ip6_packet,
-                                                       total_len,
-                                                       None,
-                                                       true,
-                                                       true);
-                        ip_state.state.replace(IPSendingState::Sending);
-                        return;
+                        true
                     }
                     // If not Ready, then TODO error
-                    _ => {}
-                };
-            });
+                    _ => false
+                }
+            }).unwrap_or(false)
+        });
+        found_state.map(move |ip_state| {
+            let payload = ip_state.transmit_buf.take().unwrap();
+            let total_len = ip_state.initialize_packet(ip6_packet,
+                                                       payload,
+                                                       ip_state.len.get());
+            // TODO: Error handling
+            self.sixlowpan.transmit_packet(SRC_MAC_ADDR,
+                                           DST_MAC_ADDR,
+                                           ip6_packet,
+                                           total_len,
+                                           None,
+                                           true,
+                                           true);
+            ip_state.state.replace(IPSendingState::Sending);
+
         });
     }
 }

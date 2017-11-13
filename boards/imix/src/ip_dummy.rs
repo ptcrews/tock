@@ -143,7 +143,6 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     ip_test.alarm.set_client(ip_test);
     ip_test.init();
     ip_test
-
 }
 
 impl<'a, A: time::Alarm, T: time::Alarm + 'a> IPClient for IPTest<'a, A, T> {

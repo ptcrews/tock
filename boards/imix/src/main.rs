@@ -453,6 +453,11 @@ pub unsafe fn reset_handler() {
         capsules::usb_user::UsbSyscallDriver::new(
             usb_client, kernel::Grant::create()));
 
+    let ip_test = ip_dummy::initialize_all(radio_mac as &'static Mac,
+                                           mux_alarm as &'static
+                                             MuxAlarm<'static,
+                                                sam4l::ast::Ast>);
+
     let imix = Imix {
         console: console,
         alarm: alarm,
@@ -487,5 +492,6 @@ pub unsafe fn reset_handler() {
                                     &mut APP_MEMORY,
                                     &mut PROCESSES,
                                     FAULT_RESPONSE);
+    ip_test.start();
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }
