@@ -355,11 +355,11 @@ impl TxState {
 
     // Assumes we have already called init_transmit
     pub fn prepare_fragment<'b>(&self,
-                                     packet: &'b [u8],
-                                     frag_buf: &'static mut [u8],
-                                     ctx_store: &ContextStore,
-                                     radio: &Mac)
-                                     -> Result<(bool, Frame), (ReturnCode, &'static mut [u8])> {
+                                packet: &'b [u8],
+                                frag_buf: &'static mut [u8],
+                                ctx_store: &ContextStore,
+                                radio: &Mac)
+                                -> Result<(bool, Frame), (ReturnCode, &'static mut [u8])> {
 
         if self.dgram_size.get() as usize > packet.len() {
             return Err((ReturnCode::ENOMEM, frag_buf));
@@ -664,7 +664,6 @@ impl<'a> RxState<'a> {
 /// Finally, `set_client` controls the client that will receive transmission
 /// completion and reception callbacks.
 pub struct Sixlowpan<'a, A: time::Alarm + 'a, C: ContextStore> {
-    pub radio: &'a Mac<'a>,
     ctx_store: C,
     clock: &'a A,
     tx_dgram_tag: Cell<u16>,
@@ -721,9 +720,6 @@ impl<'a, A: time::Alarm, C: ContextStore> Sixlowpan<'a, A, C> {
     ///
     /// # Arguments
     ///
-    /// * `radio` - An implementation of the `Mac` trait that manages the timing
-    /// and frequency of sending a receiving 802.15.4 frames
-    ///
     /// * `ctx_store` - Stores IPv6 address nextwork context mappings
     ///
     /// * `tx_buf` - A buffer used for storing individual fragments of a packet
@@ -733,13 +729,10 @@ impl<'a, A: time::Alarm, C: ContextStore> Sixlowpan<'a, A, C> {
     /// * `clock` - A implementation of `Alarm` used for tracking the timing of
     /// frame arrival. The clock should be continue running during sleep and
     /// have an accuracy of at least 60 seconds.
-    pub fn new(radio: &'a Mac<'a>,
-               ctx_store: C,
-               tx_buf: &'static mut [u8],
+    pub fn new(ctx_store: C,
                clock: &'a A)
                -> Sixlowpan<'a, A, C> {
         Sixlowpan {
-            radio: radio,
             ctx_store: ctx_store,
             clock: clock,
             tx_dgram_tag: Cell::new(0),

@@ -43,7 +43,7 @@ extern crate sam4l;
 use capsules::ieee802154::mac::Mac;
 use capsules::net::ieee802154::MacAddress;
 use capsules::net::ip::{IP6Header, IPAddr, ip6_nh};
-use capsules::net::sixlowpan::{Sixlowpan, SixlowpanClient};
+use capsules::net::sixlowpan::{Sixlowpan, SixlowpanRxClient, SixlowpanTxClient};
 use capsules::net::sixlowpan_compression;
 use capsules::net::sixlowpan_compression::Context;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
@@ -118,7 +118,9 @@ pub const TEST_LOOP: bool = false;
 
 pub struct LowpanTest<'a, A: time::Alarm + 'a, T: time::Alarm + 'a> {
     alarm: A,
-    frag_state: Sixlowpan<'a, T, Context>,
+    sixlowpan: Sixlowpan<'a, T, Context>,
+    //sixlowpan_tx: TxState,
+    radio: &'a Mac<'a>,
     test_counter: Cell<usize>,
 }
 
@@ -133,46 +135,46 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         capsules::net::sixlowpan::RxState::new(&mut RX_STATE_BUF)
         );
 
-    let frag_state =
-        capsules::net::sixlowpan::Sixlowpan::new(radio_mac,
-                                                 capsules::net::sixlowpan_compression::Context {
+    let sixlowpan =
+        capsules::net::sixlowpan::Sixlowpan::new(capsules::net::sixlowpan_compression::Context {
                                                      prefix: DEFAULT_CTX_PREFIX,
                                                      prefix_len: DEFAULT_CTX_PREFIX_LEN,
                                                      id: 0,
                                                      compress: false,
                                                  },
-                                                 &mut RADIO_BUF_TMP,
                                                  &sam4l::ast::AST);
 
     let lowpan_frag_test = static_init!(
         LowpanTest<'static,
         VirtualMuxAlarm<'static, sam4l::ast::Ast>,
         sam4l::ast::Ast>,
-        LowpanTest::new(frag_state,
+        LowpanTest::new(sixlowpan,
+                        radio_mac,
                         VirtualMuxAlarm::new(mux_alarm))
     );
 
-    lowpan_frag_test.frag_state.add_rx_state(default_rx_state);
+    lowpan_frag_test.sixlowpan.add_rx_state(default_rx_state);
     lowpan_frag_test.alarm.set_client(lowpan_frag_test);
 
-    radio_mac.set_transmit_client(&lowpan_frag_test.frag_state);
-    radio_mac.set_receive_client(&lowpan_frag_test.frag_state);
+    radio_mac.set_transmit_client(&lowpan_frag_test.sixlowpan);
+    radio_mac.set_receive_client(&lowpan_frag_test.sixlowpan);
 
     lowpan_frag_test.init();
     lowpan_frag_test
 }
 
 impl<'a, A: time::Alarm, T: time::Alarm + 'a> LowpanTest<'a, A, T> {
-    pub fn new(frag_state: Sixlowpan<'a, T, Context>, alarm: A) -> LowpanTest<'a, A, T> {
+    pub fn new(sixlowpan: Sixlowpan<'a, T, Context>, radio: &'a Mac<'a>, alarm: A) -> LowpanTest<'a, A, T> {
         LowpanTest {
             alarm: alarm,
-            frag_state: frag_state,
+            sixlowpan: sixlowpan,
+            radio: radio,
             test_counter: Cell::new(0),
         }
     }
 
     pub fn init(&'a self) {
-        self.frag_state.set_client(self);
+        self.sixlowpan.set_rx_client(self);
     }
 
     pub fn start(&self) {
@@ -332,14 +334,16 @@ impl<'a, A: time::Alarm, T: time::Alarm + 'a> LowpanTest<'a, A, T> {
                                _: &[u8],
                                src_mac_addr: MacAddress,
                                dst_mac_addr: MacAddress) {
-        let frag_state = &self.frag_state;
+        let sixlowpan = &self.sixlowpan;
         //frag_state.radio.config_set_pan(0xABCD);
-        let ret_code = frag_state.transmit_packet(src_mac_addr,
+        /*
+        let ret_code = sixlowpan.transmit_packet(src_mac_addr,
                                                   dst_mac_addr,
                                                   &mut IP6_DGRAM,
                                                   IP6_DGRAM.len(),
                                                   None);
         debug!("Ret code: {:?}", ret_code);
+        */
     }
 }
 
@@ -349,7 +353,7 @@ impl<'a, A: time::Alarm, T: time::Alarm + 'a> time::Client for LowpanTest<'a, A,
     }
 }
 
-impl<'a, A: time::Alarm, T: time::Alarm + 'a> SixlowpanClient for LowpanTest<'a, A, T> {
+impl<'a, A: time::Alarm, T: time::Alarm + 'a> SixlowpanRxClient for LowpanTest<'a, A, T> {
     fn receive<'b>(&self, buf: &'b [u8], len: u16, retcode: ReturnCode) {
         debug!("Receive completed: {:?}", retcode);
         let test_num = self.test_counter.get();
@@ -357,10 +361,12 @@ impl<'a, A: time::Alarm, T: time::Alarm + 'a> SixlowpanClient for LowpanTest<'a,
         self.run_check_test(test_num, buf, len)
     }
 
+    /*
     fn send_done(&self, _: &'static mut [u8], _: bool, _: ReturnCode) {
         debug!("Send completed");
         self.schedule_next();
     }
+    */
 }
 
 static mut IP6_DGRAM: [u8; IP6_HDR_SIZE + PAYLOAD_LEN] = [0; IP6_HDR_SIZE + PAYLOAD_LEN];
