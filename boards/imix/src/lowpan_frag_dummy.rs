@@ -159,7 +159,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     lowpan_frag_test.sixlowpan.add_rx_state(default_rx_state);
     lowpan_frag_test.alarm.set_client(lowpan_frag_test);
 
-    radio_mac.set_transmit_client(&lowpan_frag_test.sixlowpan);
+    //radio_mac.set_transmit_client(lowpan_frag_test);
     radio_mac.set_receive_client(&lowpan_frag_test.sixlowpan);
 
     lowpan_frag_test.init();
@@ -341,8 +341,10 @@ impl<'a, A: time::Alarm, T: time::Alarm + 'a> LowpanTest<'a, A, T> {
                                _: &[u8],
                                src_mac_addr: MacAddress,
                                dst_mac_addr: MacAddress) {
-        let sixlowpan = &self.sixlowpan;
+        self.send_next(&mut RF233_BUF);
+        //let sixlowpan = &self.sixlowpan;
         //frag_state.radio.config_set_pan(0xABCD);
+        
         /*
         let ret_code = sixlowpan.transmit_packet(src_mac_addr,
                                                   dst_mac_addr,
@@ -351,6 +353,29 @@ impl<'a, A: time::Alarm, T: time::Alarm + 'a> LowpanTest<'a, A, T> {
                                                   None);
         debug!("Ret code: {:?}", ret_code);
         */
+    }
+
+    fn send_next(&self, tx_buf: &'static mut [u8]) {
+        unsafe {
+            match self.sixlowpan_tx.prepare_fragment(&IP6_DGRAM,
+                                                     tx_buf,
+                                                     &self.sixlowpan.ctx_store,
+                                                     self.radio) {
+                Ok((is_done, frame)) => {
+                    debug!("Sent frame!");
+                    if is_done {
+                        debug!("Sent packet!");
+                        self.schedule_next();
+                    } else {
+                        // TODO: Check err
+                        self.radio.transmit(frame);
+                    }
+                },
+                Err((retcode, buf)) => {
+                    debug!("ERROR!");
+                },
+            }
+        }
     }
 }
 
@@ -367,39 +392,13 @@ impl<'a, A: time::Alarm, T: time::Alarm + 'a> SixlowpanRxClient for LowpanTest<'
         self.test_counter.set((test_num + 1) % self.num_tests());
         self.run_check_test(test_num, buf, len)
     }
-
-    /*
-    fn send_done(&self, _: &'static mut [u8], _: bool, _: ReturnCode) {
-        debug!("Send completed");
-        self.schedule_next();
-    }
-    */
 }
 
 static mut IP6_DGRAM: [u8; IP6_HDR_SIZE + PAYLOAD_LEN] = [0; IP6_HDR_SIZE + PAYLOAD_LEN];
 
 impl<'a, A: time::Alarm, T: time::Alarm + 'a> TxClient for LowpanTest<'a, A, T> {
     fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
-        unsafe {
-        match self.sixlowpan_tx.prepare_fragment(&IP6_DGRAM,
-                                                 tx_buf,
-                                                 &self.sixlowpan.ctx_store,
-                                                 self.radio) {
-            Ok((is_done, frame)) => {
-                debug!("Sent frame!");
-                if is_done {
-                    debug!("Sent packet!");
-                    self.schedule_next();
-                } else {
-                    // TODO: Check err
-                    self.radio.transmit(frame);
-                }
-            },
-            Err((retcode, buf)) => {
-                debug!("ERROR!");
-            },
-        }
-        }
+        self.send_next(tx_buf);
     }
 }
 
