@@ -664,7 +664,7 @@ impl<'a> RxState<'a> {
 /// Finally, `set_client` controls the client that will receive transmission
 /// completion and reception callbacks.
 pub struct Sixlowpan<'a, A: time::Alarm + 'a, C: ContextStore> {
-    ctx_store: C,
+    pub ctx_store: C,
     clock: &'a A,
     tx_dgram_tag: Cell<u16>,
     rx_client: Cell<Option<&'a SixlowpanRxClient>>,
