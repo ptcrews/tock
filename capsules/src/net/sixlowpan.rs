@@ -674,12 +674,22 @@ pub struct Sixlowpan<'a, A: time::Alarm + 'a, C: ContextStore> {
 }
 
 // This function is called after transmitting a frame
-// TODO: Remove
+// TODO: Implement for independent send
 #[allow(unused_must_use)]
 impl<'a, A: time::Alarm, C: ContextStore> TxClient for Sixlowpan<'a, A, C> {
     fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         // If we are done sending the entire packet, or if the transmit failed,
         // end the transmit state and issue callbacks.
+        /* TODO: Finish implementing
+        self.tx_state.map(|tx_state| {
+            if result != ReturnCode::SUCCESS || tx_state.is_transmit_done() {
+                tx_state.end_transmit();
+                self.tx_client.map(|client| client.send_done(tx_buf, acked, result));
+            } else {
+                let result = 
+            }
+        });
+        */
         /*
         if result != ReturnCode::SUCCESS || self.tx_state.is_transmit_done() {
             self.tx_state.end_transmit(tx_buf, self.client.get(), acked, result);
