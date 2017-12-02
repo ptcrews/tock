@@ -34,6 +34,8 @@ int main(void) {
                               BUF_SIZE);
     if (err != TOCK_SUCCESS) {
       gpio_toggle(0);
+    } else {
+      printf("Success\n");
     }
     delay_ms(250);
   }
