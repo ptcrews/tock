@@ -501,6 +501,13 @@ pub unsafe fn reset_handler() {
     rf233.reset();
     rf233.start();
 
+    /* TODO: rng driver stuff
+    let rng = static_init!(
+        capsules::rng::SimpleRng<'static, sam4l::trng::Trng>,
+        capsules::rng::SimpleRng::new(&sam4l::trng::TRNG, kernel::Grant::create()));
+    sam4l::trng::TRNG.set_client(rng);
+    */
+
     debug!("Initialization complete. Entering main loop");
     extern "C" {
         /// Beginning of the ROM region containing app images.
