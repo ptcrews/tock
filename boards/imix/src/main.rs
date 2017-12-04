@@ -69,6 +69,7 @@ struct Imix {
                         capsules::usbc_client::Client<'static, sam4l::usbc::Usbc<'static>>>,
     nrf51822: &'static capsules::nrf51822_serialization::Nrf51822Serialization<'static,
                                                                                sam4l::usart::USART>,
+    rng: &'static capsules::rng::SimpleRng<'static, sam4l::trng::Trng<'static>>,
 }
 
 // The RF233 radio stack requires our buffers for its SPI operations:
@@ -110,6 +111,7 @@ impl kernel::Platform for Imix {
             capsules::ieee802154::DRIVER_NUM => f(Some(self.radio_driver)),
             capsules::nrf51822_serialization::DRIVER_NUM => f(Some(self.nrf51822)),
             kernel::ipc::DRIVER_NUM => f(Some(&self.ipc)),
+            capsules::rng::DRIVER_NUM => f(Some(self.rng)),
             _ => f(None),
         }
     }
@@ -463,6 +465,12 @@ pub unsafe fn reset_handler() {
         capsules::usb_user::UsbSyscallDriver::new(
             usb_client, kernel::Grant::create()));
 
+    // Configure the RNG driver
+    let rng = static_init!(
+        capsules::rng::SimpleRng<'static, sam4l::trng::Trng>,
+        capsules::rng::SimpleRng::new(&sam4l::trng::TRNG, kernel::Grant::create()));
+    sam4l::trng::TRNG.set_client(rng);
+
     let imix = Imix {
         console: console,
         alarm: alarm,
@@ -480,6 +488,7 @@ pub unsafe fn reset_handler() {
         radio_driver: radio_driver,
         usb_driver: usb_driver,
         nrf51822: nrf_serialization,
+        rng: rng,
     };
 
     let mut chip = sam4l::chip::Sam4l::new();
@@ -500,13 +509,6 @@ pub unsafe fn reset_handler() {
     // initialization to work.
     rf233.reset();
     rf233.start();
-
-    /* TODO: rng driver stuff
-    let rng = static_init!(
-        capsules::rng::SimpleRng<'static, sam4l::trng::Trng>,
-        capsules::rng::SimpleRng::new(&sam4l::trng::TRNG, kernel::Grant::create()));
-    sam4l::trng::TRNG.set_client(rng);
-    */
 
     debug!("Initialization complete. Entering main loop");
     extern "C" {

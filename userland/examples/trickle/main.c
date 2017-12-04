@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <stdlib.h>
 
 #include "gpio.h"
 #include "led.h"
@@ -168,14 +169,17 @@ static void receive_frame(__attribute__ ((unused)) int pans,
 }
 
 void consistent_transmission(trickle_state* state) {
+  // Increment the "heard" counter
   state->c += 1;
 }
 
 void inconsistent_transmission(trickle_state* state, int val) {
-  // Lets us detect when we've heard an inconsistent transmission
-  //gpio_toggle(0);
+  // Lets us detect when we need to update our value
   if (state->val < val) {
     state->val = val;
+    // Toggle the gpio pin when we update our value - we use the
+    // timing from this to measure propogation delay
+    gpio_toggle(0);
     printf("New val: %d\n", val);
   }
   printf("Inconsistent transmission\n");
@@ -203,6 +207,8 @@ int main(void) {
   ieee802154_set_pan(0xABCD);
   ieee802154_config_commit();
   ieee802154_up();
+  // This delay is necessary as if we receive a callback too early, we will
+  // panic/crash
   delay_ms(1000);
   // Set our callback function as the callback
   ieee802154_receive(receive_frame, packet_rx, IEEE802154_FRAME_LEN);
@@ -210,15 +216,4 @@ int main(void) {
   trickle_state* state = (trickle_state*)malloc(sizeof(trickle_state));
   initialize_state(state);
   interval_start(state);
-
-  /*
-    led_toggle(0);
-    if (err != TOCK_SUCCESS) {
-      gpio_toggle(0);
-    } else {
-      printf("Success\n");
-    }
-    delay_ms(250);
-  }
-    */
 }
