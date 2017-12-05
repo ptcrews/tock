@@ -353,16 +353,15 @@ impl<'a> TxState<'a> {
     pub fn init(&self,
                 src_mac_addr: MacAddress,
                 dst_mac_addr: MacAddress,
-                packet_len: usize,
                 security: Option<(SecurityLevel, KeyId)>) {
         self.src_mac_addr.set(src_mac_addr);
         self.dst_mac_addr.set(dst_mac_addr);
         self.security.set(security);
-        self.dgram_size.set(packet_len as u16);
         self.busy.set(false);
     }
 
     // Assumes we have already called init_transmit
+    // This assumes packet is a slice representing its length
     pub fn next_fragment<'b>(&self,
                          packet: &'b [u8],
                          frag_buf: &'static mut [u8],
@@ -411,9 +410,8 @@ impl<'a> TxState<'a> {
                           ctx_store: &ContextStore)
                       -> Result<Frame, (ReturnCode, &'static mut [u8])> {
         self.busy.set(true);
-        //self.dgram_tag.set(self.sixlowpan.next_dgram_tag());
-        // TODO
-        self.dgram_tag.set(10);
+        self.dgram_size.set(ip6_packet.len() as u16);
+        self.dgram_tag.set(self.sixlowpan.next_dgram_tag());
         self.prepare_first_fragment(ip6_packet, frame, ctx_store)
     }
 
