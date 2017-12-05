@@ -290,6 +290,13 @@ fn is_fragment(packet: &[u8]) -> bool {
     (mask == lowpan_frag::FRAGN_HDR) || (mask == lowpan_frag::FRAG1_HDR)
 }
 
+pub trait SixlowpanState<'a> {
+    fn next_dgram_tag(&self) -> u16;
+    fn get_ctx_store(&self) -> &ContextStore;
+    fn add_rx_state(&self, rx_state: &'a RxState<'a>);
+    fn set_rx_client(&'a self, client: &'a SixlowpanRxClient);
+}
+
 /// Tracks the global transmit state for a single IPv6 packet.
 ///
 /// Since transmit is serialized, the `Sixlowpan` struct only contains
@@ -299,10 +306,9 @@ fn is_fragment(packet: &[u8]) -> bool {
 /// This struct maintains a reference to the full IPv6 packet, the source/dest
 /// MAC addresses and PanIDs, security/compression/fragmentation options,
 /// per-fragmentation state, and some global state.
-pub struct TxState {
+pub struct TxState<'a> {
     // State for the current transmission
-    //TODO: Put packet here?
-    //packet: TakeCell<'static, [u8]>,
+
     src_pan: Cell<PanID>,
     dst_pan: Cell<PanID>,
     src_mac_addr: Cell<MacAddress>,
@@ -313,16 +319,19 @@ pub struct TxState {
     dgram_offset: Cell<usize>,
 
     busy: Cell<bool>,
+    // We need a reference to sixlowpan to compute and increment
+    // the global dgram_tag value
+    sixlowpan: &'a SixlowpanState<'a>,
 }
 
-impl TxState {
+impl<'a> TxState<'a> {
     /// Creates a new `TxState`
     ///
     /// # Arguments
     ///
     /// `tx_buf` - A buffer for storing fragments the size of a 802.15.4 frame.
     /// This buffer must be at least radio::MAX_FRAME_SIZE bytes long.
-    pub fn new() -> TxState {
+    pub fn new(sixlowpan: &'a SixlowpanState<'a>) -> TxState<'a> {
         TxState {
             // Externally setable fields
             src_pan: Cell::new(0),
@@ -337,15 +346,15 @@ impl TxState {
             dgram_offset: Cell::new(0),
 
             busy: Cell::new(false),
+            sixlowpan: sixlowpan,
         }
     }
 
-    pub fn init_transmit(&self,
-                     src_mac_addr: MacAddress,
-                     dst_mac_addr: MacAddress,
-                     packet_len: usize,
-                     security: Option<(SecurityLevel, KeyId)>) {
-
+    pub fn init(&self,
+                src_mac_addr: MacAddress,
+                dst_mac_addr: MacAddress,
+                packet_len: usize,
+                security: Option<(SecurityLevel, KeyId)>) {
         self.src_mac_addr.set(src_mac_addr);
         self.dst_mac_addr.set(dst_mac_addr);
         self.security.set(security);
@@ -354,29 +363,31 @@ impl TxState {
     }
 
     // Assumes we have already called init_transmit
-    pub fn prepare_fragment<'b>(&self,
-                                packet: &'b [u8],
-                                frag_buf: &'static mut [u8],
-                                ctx_store: &ContextStore,
-                                radio: &Mac)
-                                -> Result<(bool, Frame), (ReturnCode, &'static mut [u8])> {
+    pub fn next_fragment<'b>(&self,
+                         packet: &'b [u8],
+                         frag_buf: &'static mut [u8],
+                         radio: &Mac)
+                         -> Result<(bool, Frame), (ReturnCode, &'static mut [u8])> {
 
-        if self.dgram_size.get() as usize > packet.len() {
+        // Want the total datagram size we are sending to be less than
+        // the length of the packet - otherwise, we risk reading off the
+        // end of the array
+        if self.dgram_size.get() as usize <= packet.len() {
             return Err((ReturnCode::ENOMEM, frag_buf));
         }
 
         // This consumes frag_buf
         let frame = radio.prepare_data_frame(frag_buf,
-                                                   self.dst_pan.get(),
-                                                   self.dst_mac_addr.get(),
-                                                   self.src_pan.get(),
-                                                   self.src_mac_addr.get(),
-                                                   self.security.get())
+                                             self.dst_pan.get(),
+                                             self.dst_mac_addr.get(),
+                                             self.src_pan.get(),
+                                             self.src_mac_addr.get(),
+                                             self.security.get())
             .map_err(|frame| (ReturnCode::FAIL, frame))?;
         
         // If this is the first fragment
         if !self.busy.get() {
-            let frame = self.start_transmit(packet, frame, ctx_store)?;
+            let frame = self.start_transmit(packet, frame, self.sixlowpan.get_ctx_store())?;
             Ok((false, frame))
         } else if self.is_transmit_done() {
             self.end_transmit();
@@ -725,6 +736,40 @@ impl<'a, A: time::Alarm, C: ContextStore> RxClient for Sixlowpan<'a, A, C> {
     }
 }
 
+impl<'a, A: time::Alarm, C: ContextStore> SixlowpanState<'a> for Sixlowpan<'a, A, C> {
+
+    fn next_dgram_tag(&self) -> u16 {
+        // Increment dgram_tag
+        let dgram_tag = if (self.tx_dgram_tag.get() + 1) == 0 {
+            1
+        } else {
+            self.tx_dgram_tag.get() + 1
+        };
+        self.tx_dgram_tag.set(dgram_tag);
+        dgram_tag
+
+    }
+
+    fn get_ctx_store(&self) -> &ContextStore {
+        &self.ctx_store
+    }
+
+    /// Adds an additional `RxState` for reassembling IPv6 packets
+    ///
+    /// Each [RxState](struct.RxState.html) struct allows an additional IPv6
+    /// packet to be reassembled concurrently.
+    fn add_rx_state(&self, rx_state: &'a RxState<'a>) {
+        self.rx_states.push_head(rx_state);
+    }
+
+    /// Sets the [SixlowpanClient](trait.SixlowpanClient.html) that will receive
+    /// transmission completion and new packet reception callbacks.
+    fn set_rx_client(&'a self, client: &'a SixlowpanRxClient) {
+        self.rx_client.set(Some(client));
+    }
+
+}
+
 impl<'a, A: time::Alarm, C: ContextStore> Sixlowpan<'a, A, C> {
     /// Creates a new `Sixlowpan`
     ///
@@ -750,20 +795,6 @@ impl<'a, A: time::Alarm, C: ContextStore> Sixlowpan<'a, A, C> {
 
             rx_states: List::new(),
         }
-    }
-
-    /// Adds an additional `RxState` for reassembling IPv6 packets
-    ///
-    /// Each [RxState](struct.RxState.html) struct allows an additional IPv6
-    /// packet to be reassembled concurrently.
-    pub fn add_rx_state(&self, rx_state: &'a RxState<'a>) {
-        self.rx_states.push_head(rx_state);
-    }
-
-    /// Sets the [SixlowpanClient](trait.SixlowpanClient.html) that will receive
-    /// transmission completion and new packet reception callbacks.
-    pub fn set_rx_client(&'a self, client: &'a SixlowpanRxClient) {
-        self.rx_client.set(Some(client));
     }
 
     /// Transmits the supplied IPv6 packet.
@@ -827,18 +858,6 @@ impl<'a, A: time::Alarm, C: ContextStore> Sixlowpan<'a, A, C> {
         }
     }
     */
-
-    fn next_dgram_tag(&self) -> u16 {
-        // Increment dgram_tag
-        let dgram_tag = if (self.tx_dgram_tag.get() + 1) == 0 {
-            1
-        } else {
-            self.tx_dgram_tag.get() + 1
-        };
-        self.tx_dgram_tag.set(dgram_tag);
-        dgram_tag
-
-    }
 
     fn receive_frame(&self,
                      packet: &[u8],
