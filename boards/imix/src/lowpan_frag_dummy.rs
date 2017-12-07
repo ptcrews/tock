@@ -42,7 +42,7 @@ use capsules;
 extern crate sam4l;
 use capsules::ieee802154::mac::{Mac, TxClient};
 use capsules::net::ieee802154::MacAddress;
-use capsules::net::ip::{IP6Header, IPAddr, ip6_nh};
+use capsules::net::ip_utils::{IP6Header, IPAddr, ip6_nh};
 use capsules::net::sixlowpan::{Sixlowpan, SixlowpanState, TxState, SixlowpanRxClient, SixlowpanTxClient};
 use capsules::net::sixlowpan_compression;
 use capsules::net::sixlowpan_compression::Context;
