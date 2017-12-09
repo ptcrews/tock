@@ -18,7 +18,7 @@
 char packet[BUF_SIZE];
 char packet_rx[IEEE802154_FRAME_LEN];
 
-#define SRC_ADDR 0x1503
+#define SRC_ADDR 0x1501
 #define SRC_PAN 0xABCD
 #define INIT_DELAY 1000
 #define BUTTON_NUM 0
@@ -152,7 +152,6 @@ static void receive_frame(__attribute__ ((unused)) int pans,
   
   unsigned offset = ieee802154_frame_get_payload_offset(packet_rx);
   unsigned length = ieee802154_frame_get_payload_length(packet_rx);
-  // TODO: Check PAN matches
 
   if (!check_addrs()) {
     return;
@@ -274,6 +273,7 @@ int main(void) {
   // Set our callback function as the callback
   ieee802154_receive(receive_frame, packet_rx, IEEE802154_FRAME_LEN);
   led_off(LED_NUM);
+  // TODO: Remove below two lines - only for testing gpio
   gpio_set(GPIO_NUM);
   delay_ms(1000);
   gpio_clear(GPIO_NUM);
