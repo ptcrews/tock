@@ -18,12 +18,13 @@
 char packet[BUF_SIZE];
 char packet_rx[IEEE802154_FRAME_LEN];
 
-#define SRC_ADDR 0x1501
+#define SRC_ADDR 0x1503
 #define SRC_PAN 0xABCD
 #define INIT_DELAY 1000
 #define BUTTON_NUM 0
 #define GPIO_NUM 0
 #define LED_NUM 0
+#define MULTI_HOP_SIM true
 
 // Trickle constants
 #define I_MIN 1000 // In ms
@@ -40,6 +41,8 @@ typedef struct {
 } trickle_state;
 
 static uint32_t I_MAX_VAL = 0;
+// This is only necessary as one of the callbacks doesn't pass a reference
+// to our state struct back - thus, anything not global is lost
 static trickle_state* global_state = NULL;
 
 void interval_t(trickle_state* state);
@@ -51,6 +54,7 @@ void transmit(int payload);
 void consistent_transmission(trickle_state* state);
 void inconsistent_transmission(trickle_state* state, int val);
 void updated_value(int new_val);
+bool check_addrs(void);
 
 static void button_pressed(__attribute__ ((unused)) int btn_num,
                            int val, // 1 if pressed, 0 if not pressed
@@ -150,24 +154,7 @@ static void receive_frame(__attribute__ ((unused)) int pans,
   unsigned length = ieee802154_frame_get_payload_length(packet_rx);
   // TODO: Check PAN matches
 
-  unsigned short short_addr;
-  unsigned char long_addr[8];
-  addr_mode_t addr_mode;
-  addr_mode = ieee802154_frame_get_dst_addr(packet_rx, &short_addr, long_addr);
-  if (addr_mode == ADDR_SHORT) {
-    if (short_addr != 0xffff) {
-      // Not for us
-      return;
-    }
-  } else if (addr_mode == ADDR_LONG) {
-    int i;
-    for (i = 0; i < 8; i++) {
-      if (long_addr[i] != 0xff) {
-        return;
-      }
-    }
-  } else {
-    // Error: No address
+  if (!check_addrs()) {
     return;
   }
 
@@ -181,6 +168,52 @@ static void receive_frame(__attribute__ ((unused)) int pans,
   } else {
     inconsistent_transmission(global_state, received_val);
   }
+}
+
+bool check_addrs(void) {
+  // Destination address checks
+  unsigned short dst_short_addr;
+  unsigned char dst_long_addr[8];
+  addr_mode_t dst_addr_mode;
+  dst_addr_mode = ieee802154_frame_get_dst_addr(packet_rx, &dst_short_addr, dst_long_addr);
+  if (dst_addr_mode == ADDR_SHORT) {
+    if (dst_short_addr != 0xffff) {
+      // Not for us - only listen to broadcast messages
+      return false;
+    }
+  } else if (dst_addr_mode == ADDR_LONG) {
+    int i;
+    for (i = 0; i < 8; i++) {
+      if (dst_long_addr[i] != 0xff) {
+        return false;
+      }
+    }
+  } else {
+    // Error: No address
+    return false;
+  }
+
+  // Only do source address checks if simulating multi-hop network
+  if (MULTI_HOP_SIM) {
+    // Source address checks
+    unsigned short src_short_addr;
+    unsigned char src_long_addr[8];
+    addr_mode_t src_addr_mode;
+    src_addr_mode = ieee802154_frame_get_src_addr(packet_rx, &src_short_addr, src_long_addr);
+    if (src_addr_mode == ADDR_SHORT) {
+      // Return false if src addr is greater than += 1 away from our addr
+      if (src_short_addr > SRC_ADDR + 1 || src_short_addr < SRC_ADDR - 1) {
+        // TODO: Confirm this works
+        return false;
+      }
+    } else {
+      // If address is long or non-existent, then we return false - the
+      // source address should *always* be short
+      return false;
+    }
+  }
+
+  return true;
 }
 
 void consistent_transmission(trickle_state* state) {
