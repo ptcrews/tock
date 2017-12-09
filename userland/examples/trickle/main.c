@@ -8,6 +8,7 @@
 #include "tock.h"
 #include "rng.h"
 #include "alarm.h"
+#include "button.h"
 
 // IEEE 802.15.4 sample packet transmission app.
 // Continually transmits frames at the specified short address to the specified
@@ -20,6 +21,9 @@ char packet_rx[IEEE802154_FRAME_LEN];
 #define SRC_ADDR 0x1501
 #define SRC_PAN 0xABCD
 #define INIT_DELAY 1000
+#define BUTTON_NUM 0
+#define GPIO_NUM 0
+#define LED_NUM 0
 
 // Trickle constants
 #define I_MIN 1000 // In ms
@@ -36,7 +40,6 @@ typedef struct {
 } trickle_state;
 
 static uint32_t I_MAX_VAL = 0;
-static bool START_TEST = true;
 static trickle_state* global_state = NULL;
 
 void interval_t(trickle_state* state);
@@ -47,7 +50,20 @@ void set_timer(trickle_state* state, int ms, bool set_interval_timer);
 void transmit(int payload);
 void consistent_transmission(trickle_state* state);
 void inconsistent_transmission(trickle_state* state, int val);
+void updated_value(int new_val);
 
+static void button_pressed(__attribute__ ((unused)) int btn_num,
+                           int val, // 1 if pressed, 0 if not pressed
+                           __attribute__ ((unused)) int arg2,
+                           void *ud) {
+  trickle_state* state = (trickle_state*)ud;
+  // If button pressed, update value
+  if (val == 1) {
+    // We simulate an "inconsistent transmission" here, as if we received
+    // the update from another node
+    inconsistent_transmission(state, state->val + 1);
+  }
+}
 
 static void t_timer_fired(__attribute__ ((unused)) int unused1,
                         __attribute__ ((unused)) int unused2,
@@ -78,10 +94,12 @@ void initialize_state(trickle_state* state) {
     I_MAX_VAL *= 2;
   }
   global_state = state;
+
+  button_subscribe(button_pressed, state);
+  button_enable_interrupt(BUTTON_NUM);
 }
 
 void interval_start(trickle_state* state) {
-  // Cancel all existing timers
   state->c = 0;
   uint32_t t = 0;
   int ret_val = rng_sync(((uint8_t*)(&t)), sizeof(uint32_t), sizeof(uint32_t));
@@ -111,18 +129,11 @@ void interval_t(trickle_state* state) {
 // If the interval ended without hearing an inconsistent
 // frame, we double our I val and restart the interval
 void interval_end(trickle_state* state) {
+  printf("Interval end: node_id: %04x\t i: %lu\t t: %lu\t c: %lu\n", SRC_ADDR, state->i, state->t, state->c);
   state->i = 2*state->i;
   if (state->i > I_MAX_VAL) {
     state->i = I_MAX_VAL;
-    // TODO: To start transfer
-    if (START_TEST && SRC_ADDR == 0x1500) {
-      inconsistent_transmission(state, state->val + 1);
-      START_TEST = false;
-      printf("HIT\n");
-      gpio_set(0);
-    }
   }
-  printf("Interval end: node_id: %04x\t i: %lu\t t: %lu\t c: %lu\n", SRC_ADDR, state->i, state->t, state->c);
   interval_start(state);
 }
 
@@ -181,16 +192,25 @@ void inconsistent_transmission(trickle_state* state, int val) {
   // Lets us detect when we need to update our value
   if (state->val < val) {
     state->val = val;
-    // Toggle the gpio pin when we update our value - we use the
-    // timing from this to measure propogation delay
-    gpio_set(0);
-    printf("New val: %d\n", val);
+    updated_value(val);
   }
   printf("Inconsistent transmission\n");
   if (state->i > I_MIN) {
     state->i = I_MIN;
     interval_start(state);
   }
+}
+
+void updated_value(int new_val) {
+  // Toggle the gpio pin when we update our value - we use the
+  // timing from this to measure propogation delay
+  gpio_set(GPIO_NUM);
+  if ((new_val % 2) == 0) {
+    led_off(LED_NUM);
+  } else {
+    led_on(LED_NUM);
+  }
+  printf("New val: %d\n", new_val);
 }
 
 void transmit(int payload) {
@@ -217,12 +237,13 @@ int main(void) {
   ieee802154_up();
   // This delay is necessary as if we receive a callback too early, we will
   // panic/crash
-  delay_ms(10*INIT_DELAY);
+  delay_ms(INIT_DELAY);
   // Set our callback function as the callback
   ieee802154_receive(receive_frame, packet_rx, IEEE802154_FRAME_LEN);
-  gpio_set(0);
+  led_off(LED_NUM);
+  gpio_set(GPIO_NUM);
   delay_ms(1000);
-  gpio_clear(0);
+  gpio_clear(GPIO_NUM);
 
   trickle_state* state = (trickle_state*)malloc(sizeof(trickle_state));
   initialize_state(state);
