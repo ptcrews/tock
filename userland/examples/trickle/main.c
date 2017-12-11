@@ -18,24 +18,31 @@
 char packet[BUF_SIZE];
 char packet_rx[IEEE802154_FRAME_LEN];
 
-#define SRC_ADDR 0x1501
+// We change SRC_ADDR to be unique for each node, allowing us to identify
+// them in packet captures
+#define SRC_ADDR 0x150c
 #define SRC_PAN 0xABCD
 #define INIT_DELAY 1000
 #define BUTTON_NUM 0
 #define GPIO_NUM 0
 #define LED_NUM 0
+// True if the multi-hop functionality is enabled; this means that a node
+// drops all packets whose MAC addresses are > SRC_ADDR + HOP_SIZE or < SRC_ADDR - HOP_SIZE
 #define MULTI_HOP_SIM true
+// Distance function for who we can hear packets sent from; defined as
+// we drop all packets who MAC addresses are > SRC_ADDR + HOP_SIZE or < SRC_ADDR - HOP_SIZE
+#define HOP_SIZE 1
 
 // Trickle constants
-#define I_MIN 1000 // In ms
-#define I_MAX 8    // Doublings of interval size
-#define K 2        // Redundancy constant
+#define I_MIN 10000 // In ms
+#define I_MAX 7    // Doublings of interval size
+#define K 4        // Redundancy constant
 
 typedef struct {
   uint32_t i;    // Current interval size
   uint32_t t;    // Time in current interval
   uint32_t c;    // Counter
-  int val;  // Our current value
+  int val;       // Our current value
   tock_timer_t trickle_i_timer;
   tock_timer_t trickle_t_timer;
 } trickle_state;
@@ -200,9 +207,8 @@ bool check_addrs(void) {
     addr_mode_t src_addr_mode;
     src_addr_mode = ieee802154_frame_get_src_addr(packet_rx, &src_short_addr, src_long_addr);
     if (src_addr_mode == ADDR_SHORT) {
-      // Return false if src addr is greater than += 1 away from our addr
-      if (src_short_addr > SRC_ADDR + 1 || src_short_addr < SRC_ADDR - 1) {
-        // TODO: Confirm this works
+      // Return false if src addr is greater than += HOP_SIZE away from our addr
+      if (src_short_addr > SRC_ADDR + HOP_SIZE || src_short_addr < SRC_ADDR - HOP_SIZE) {
         return false;
       }
     } else {
@@ -261,8 +267,12 @@ void transmit(int payload) {
 }
 
 int main(void) {
-  // Initialize radio, GPIO pin
+  // Initialize GPIO, LED
   gpio_enable_output(0);
+  gpio_clear(GPIO_NUM);
+  led_off(LED_NUM);
+
+  // Initialize radio
   ieee802154_set_address(SRC_ADDR);
   ieee802154_set_pan(SRC_PAN);
   ieee802154_config_commit();
@@ -272,11 +282,6 @@ int main(void) {
   delay_ms(INIT_DELAY);
   // Set our callback function as the callback
   ieee802154_receive(receive_frame, packet_rx, IEEE802154_FRAME_LEN);
-  led_off(LED_NUM);
-  // TODO: Remove below two lines - only for testing gpio
-  gpio_set(GPIO_NUM);
-  delay_ms(1000);
-  gpio_clear(GPIO_NUM);
 
   trickle_state* state = (trickle_state*)malloc(sizeof(trickle_state));
   initialize_state(state);
