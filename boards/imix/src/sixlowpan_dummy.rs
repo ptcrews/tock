@@ -13,7 +13,7 @@
 //! the listening Imix/platform can again verify the correctness of the
 //! compression scheme.
 
-use capsules::net::ip::{IP6Header, MacAddr, IPAddr, ip6_nh};
+use capsules::net::ip_utils::{IP6Header, MacAddr, IPAddr, ip6_nh};
 use capsules::net::sixlowpan_compression;
 use capsules::net::sixlowpan_compression::{ContextStore, Context};
 use capsules::net::util;
