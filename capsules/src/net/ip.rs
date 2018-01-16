@@ -4,15 +4,17 @@
 
 use net::ip_utils::{IPAddr, IP6Header};
 use net::udp::{UDPPacket};
+use net::tcp::{TCPPacket};
 use kernel::ReturnCode;
 
 
 pub enum TransportPacket<'a> { 
     UDP(UDPPacket<'a>),
-    /* TCP(TCPPacket), // NOTE: TCP,ICMP,RawIP traits not yet implemented
-                     // , but follow logically from UDPPacket. 
-    ICMP(ICMPPacket),
-    Raw(RawIPPacket), */
+    TCP(TCPPacket<'a>), // NOTE: TCP,ICMP,RawIP traits not yet implemented
+                        // , but follow logically from UDPPacket. 
+/*
+    ICMP(ICMPPacket<'a>),
+    Raw(RawIPPacket<'a>), */
 }
 
 pub struct IP6Packet<'a> {
