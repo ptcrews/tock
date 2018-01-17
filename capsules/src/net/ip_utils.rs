@@ -185,7 +185,6 @@ impl IP6Header {
         self.version_class_flow[3] = new_fl_val as u8;
     }
 
-    // TODO: Is this in network byte order?
     pub fn get_payload_len(&self) -> u16 {
         u16::from_be(self.payload_len)
     }
@@ -195,7 +194,6 @@ impl IP6Header {
         40 + self.get_payload_len()
     }
 
-    // TODO: Is this in network byte order?
     pub fn set_payload_len(&mut self, new_len: u16) {
         self.payload_len = new_len.to_be();
     }

@@ -236,6 +236,7 @@ use net::ieee802154::{PanID, MacAddress, SecurityLevel, KeyId, Header};
 use net::sixlowpan_compression;
 use net::sixlowpan_compression::{ContextStore, is_lowpan};
 use net::util::{slice_to_u16, u16_to_slice};
+use net::ip::IP6Packet;
 
 // Reassembly timeout in seconds
 const FRAG_TIMEOUT: u32 = 60;
@@ -363,7 +364,7 @@ impl<'a> TxState<'a> {
     // Assumes we have already called init_transmit
     // This assumes packet is a slice representing its length
     pub fn next_fragment<'b>(&self,
-                         packet: &'b [u8],
+                         ip6_packet: &'b IP6Packet<'b>,
                          frag_buf: &'static mut [u8],
                          radio: &Mac)
                          -> Result<(bool, Frame), (ReturnCode, &'static mut [u8])> {
@@ -371,7 +372,7 @@ impl<'a> TxState<'a> {
         // Want the total datagram size we are sending to be less than
         // the length of the packet - otherwise, we risk reading off the
         // end of the array
-        if self.dgram_size.get() as usize <= packet.len() {
+        if self.dgram_size.get() <= ip6_packet.get_total_len() {
             return Err((ReturnCode::ENOMEM, frag_buf));
         }
 
@@ -386,13 +387,13 @@ impl<'a> TxState<'a> {
         
         // If this is the first fragment
         if !self.busy.get() {
-            let frame = self.start_transmit(packet, frame, self.sixlowpan.get_ctx_store())?;
+            let frame = self.start_transmit(ip6_packet, frame, self.sixlowpan.get_ctx_store())?;
             Ok((false, frame))
         } else if self.is_transmit_done() {
             self.end_transmit();
             Ok((true, frame))
         } else {
-            let frame = self.prepare_next_fragment(packet, frame)?;
+            let frame = self.prepare_next_fragment(ip6_packet, frame)?;
             Ok((false, frame))
         }
     }
@@ -405,28 +406,28 @@ impl<'a> TxState<'a> {
     // Frag_buf needs to be >= 802.15.4 MTU
     // The radio takes frag_buf, consumes it, returns Frame or Error
     fn start_transmit<'b>(&self,
-                          ip6_packet: &'b [u8],
+                          ip6_packet: &'b IP6Packet<'b>,
                           frame: Frame,
                           ctx_store: &ContextStore)
                       -> Result<Frame, (ReturnCode, &'static mut [u8])> {
         self.busy.set(true);
-        self.dgram_size.set(ip6_packet.len() as u16);
+        self.dgram_size.set(ip6_packet.get_total_len());
         self.dgram_tag.set(self.sixlowpan.next_dgram_tag());
         self.prepare_first_fragment(ip6_packet, frame, ctx_store)
     }
 
-    fn prepare_first_fragment(&self,
-                              ip6_packet: &[u8],
-                              mut frame: Frame,
-                              ctx_store: &ContextStore)
-                              -> Result<Frame, (ReturnCode, &'static mut [u8])> {
+    fn prepare_first_fragment<'b>(&self,
+                                  ip6_packet: &'b IP6Packet<'b>,
+                                  mut frame: Frame,
+                                  ctx_store: &ContextStore)
+                                  -> Result<Frame, (ReturnCode, &'static mut [u8])> {
 
         // Here, we assume that the compressed headers fit in the first MTU
         // fragment. This is consistent with RFC 6282.
         let mut lowpan_packet = [0 as u8; radio::MAX_FRAME_SIZE as usize];
         let (consumed, written) = {
             match sixlowpan_compression::compress(ctx_store,
-                                                  &ip6_packet,
+                                                  ip6_packet,
                                                   self.src_mac_addr.get(),
                                                   self.dst_mac_addr.get(),
                                                   &mut lowpan_packet) {
@@ -435,7 +436,7 @@ impl<'a> TxState<'a> {
             }
         };
 
-        let remaining_payload = ip6_packet.len() - consumed;
+        let remaining_payload = ip6_packet.get_total_len() as usize - consumed;
         let lowpan_len = written + remaining_payload;
         // TODO: This -2 is added to account for the FCS; this should be changed
         // in the MAC code

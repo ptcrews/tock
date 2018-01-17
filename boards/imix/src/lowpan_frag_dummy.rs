@@ -342,17 +342,6 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
                                src_mac_addr: MacAddress,
                                dst_mac_addr: MacAddress) {
         self.send_next(&mut RF233_BUF);
-        //let sixlowpan = &self.sixlowpan;
-        //frag_state.radio.config_set_pan(0xABCD);
-        
-        /*
-        let ret_code = sixlowpan.transmit_packet(src_mac_addr,
-                                                  dst_mac_addr,
-                                                  &mut IP6_DGRAM,
-                                                  IP6_DGRAM.len(),
-                                                  None);
-        debug!("Ret code: {:?}", ret_code);
-        */
     }
 
     fn send_next(&self, tx_buf: &'static mut [u8]) {

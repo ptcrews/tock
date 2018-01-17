@@ -300,14 +300,15 @@ fn nhc_to_ip6_nh(nhc: u8) -> Result<u8, ()> {
 /// compressed header bytes written into `buf`. Payload bytes and
 /// non-compressed next headers are not written, so the remaining `buf.len()
 /// - consumed` bytes must still be copied over to `buf`.
-pub fn compress(ctx_store: &ContextStore,
-                ip6_datagram: &[u8],
-                src_mac_addr: MacAddress,
-                dst_mac_addr: MacAddress,
-                mut buf: &mut [u8])
-                -> Result<(usize, usize), ()> {
+pub fn compress<'a>(ctx_store: &ContextStore,
+                    ip6_packet: &'a IPPacket<'a>,
+                    src_mac_addr: MacAddress,
+                    dst_mac_addr: MacAddress,
+                    mut buf: &mut [u8])
+                    -> Result<(usize, usize), ()> {
     // Note that consumed should be constant, and equal sizeof(IP6Header)
     let (mut consumed, ip6_header) = IP6Header::decode(ip6_datagram).done().ok_or(())?;
+    let mut next_headers: &[u8] = ip6_packet.
     let mut next_headers: &[u8] = &ip6_datagram[consumed..];
 
     // The first two bytes are the LOWPAN_IPHC header

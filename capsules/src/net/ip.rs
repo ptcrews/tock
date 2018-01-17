@@ -7,10 +7,13 @@ use net::udp::{UDPPacket};
 use kernel::ReturnCode;
 
 
-pub enum TransportPacket<'a> { 
+// TODO: Note that this design decision means that we cannot have recursive
+// IP6 packets directly - we must have/use RawIPPackets instead. This makes
+// it difficult to recursively compress IP6 packets as required by 6lowpan
+pub enum TransportPacket<'a> {
     UDP(UDPPacket<'a>),
     /* TCP(TCPPacket), // NOTE: TCP,ICMP,RawIP traits not yet implemented
-                     // , but follow logically from UDPPacket. 
+                     // , but follow logically from UDPPacket.
     ICMP(ICMPPacket),
     Raw(RawIPPacket), */
 }
@@ -18,12 +21,12 @@ pub enum TransportPacket<'a> {
 pub struct IP6Packet<'a> {
     pub header: IP6Header,
     pub payload: TransportPacket<'a>,
-} 
+}
 
 impl<'a> IP6Packet<'a> {
     pub fn reset(&self){} //Sets fields to appropriate defaults
     pub fn get_offset(&self) -> usize{40} //Always returns 40 until we add options support
-    
+
     // Remaining functions are just getters and setters for the header fields
     pub fn set_traffic_class(&mut self, new_tc: u8){
         self.header.set_traffic_class(new_tc);
@@ -80,6 +83,10 @@ impl<'a> IP6Packet<'a> {
         self.header.get_payload_len()
     }
 
+    pub fn get_total_len(&self) -> u16 {
+        self.header.get_total_len()
+    }
+
     pub fn get_next_header(&self) -> u8{
         self.header.get_next_header()
     }
@@ -90,6 +97,14 @@ impl<'a> IP6Packet<'a> {
 
     pub fn get_src_addr(&self) -> IPAddr{
         self.header.src_addr
+    }
+
+    pub fn get_payload(&self) -> &[u8] {
+        match self.payload {
+            TransportPacket::UDP(udp_packet) => {
+                return udp_packet.payload
+            },
+        }
     }
 
     pub fn set_transpo_cksum(&self){} //Looks at internal buffer assuming
@@ -105,4 +120,3 @@ pub trait IP6Send {
     fn send(&self, ip6_packet: IP6Packet); //Length can be determined from IP6Packet
     fn send_done(&self, ip6_packet: IP6Packet, result: ReturnCode);
 }
-

@@ -5,7 +5,6 @@
 use net::ip_utils::{IPAddr};
 use kernel::ReturnCode;
 
-
 pub struct UDPHeader {
     pub src_port: u16,
     pub dst_port: u16,
@@ -25,14 +24,14 @@ pub trait UDPSocket:UDPSend {
 }
 
 pub struct UDPPacket<'a> { /* Example UDP Packet struct */
-    pub head: UDPHeader,
+    pub header: UDPHeader,
     pub payload: &'a mut [u8], 
     pub len: u16, // length of payload
 }
 
 impl<'a> UDPPacket<'a> {
     pub fn reset(&self){} //Sets fields to appropriate defaults    
-    pub fn get_offset(&self) -> usize{8} //Always returns 8
+    pub fn get_offset(&self) -> usize{8} //Always returns 8 TODO: Why??
 
     pub fn set_dest_port(&self, port: u16){} 
     pub fn set_src_port(&self, port: u16){}
@@ -51,5 +50,3 @@ pub trait UDPSend {
     fn send(dest: IPAddr, udp_packet: &'static mut UDPPacket); // dest rqrd
     fn send_done(buf: &'static mut UDPPacket, result: ReturnCode);
 }
-
-
