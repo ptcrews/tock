@@ -4,7 +4,9 @@
 use core::mem;
 use core::result::Result;
 use net::ieee802154::MacAddress;
+use net::ip::{IP6Packet, TransportPacket};
 use net::ip_utils::{IP6Header, IPAddr, ip6_nh};
+use net::udp::UDPPacket;
 use net::util;
 use net::util::{slice_to_u16, u16_to_slice};
 
@@ -157,12 +159,13 @@ pub fn is_lowpan(packet: &[u8]) -> bool {
 /// is an IPv6 next header extension, in which case it is the number of bytes
 /// after the first two bytes in the IPv6 next header extension. Returns
 /// `Err(())` in the case of an invalid IPv6 packet.
-fn is_ip6_nh_compressible(next_header: u8, next_headers: &[u8]) -> Result<(bool, u8), ()> {
-    match next_header {
+fn is_ip6_nh_compressible(ip6_packet: &IP6Packet) -> Result<(bool, u8), ()> {
+    match ip6_packet.get_next_header() {
         // IP6 encapsulated headers are always compressed
         ip6_nh::IP6 => Ok((true, 0)),
         // UDP headers are always compresed
         ip6_nh::UDP => Ok((true, 0)),
+        /* TODO
         ip6_nh::FRAGMENT | ip6_nh::HOP_OPTS | ip6_nh::ROUTING | ip6_nh::DST_OPTS |
         ip6_nh::MOBILITY => {
             let mut header_len: u32 = 6;
@@ -183,6 +186,7 @@ fn is_ip6_nh_compressible(next_header: u8, next_headers: &[u8]) -> Result<(bool,
                 Ok((false, 0))
             }
         }
+        */
         _ => Ok((false, 0)),
     }
 }
@@ -301,15 +305,17 @@ fn nhc_to_ip6_nh(nhc: u8) -> Result<u8, ()> {
 /// non-compressed next headers are not written, so the remaining `buf.len()
 /// - consumed` bytes must still be copied over to `buf`.
 pub fn compress<'a>(ctx_store: &ContextStore,
-                    ip6_packet: &'a IPPacket<'a>,
+                    ip6_packet: &'a IP6Packet<'a>,
                     src_mac_addr: MacAddress,
                     dst_mac_addr: MacAddress,
                     mut buf: &mut [u8])
                     -> Result<(usize, usize), ()> {
     // Note that consumed should be constant, and equal sizeof(IP6Header)
-    let (mut consumed, ip6_header) = IP6Header::decode(ip6_datagram).done().ok_or(())?;
-    let mut next_headers: &[u8] = ip6_packet.
-    let mut next_headers: &[u8] = &ip6_datagram[consumed..];
+    //let (mut consumed, ip6_header) = IP6Header::decode(ip6_datagram).done().ok_or(())?;
+    let mut consumed = 40; // TODO
+    let ip6_header = ip6_packet.header;
+
+    //let mut next_headers: &[u8] = &ip6_datagram[consumed..];
 
     // The first two bytes are the LOWPAN_IPHC header
     let mut written: usize = 2;
@@ -342,8 +348,7 @@ pub fn compress<'a>(ctx_store: &ContextStore,
     compress_tf(&ip6_header, &mut buf, &mut written);
 
     // Next Header
-    let (mut is_nhc, mut nh_len): (bool, u8) = is_ip6_nh_compressible(ip6_header.next_header,
-                                                                      next_headers)?;
+    let (mut is_nhc, mut nh_len): (bool, u8) = is_ip6_nh_compressible(ip6_packet)?;
     compress_nh(&ip6_header, is_nhc, &mut buf, &mut written);
 
     // Hop Limit
@@ -370,9 +375,10 @@ pub fn compress<'a>(ctx_store: &ContextStore,
     // Next Headers
     // At each iteration, next_headers begins at the first byte of the
     // current uncompressed next header.
-    let mut ip6_nh_type: u8 = ip6_header.next_header;
-    while is_nhc {
-        match ip6_nh_type {
+    // Since we aren't recursing, we only handle UDP
+    //while is_nhc {
+        match ip6_packet.payload {
+            /* TODO: Currently don't handle IP encapsulation
             ip6_nh::IP6 => {
                 // For IPv6 encapsulation, the NH bit in the NHC ID is 0
                 let nhc_header = nhc::DISPATCH_NHC | nhc::IP6;
@@ -380,6 +386,8 @@ pub fn compress<'a>(ctx_store: &ContextStore,
                 written += 1;
 
                 // Recursively place IPHC-encoded IPv6 after the NHC ID
+                /*
+                 * TODO: Support recursive behavior
                 let (encap_consumed, encap_written) = compress(ctx_store,
                                                                next_headers,
                                                                src_mac_addr,
@@ -387,12 +395,15 @@ pub fn compress<'a>(ctx_store: &ContextStore,
                                                                &mut buf[written..])?;
                 consumed += encap_consumed;
                 written += encap_written;
+                */
 
                 // The above recursion handles the rest of the packet
                 // headers, so we are done
                 break;
             }
-            ip6_nh::UDP => {
+        */
+            //ip6_nh::UDP => {
+            TransportPacket::UDP(ref udp_packet) => {
                 let mut nhc_header = nhc::DISPATCH_UDP;
 
                 // Leave a space for the UDP LoWPAN_NHC byte
@@ -400,17 +411,17 @@ pub fn compress<'a>(ctx_store: &ContextStore,
                 written += 1;
 
                 // Compress ports and checksum
-                let udp_header = &next_headers[0..8];
-                nhc_header |= compress_udp_ports(udp_header, &mut buf, &mut written);
-                nhc_header |= compress_udp_checksum(udp_header, &mut buf, &mut written);
+                nhc_header |= compress_udp_ports(&udp_packet, &mut buf, &mut written);
+                nhc_header |= compress_udp_checksum(&udp_packet, &mut buf, &mut written);
 
                 // Write the UDP LoWPAN_NHC byte
                 buf[udp_nh_offset] = nhc_header;
                 consumed += 8;
 
                 // There cannot be any more next headers after UDP
-                break;
+                //break;
             }
+            /* TODO: Currently don't handle any extension headers... :(
             ip6_nh::FRAGMENT | ip6_nh::HOP_OPTS | ip6_nh::ROUTING | ip6_nh::DST_OPTS |
             ip6_nh::MOBILITY => {
                 // is_ip6_nh_compressible guarantees that the IPv6 next
@@ -427,7 +438,7 @@ pub fn compress<'a>(ctx_store: &ContextStore,
 
                 // Determine if the next header is compressible
                 let (next_is_nhc, next_nh_len) =
-                    is_ip6_nh_compressible(next_headers[0], &next_headers[next_nh_offset..])?;
+                    is_ip6_nh_compressible(ip6_packet)?;
                 if next_is_nhc {
                     nhc_header |= nhc::NH;
                 }
@@ -452,12 +463,13 @@ pub fn compress<'a>(ctx_store: &ContextStore,
                 next_headers = &next_headers[next_nh_offset..];
                 consumed += next_nh_offset;
             }
+            */
             // This case should not be reachable because
             // is_ip6_nh_compressible guarantees that is_nhc is true
             // only if ip6_nh_type is one of the types matched above
             _ => panic!("Unreachable case"),
         }
-    }
+    //}
     Ok((consumed, written))
 }
 
@@ -669,9 +681,9 @@ fn compress_multicast(dst_ip_addr: &IPAddr,
     }
 }
 
-fn compress_udp_ports(udp_header: &[u8], buf: &mut [u8], written: &mut usize) -> u8 {
-    let src_port = u16::from_be(slice_to_u16(&udp_header[0..2]));
-    let dst_port = u16::from_be(slice_to_u16(&udp_header[2..4]));
+fn compress_udp_ports(udp_packet: &UDPPacket , buf: &mut [u8], written: &mut usize) -> u8 {
+    let src_port = udp_packet.get_src_port();
+    let dst_port = udp_packet.get_dst_port();
 
     let mut udp_port_nhc = 0;
     if (src_port & nhc::UDP_4BIT_PORT_MASK) == nhc::UDP_4BIT_PORT &&
@@ -695,16 +707,21 @@ fn compress_udp_ports(udp_header: &[u8], buf: &mut [u8], written: &mut usize) ->
         buf[*written + 3] = (dst_port & !nhc::UDP_8BIT_PORT_MASK) as u8;
         *written += 3;
     } else {
-        buf[*written..*written + 4].copy_from_slice(&udp_header[0..4]);
+        buf[*written] = src_port as u8;
+        buf[*written + 1] = (src_port >> 8) as u8;
+        buf[*written + 2] = dst_port as u8;
+        buf[*written + 3] = (dst_port >> 8) as u8;
+        //buf[*written..*written + 4].copy_from_slice(&udp_header[0..4]);
         *written += 4;
     }
     return udp_port_nhc;
 }
 
-fn compress_udp_checksum(udp_header: &[u8], buf: &mut [u8], written: &mut usize) -> u8 {
+fn compress_udp_checksum(udp_packet: &UDPPacket, buf: &mut [u8], written: &mut usize) -> u8 {
     // TODO: Checksum is always inline, elision is currently not supported
-    buf[*written] = udp_header[6];
-    buf[*written + 1] = udp_header[7];
+    let cksum = udp_packet.get_cksum();
+    buf[*written] = cksum as u8;
+    buf[*written + 1] = (cksum >> 8) as u8;
     *written += 2;
     // Inline checksum corresponds to the 0 flag
     0

@@ -3,6 +3,7 @@
    tock, see the Thread_Stack_Design.txt document */
 
 use net::ip_utils::{IPAddr, IP6Header};
+use ieee802154::mac::Frame;
 use net::udp::{UDPPacket};
 use kernel::ReturnCode;
 
@@ -101,8 +102,16 @@ impl<'a> IP6Packet<'a> {
 
     pub fn get_payload(&self) -> &[u8] {
         match self.payload {
-            TransportPacket::UDP(udp_packet) => {
+            TransportPacket::UDP(ref udp_packet) => {
                 return udp_packet.payload
+            },
+        }
+    }
+
+    pub fn write_to_frame(&self, mut frame: Frame) {
+        match self.payload {
+            TransportPacket::UDP(ref udp_packet) => {
+                udp_packet.write_to_frame(frame);
             },
         }
     }

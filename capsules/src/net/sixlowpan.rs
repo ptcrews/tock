@@ -384,7 +384,7 @@ impl<'a> TxState<'a> {
                                              self.src_mac_addr.get(),
                                              self.security.get())
             .map_err(|frame| (ReturnCode::FAIL, frame))?;
-        
+
         // If this is the first fragment
         if !self.busy.get() {
             let frame = self.start_transmit(ip6_packet, frame, self.sixlowpan.get_ctx_store())?;
@@ -473,14 +473,14 @@ impl<'a> TxState<'a> {
             remaining_payload
         };
         // TODO: Check success
-        frame.append_payload(&ip6_packet[consumed..consumed + payload_len]);
+        ip6_packet.write_to_frame(frame);
         self.dgram_offset.set(consumed + payload_len);
         Ok(frame)
     }
 
-    fn prepare_next_fragment(&self,
-                             ip6_packet: &[u8],
-                             mut frame: Frame)
+    fn prepare_next_fragment<'b>(&self,
+                                 ip6_packet: &'b IP6Packet<'b>,
+                                 mut frame: Frame)
         -> Result<Frame, (ReturnCode, &'static mut [u8])> {
 
         let dgram_offset = self.dgram_offset.get();
@@ -503,7 +503,7 @@ impl<'a> TxState<'a> {
                      false);
         // TODO: Check error
         frame.append_payload(&frag_header);
-        frame.append_payload(&ip6_packet[dgram_offset..dgram_offset + payload_len]);
+        ip6_packet.write_to_frame(frame);
 
         // Update the offset to be used for the next fragment
         self.dgram_offset.set(dgram_offset + payload_len);
