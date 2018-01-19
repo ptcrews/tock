@@ -26,7 +26,7 @@ pub trait UDPSocket:UDPSend {
     fn send_done(&self, udp_packet: &'static mut UDPPacket, result: ReturnCode);
 }
 
-pub struct UDPPacket<'a> { /* Example UDP Packet struct */
+pub struct UDPPacket<'a> { /* UDP Packet struct */
     pub header: UDPHeader,
     pub payload: &'a mut [u8], 
     pub len: u16, // length of payload
@@ -34,17 +34,17 @@ pub struct UDPPacket<'a> { /* Example UDP Packet struct */
 
 impl<'a> UDPPacket<'a> {
     pub fn reset(&self){} //Sets fields to appropriate defaults    
-    pub fn get_offset(&self) -> usize{8} //Always returns 8 TODO: Why??
+    pub fn get_offset(&self) -> usize{8} //Always returns 8 TODO: B/c size of UDPHeader
 
     pub fn set_dst_port(&mut self, port: u16) {
-        self.header.dst_port = u16::to_be(port);
+        self.header.dst_port = port.to_be();
     }
     pub fn set_src_port(&mut self, port: u16) {
-        self.header.src_port = u16::to_be(port);
+        self.header.src_port = port.to_be();
     }
 
     pub fn set_len(&mut self, len: u16) {
-        self.header.len = u16::to_be(len);
+        self.header.len = len.to_be();
     }
 
     // TODO: Check endianness
@@ -68,7 +68,35 @@ impl<'a> UDPPacket<'a> {
         self.header.cksum
     }
 
-    pub fn set_payload(&self, payload: &'a [u8]){}
+    pub fn set_src_port(&mut self, port: u16){
+        self.head.src_port = port.to_be();
+    }
+
+    pub fn set_len(&mut self, len: u16){
+        self.head.len = len.to_be();
+    }
+
+    pub fn set_cksum(&mut self, cksum: u16){ // Assumes cksum passed in network byte order
+        self.head.cksum = cksum;
+    }
+
+    pub fn get_dest_port(&self) -> u16{
+        u16::from_be(self.head.dst_port)
+    }
+
+    pub fn get_src_port(&self) -> u16{
+        u16::from_be(self.head.src_port)
+    }
+
+    pub fn get_len(&self) -> u16{
+        u16::from_be(self.head.len)
+    }
+
+    pub fn get_cksum(&self) -> u16{ // Returns cksum in network byte order
+        self.head.cksum
+    }
+
+    pub fn set_payload(&self, payload: &'a [u8]){} //TODO
 
     pub fn write_to_frame(&self, mut frame: Frame) {
         // TODO
