@@ -87,6 +87,8 @@ impl<'a> IP6Packet<'a> {
     }
 
     pub fn get_total_len(&self) -> u16 {
+        // This assumes that the length field of the IPv6 header
+        // is valid and correctly filled out
         self.header.get_total_len()
     }
 
@@ -107,13 +109,28 @@ impl<'a> IP6Packet<'a> {
             TransportPacket::UDP(ref udp_packet) => {
                 return udp_packet.payload
             },
+            TransportPacket::TCP(ref tcp_packet) => {
+                return tcp_packet.payload
+            },
         }
     }
 
-    pub fn write_to_frame(&self, mut frame: Frame) {
+    pub fn get_total_hdr_size(&self) -> usize {
+        let transport_hdr_size = match self.payload {
+            TransportPacket::UDP(ref udp_packet) => udp_packet.get_hdr_size(),
+            TransportPacket::TCP(ref tcp_packet) => 0, //tcp_packet.get_hdr_size(),
+        };
+        40 + transport_hdr_size
+    }
+
+    pub fn write_to_frame(&self, frame: &mut Frame) {
+
         match self.payload {
             TransportPacket::UDP(ref udp_packet) => {
                 udp_packet.write_to_frame(frame);
+            },
+            TransportPacket::TCP(ref tcp_packet) => {
+                //tcp_packet
             },
         }
     }

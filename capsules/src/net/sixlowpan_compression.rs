@@ -160,6 +160,15 @@ pub fn is_lowpan(packet: &[u8]) -> bool {
 /// after the first two bytes in the IPv6 next header extension. Returns
 /// `Err(())` in the case of an invalid IPv6 packet.
 fn is_ip6_nh_compressible(ip6_packet: &IP6Packet) -> Result<(bool, u8), ()> {
+    match ip6_packet.payload {
+        TransportPacket::UDP(_) => {
+            Ok((true, 0))
+        },
+        _ => {
+            Ok((false, 0))
+        },
+    }
+    /*
     match ip6_packet.get_next_header() {
         // IP6 encapsulated headers are always compressed
         ip6_nh::IP6 => Ok((true, 0)),
@@ -189,6 +198,7 @@ fn is_ip6_nh_compressible(ip6_packet: &IP6Packet) -> Result<(bool, u8), ()> {
         */
         _ => Ok((false, 0)),
     }
+        */
 }
 
 trait OnesComplement {

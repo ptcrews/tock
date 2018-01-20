@@ -416,6 +416,7 @@ impl<'a> TxState<'a> {
         self.prepare_first_fragment(ip6_packet, frame, ctx_store)
     }
 
+    // TODO: Handle TCP packets
     fn prepare_first_fragment<'b>(&self,
                                   ip6_packet: &'b IP6Packet<'b>,
                                   mut frame: Frame,
@@ -473,11 +474,13 @@ impl<'a> TxState<'a> {
             remaining_payload
         };
         // TODO: Check success
-        ip6_packet.write_to_frame(frame);
+        frame.append_payload(&ip6_packet.get_payload()[0..payload_len]);
         self.dgram_offset.set(consumed + payload_len);
         Ok(frame)
     }
 
+    // TODO: Support the case where not all headers were sent in the first
+    // fragment - this is currently supported by none of the code (RFC 6282 Section 2)
     fn prepare_next_fragment<'b>(&self,
                                  ip6_packet: &'b IP6Packet<'b>,
                                  mut frame: Frame)
@@ -503,7 +506,18 @@ impl<'a> TxState<'a> {
                      false);
         // TODO: Check error
         frame.append_payload(&frag_header);
-        ip6_packet.write_to_frame(frame);
+        let total_hdr_len = ip6_packet.get_total_hdr_size();
+        if total_hdr_len > dgram_offset {
+            // TODO: Didn't send some headers - need to serialize
+            // payload_len -= sizeof headers sent
+            // dgram_offset += sizeof headers sent
+        }
+
+        let payload_offset = dgram_offset - total_hdr_len;
+        if payload_len > 0 {
+            frame.append_payload(&ip6_packet.get_payload()[payload_offset..payload_offset + payload_len]);
+        }
+        //frame.append_payload(&ip6_packet[dgram_offset - total_hdr_len..dgram_offset + payload_len]);
 
         // Update the offset to be used for the next fragment
         self.dgram_offset.set(dgram_offset + payload_len);

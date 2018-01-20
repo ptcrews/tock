@@ -345,6 +345,7 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
     }
 
     fn send_next(&self, tx_buf: &'static mut [u8]) {
+        /*
         unsafe {
             match self.sixlowpan_tx.next_fragment(&IP6_DGRAM,
                                                   tx_buf,
@@ -364,6 +365,7 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
                 },
             }
         }
+        */
     }
 }
 

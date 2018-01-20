@@ -4,6 +4,9 @@
 
 use net::ip_utils::{IPAddr};
 use ieee802154::mac::Frame;
+use net::stream::{decode_u16, decode_u8, decode_bytes};
+use net::stream::{encode_u16, encode_u8, encode_bytes};
+use net::stream::SResult;
 use kernel::ReturnCode;
 
 // TODO: These values should be in network-byte order; if we want
@@ -48,6 +51,7 @@ impl<'a> UDPPacket<'a> {
     }
 
     // TODO: Check endianness
+    // Assumes cksum passed in network byte order
     pub fn set_cksum(&mut self, cksum: u16) {
         self.header.cksum = cksum;
     }
@@ -68,51 +72,31 @@ impl<'a> UDPPacket<'a> {
         self.header.cksum
     }
 
-    pub fn set_src_port(&mut self, port: u16){
-        self.head.src_port = port.to_be();
-    }
-
-    pub fn set_len(&mut self, len: u16){
-        self.head.len = len.to_be();
-    }
-
-    pub fn set_cksum(&mut self, cksum: u16){ // Assumes cksum passed in network byte order
-        self.head.cksum = cksum;
-    }
-
-    pub fn get_dest_port(&self) -> u16{
-        u16::from_be(self.head.dst_port)
-    }
-
-    pub fn get_src_port(&self) -> u16{
-        u16::from_be(self.head.src_port)
-    }
-
-    pub fn get_len(&self) -> u16{
-        u16::from_be(self.head.len)
-    }
-
-    pub fn get_cksum(&self) -> u16{ // Returns cksum in network byte order
-        self.head.cksum
-    }
-
     pub fn set_payload(&self, payload: &'a [u8]){} //TODO
 
-    pub fn write_to_frame(&self, mut frame: Frame) {
+    // TODO: change this to encode/decode stream functions?
+    pub fn get_hdr_size(&self) -> usize {
         // TODO
-        let mut udp_header: [u8; 8] = [0; 8];
-        udp_header[0] = self.header.src_port as u8;
-        udp_header[1] = (self.header.src_port >> 8) as u8;
-        udp_header[2] = self.header.dst_port as u8;
-        udp_header[3] = (self.header.dst_port >> 8) as u8;
-        udp_header[4] = self.header.len as u8;
-        udp_header[5] = (self.header.len >> 8) as u8;
-        udp_header[6] = self.header.cksum as u8;
-        udp_header[7] = (self.header.cksum >> 8) as u8;
-        frame.append_payload(&udp_header);
-        frame.append_payload(&self.payload);
+        8
     }
 
+    // Note that we encode all values in network-byte order
+    pub fn encode_header(&self, buf: &mut [u8]) -> SResult<usize> {
+        // TODO
+        stream_len_cond!(buf, 8);
+
+        let mut off = enc_consume!(buf, 0; encode_u16, self.header.src_port);
+        off = enc_consume!(buf, off; encode_u16, self.header.dst_port);
+        off = enc_consume!(buf, off; encode_u16, self.header.len);
+        off = enc_consume!(buf, off; encode_u16, self.header.cksum);
+        stream_done!(off, off);
+    }
+
+    pub fn write_to_frame(&self, frame: &mut Frame) {
+        let mut serialized: [u8; 8] = [0; 8];
+        //self.serialize_header(&serialized);
+        //frame.
+    }
 }
 
 pub trait UDPSend {
