@@ -32,7 +32,7 @@ pub trait UDPSocket:UDPSend {
 pub struct UDPPacket<'a> { /* UDP Packet struct */
     pub header: UDPHeader,
     pub payload: &'a mut [u8], 
-    pub len: u16, // length of payload
+    //pub len: u16, // on further reflection, this field seems unneccessary
 }
 
 impl<'a> UDPPacket<'a> {

@@ -372,7 +372,7 @@ impl<'a> TxState<'a> {
         // Want the total datagram size we are sending to be less than
         // the length of the packet - otherwise, we risk reading off the
         // end of the array
-        if self.dgram_size.get() <= ip6_packet.get_total_len() {
+        if self.dgram_size.get() > ip6_packet.get_total_len() { //Flipped this inequality, I think it was wrong..?
             return Err((ReturnCode::ENOMEM, frag_buf));
         }
 
