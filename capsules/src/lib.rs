@@ -46,6 +46,7 @@ pub mod app_flash_driver;
 pub mod usb;
 pub mod usb_user;
 pub mod usbc_client;
+pub mod trickle;
 #[macro_use]
 pub mod net;
 pub mod ieee802154;
