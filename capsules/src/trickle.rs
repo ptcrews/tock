@@ -24,6 +24,7 @@ pub trait TrickleClient {
 }
 
 pub trait Trickle {
+    fn set_default_parameters(&self, i_max: usize, i_min: usize, k: usize);
     fn initialize(&self);
     fn received_transmission(&self, bool);
 
@@ -44,36 +45,31 @@ pub struct TrickleData<'a, A: time::Alarm + 'a> {
     c: Cell<usize>,         // Counter for how many transmissions have been received
     t_fired: Cell<bool>,    // Whether timer t has already fired for the interval
 
-
-    data_value: Cell<usize>, // TODO: "Data" for testing purposes
-
     client: &'a TrickleClient,
     clock: &'a A,
 }
 
 impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
     pub fn new(client: &'a TrickleClient, clock: &'a A) -> TrickleData<'a, A> {
+        let mut i_max_val = I_MIN;
+        for _ in 0..I_MAX {
+            i_max_val *= 2;
+        }
         TrickleData{
 
-            i_max: Cell::new(0),
-            i_max_val: Cell::new(0),
-            i_min: Cell::new(0),
-            k: Cell::new(0),
+            i_max: Cell::new(I_MAX),
+            i_max_val: Cell::new(i_max_val),
+            i_min: Cell::new(I_MIN),
+            k: Cell::new(K),
 
             i_cur: Cell::new(0),
             t: Cell::new(0),
             c: Cell::new(0),
             t_fired: Cell::new(false),
 
-            data_value: Cell::new(0),
-
             client: client,
             clock: clock
         }
-    }
-
-    // TODO: Implement
-    pub fn set_defaults(&self) {
     }
 
     // TODO: Some things to consider: First, getting random bytes is
@@ -127,22 +123,21 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
 }
 
 impl<'a, A: time::Alarm + 'a> Trickle for TrickleData<'a, A> {
-    fn initialize(&self) {
-        self.i_max.set(I_MAX);
-        self.i_min.set(I_MIN);
 
-        let mut i_max_val = 0;
+    fn set_default_parameters(&self, i_max: usize, i_min: usize, k: usize) {
+        self.i_max.set(i_max);
+        self.i_min.set(i_min);
+
+        let mut i_max_val = i_min;
         for _ in 0..self.i_max.get() {
             i_max_val *= 2;
         }
         self.i_max_val.set(i_max_val);
-        self.k.set(K);
+        self.k.set(k);
+    }
 
-        self.i_cur.set(I_MIN);
-
-        // TODO: Remove
-        self.data_value.set(0);
-
+    fn initialize(&self) {
+        self.i_cur.set(self.i_min.get());
         self.start_next_interval();
     }
 
