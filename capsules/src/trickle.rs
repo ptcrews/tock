@@ -23,6 +23,13 @@ pub trait TrickleClient {
     fn transmit(&self);
 }
 
+pub trait Trickle {
+    fn initialize(&self);
+    fn received_transmission(&self, bool);
+
+    // TODO: Functions to change default parameters
+}
+
 pub struct TrickleData<'a, A: time::Alarm + 'a> {
 
     // Trickle parameters
@@ -69,25 +76,6 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
     pub fn set_defaults(&self) {
     }
 
-    pub fn initialize(&self) {
-        self.i_max.set(I_MAX);
-        self.i_min.set(I_MIN);
-
-        let mut i_max_val = 0;
-        for _ in 0..self.i_max.get() {
-            i_max_val *= 2;
-        }
-        self.i_max_val.set(i_max_val);
-        self.k.set(K);
-
-        self.i_cur.set(I_MIN);
-
-        // TODO: Remove
-        self.data_value.set(0);
-
-        self.start_next_interval();
-    }
-
     // TODO: Some things to consider: First, getting random bytes is
     // asynchronous. Therefore, we exit control flow here. We must
     // guarantee that (even if other interrupts come in) we restart
@@ -106,19 +94,6 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
 
         // Set the transmit timer
         self.set_timer(interval_offset);
-    }
-
-    pub fn received_transmission(&self, is_consistent: bool) {
-        if is_consistent {
-            // Increment the counter c
-            self.c.set(self.c.get() + 1);
-        } else {
-            // Reset interval only if i_cur > i_min; otherwise, ignore
-            if self.i_cur.get() > self.i_min.get() {
-                self.i_cur.set(self.i_min.get());
-                self.start_next_interval();
-            }
-        }
     }
 
     fn transmission_timer_fired(&self) {
@@ -151,7 +126,39 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
     }
 }
 
-// Want a TrickleClient trait -> has the fns: transmit, 
+impl<'a, A: time::Alarm + 'a> Trickle for TrickleData<'a, A> {
+    fn initialize(&self) {
+        self.i_max.set(I_MAX);
+        self.i_min.set(I_MIN);
+
+        let mut i_max_val = 0;
+        for _ in 0..self.i_max.get() {
+            i_max_val *= 2;
+        }
+        self.i_max_val.set(i_max_val);
+        self.k.set(K);
+
+        self.i_cur.set(I_MIN);
+
+        // TODO: Remove
+        self.data_value.set(0);
+
+        self.start_next_interval();
+    }
+
+    fn received_transmission(&self, is_consistent: bool) {
+        if is_consistent {
+            // Increment the counter c
+            self.c.set(self.c.get() + 1);
+        } else {
+            // Reset interval only if i_cur > i_min; otherwise, ignore
+            if self.i_cur.get() > self.i_min.get() {
+                self.i_cur.set(self.i_min.get());
+                self.start_next_interval();
+            }
+        }
+    }
+}
 
 impl<'a, A: time::Alarm + 'a> time::Client for TrickleData<'a, A> {
     fn fired(&self) {
