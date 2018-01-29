@@ -81,11 +81,12 @@ impl<'a> UDPPacket<'a> {
     }
 
     // Note that we encode all values in network-byte order
-    pub fn encode_header(&self, buf: &mut [u8]) -> SResult<usize> {
+    pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
         // TODO
-        stream_len_cond!(buf, 8);
+        stream_len_cond!(buf, 8 + offset);
 
-        let mut off = enc_consume!(buf, 0; encode_u16, self.header.src_port);
+        let mut off = offset; 
+        off = enc_consume!(buf, off; encode_u16, self.header.src_port);
         off = enc_consume!(buf, off; encode_u16, self.header.dst_port);
         off = enc_consume!(buf, off; encode_u16, self.header.len);
         off = enc_consume!(buf, off; encode_u16, self.header.cksum);

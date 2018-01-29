@@ -8,6 +8,10 @@ use net::udp::{UDPPacket};
 use net::tcp::{TCPPacket};
 use kernel::ReturnCode;
 
+use net::stream::{decode_u16, decode_u8, decode_bytes};
+use net::stream::{encode_u16, encode_u8, encode_bytes};
+use net::stream::SResult;
+
 
 // TODO: Note that this design decision means that we cannot have recursive
 // IP6 packets directly - we must have/use RawIPPackets instead. This makes
@@ -123,23 +127,40 @@ impl<'a> IP6Packet<'a> {
         40 + transport_hdr_size
     }
 
-    pub fn write_to_frame(&self, frame: &mut Frame) {
-
-        match self.payload {
-            TransportPacket::UDP(ref udp_packet) => {
-                udp_packet.write_to_frame(frame);
-            },
-            TransportPacket::TCP(ref tcp_packet) => {
-                //tcp_packet
-            },
-        }
-    }
-
     pub fn set_transpo_cksum(&self){} //Looks at internal buffer assuming
     // it contains a valid IP packet, checks the payload type. If the payload
     // type requires a cksum calculation, this function calculates the 
     // psuedoheader cksum and calls the appropriate transport packet function
     // using this pseudoheader cksum to set the transport packet cksum
+
+    // TODO: Implement
+    /*
+    pub fn decode(buf: &[u8]) -> SResult<IP6Header> {
+    }
+    */
+
+    pub fn encode(&self, buf: &mut [u8]) -> SResult<usize> {
+        let ip6_header = self.header;
+
+        stream_len_cond!(buf, 40); // Plus inner header(?)
+
+        let mut off = enc_consume!(buf, 0; encode_bytes, &ip6_header.version_class_flow);
+        off = enc_consume!(buf, off; encode_u16, ip6_header.payload_len.to_be());
+        off = enc_consume!(buf, off; encode_u8, ip6_header.next_header);
+        off = enc_consume!(buf, off; encode_u8, ip6_header.hop_limit);
+        off = enc_consume!(buf, off; encode_bytes, &ip6_header.src_addr.0);
+        off = enc_consume!(buf, off; encode_bytes, &ip6_header.dst_addr.0);
+
+        match self.payload {
+            TransportPacket::UDP(ref udp_packet) => {
+                udp_packet.encode(buf, off)
+            },
+            // TODO
+            _ => {
+                stream_done!(off, off);
+            },
+        }
+    }
 
 }
 
