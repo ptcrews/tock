@@ -92,12 +92,6 @@ impl<'a> UDPPacket<'a> {
         off = enc_consume!(buf, off; encode_u16, self.header.cksum);
         stream_done!(off, off);
     }
-
-    pub fn write_to_frame(&self, frame: &mut Frame) {
-        let mut serialized: [u8; 8] = [0; 8];
-        //self.serialize_header(&serialized);
-        //frame.
-    }
 }
 
 pub trait UDPSend {

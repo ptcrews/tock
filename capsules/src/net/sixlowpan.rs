@@ -224,6 +224,7 @@
 //
 
 use core::cell::Cell;
+use core::cmp::min;
 use ieee802154::mac::{Mac, Frame, TxClient, RxClient};
 use kernel::ReturnCode;
 use kernel::common::list::{List, ListLink, ListNode};
@@ -426,7 +427,7 @@ impl<'a> TxState<'a> {
         // Here, we assume that the compressed headers fit in the first MTU
         // fragment. This is consistent with RFC 6282.
         let mut lowpan_packet = [0 as u8; radio::MAX_FRAME_SIZE as usize];
-        let (consumed, written) = {
+        let (mut consumed, written) = {
             match sixlowpan_compression::compress(ctx_store,
                                                   ip6_packet,
                                                   self.src_mac_addr.get(),
@@ -439,6 +440,7 @@ impl<'a> TxState<'a> {
 
         let remaining_payload = ip6_packet.get_total_len() as usize - consumed;
         let lowpan_len = written + remaining_payload;
+
         // TODO: This -2 is added to account for the FCS; this should be changed
         // in the MAC code
         let mut remaining_capacity = frame.remaining_data_capacity() - 2;
@@ -468,12 +470,26 @@ impl<'a> TxState<'a> {
 
         // Write the remainder of the payload, rounding down to a multiple
         // of 8 if the entire payload won't fit
-        let payload_len = if remaining_payload > remaining_capacity {
+        let mut payload_len = if remaining_payload > remaining_capacity {
             remaining_capacity & !0b111
         } else {
             remaining_payload
         };
         // TODO: Check success
+
+        let total_header_len = ip6_packet.get_total_hdr_size();
+        // We still have headers left
+        if consumed < total_header_len {
+            // TODO: Make this constant?
+            let mut headers = [0 as u8; 60];
+            // TODO: Check return value
+            ip6_packet.encode(&mut headers);
+
+            let headers_to_write = min(payload_len, total_header_len-consumed);
+            frame.append_payload(&headers[consumed..consumed+headers_to_write]);
+            payload_len -= headers_to_write;
+            consumed += headers_to_write;
+        }
         frame.append_payload(&ip6_packet.get_payload()[0..payload_len]);
         self.dgram_offset.set(consumed + payload_len);
         Ok(frame)
@@ -486,13 +502,13 @@ impl<'a> TxState<'a> {
                                  mut frame: Frame)
         -> Result<Frame, (ReturnCode, &'static mut [u8])> {
 
-        let dgram_offset = self.dgram_offset.get();
+        let mut dgram_offset = self.dgram_offset.get();
         let remaining_capacity = frame.remaining_data_capacity() -
             lowpan_frag::FRAGN_HDR_SIZE;
         // This rounds payload_len down to the nearest multiple of 8 if it
         // is not the last fragment (per RFC 4944)
         let remaining_bytes = (self.dgram_size.get() as usize) - dgram_offset;
-        let payload_len = if remaining_bytes > remaining_capacity {
+        let mut payload_len = if remaining_bytes > remaining_capacity {
             remaining_capacity & !0b111
         } else {
             remaining_bytes
@@ -509,15 +525,18 @@ impl<'a> TxState<'a> {
         let total_hdr_len = ip6_packet.get_total_hdr_size();
         if total_hdr_len > dgram_offset {
             // TODO: Didn't send some headers - need to serialize
-            // payload_len -= sizeof headers sent
-            // dgram_offset += sizeof headers sent
+            let headers_to_write = min(payload_len, total_hdr_len - dgram_offset);
+            // TODO: Fix this
+            let mut headers = [0 as u8; 60];
+            frame.append_payload(&mut headers[dgram_offset..dgram_offset+headers_to_write]);
+            payload_len -= headers_to_write;
+            dgram_offset += headers_to_write;
         }
 
-        let payload_offset = dgram_offset - total_hdr_len;
         if payload_len > 0 {
+            let payload_offset = dgram_offset - total_hdr_len;
             frame.append_payload(&ip6_packet.get_payload()[payload_offset..payload_offset + payload_len]);
         }
-        //frame.append_payload(&ip6_packet[dgram_offset - total_hdr_len..dgram_offset + payload_len]);
 
         // Update the offset to be used for the next fragment
         self.dgram_offset.set(dgram_offset + payload_len);
