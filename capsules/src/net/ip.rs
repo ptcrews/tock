@@ -30,82 +30,17 @@ pub struct IP6Packet<'a> {
     pub payload: TransportPacket<'a>,
 }
 
+// Note: We want to have the IP6Header struct implement these methods,
+// as there are cases where we want to allocate/modify the IP6Header without
+// allocating/modifying the entire IP6Packet
 impl<'a> IP6Packet<'a> {
-    pub fn reset(&self){} //Sets fields to appropriate defaults
-    pub fn get_offset(&self) -> usize{40} //Always returns 40 until we add options support
-
-    // Remaining functions are just getters and setters for the header fields
-    pub fn set_traffic_class(&mut self, new_tc: u8){
-        self.header.set_traffic_class(new_tc);
-    }
-
-    pub fn set_dscp(&mut self, new_dscp: u8) {
-        self.header.set_dscp(new_dscp);
-    }
-
-    pub fn set_ecn(&mut self, new_ecn: u8) {
-        self.header.set_ecn(new_ecn);
-    }
-
-    pub fn set_flow_label(&mut self, flow_label: u32){
-        self.header.set_flow_label(flow_label);
-    }
-
-    pub fn set_payload_len(&mut self, len: u16){
-        self.header.set_payload_len(len);
-    }
-
-    pub fn set_next_header(&mut self, new_nh: u8){
-        self.header.set_next_header(new_nh);
-    }
-
-    pub fn set_hop_limit(&mut self, new_hl: u8) {
-        self.header.set_hop_limit(new_hl);
-    }
-
-    pub fn set_dest_addr(&mut self, dest: IPAddr){
-        self.header.dst_addr = dest;
-    }
-    pub fn set_src_addr(&mut self, src: IPAddr){
-        self.header.src_addr = src;
-    }
-
-    pub fn get_traffic_class(&self) -> u8{
-        self.header.get_traffic_class()
-    }
-
-    pub fn get_dscp(&self) -> u8{
-        self.header.get_dscp()
-    }
-
-    pub fn get_ecn(&self) -> u8{
-        self.header.get_ecn()
-    }
-
-    pub fn get_flow_label(&self)-> u32{
-        self.header.get_flow_label()
-    }
-
-    pub fn get_payload_len(&self) -> u16{
-        self.header.get_payload_len()
+    // Sets fields to appropriate defaults
+    pub fn reset(&mut self) {
+        self.header = IP6Header::default();
     }
 
     pub fn get_total_len(&self) -> u16 {
-        // This assumes that the length field of the IPv6 header
-        // is valid and correctly filled out
-        self.header.get_total_len()
-    }
-
-    pub fn get_next_header(&self) -> u8{
-        self.header.get_next_header()
-    }
-
-    pub fn get_dest_addr(&self) -> IPAddr{
-        self.header.dst_addr
-    }
-
-    pub fn get_src_addr(&self) -> IPAddr{
-        self.header.src_addr
+        40 + self.header.get_payload_len()
     }
 
     pub fn get_payload(&self) -> &[u8] {
@@ -136,20 +71,31 @@ impl<'a> IP6Packet<'a> {
     // TODO: Implement
     /*
     pub fn decode(buf: &[u8]) -> SResult<IP6Header> {
+        // TODO: Let size of header be a constant
+        stream_len_cond!(buf, 40);
+
+        let mut ip6_header = Self::new();
+        // Note that `dec_consume!` uses the length of the output buffer to
+        // determine how many bytes are to be read.
+        let off = dec_consume!(buf, 0; decode_bytes, &mut ip6_header.version_class_flow);
+        let (off, payload_len_be) = dec_try!(buf, off; decode_u16);
+        ip6_header.payload_len = u16::from_be(payload_len_be);
+        let (off, next_header) = dec_try!(buf, off; decode_u8);
+        ip6_header.next_header = next_header;
+        let (off, hop_limit) = dec_try!(buf, off; decode_u8);
+        ip6_header.hop_limit = hop_limit;
+        let off = dec_consume!(buf, off; decode_bytes, &mut ip6_header.src_addr.0);
+        let off = dec_consume!(buf, off; decode_bytes, &mut ip6_header.dst_addr.0);
+        stream_done!(off, ip6_header);
     }
     */
 
     pub fn encode(&self, buf: &mut [u8]) -> SResult<usize> {
         let ip6_header = self.header;
 
-        stream_len_cond!(buf, 40); // Plus inner header(?)
-
-        let mut off = enc_consume!(buf, 0; encode_bytes, &ip6_header.version_class_flow);
-        off = enc_consume!(buf, off; encode_u16, ip6_header.payload_len.to_be());
-        off = enc_consume!(buf, off; encode_u8, ip6_header.next_header);
-        off = enc_consume!(buf, off; encode_u8, ip6_header.hop_limit);
-        off = enc_consume!(buf, off; encode_bytes, &ip6_header.src_addr.0);
-        off = enc_consume!(buf, off; encode_bytes, &ip6_header.dst_addr.0);
+        // TODO: Confirm this works (that stream_done! doesn't break stuff)
+        // Also, handle unwrap safely
+        let (off, _) = ip6_header.encode(buf).done().unwrap();
 
         match self.payload {
             TransportPacket::UDP(ref udp_packet) => {

@@ -118,15 +118,15 @@ impl IP6Header {
     }
 
     // Returns the offset wrapped in an SResult
-    pub fn encode(buf: &mut [u8], ip6_header: IP6Header) -> SResult<usize> {
+    pub fn encode(&self, buf: &mut [u8]) -> SResult<usize> {
         stream_len_cond!(buf, 40);
 
-        let mut off = enc_consume!(buf, 0; encode_bytes, &ip6_header.version_class_flow);
-        off = enc_consume!(buf, off; encode_u16, ip6_header.payload_len.to_be());
-        off = enc_consume!(buf, off; encode_u8, ip6_header.next_header);
-        off = enc_consume!(buf, off; encode_u8, ip6_header.hop_limit);
-        off = enc_consume!(buf, off; encode_bytes, &ip6_header.src_addr.0);
-        off = enc_consume!(buf, off; encode_bytes, &ip6_header.dst_addr.0);
+        let mut off = enc_consume!(buf, 0; encode_bytes, &self.version_class_flow);
+        off = enc_consume!(buf, off; encode_u16, self.payload_len.to_be());
+        off = enc_consume!(buf, off; encode_u8, self.next_header);
+        off = enc_consume!(buf, off; encode_u8, self.hop_limit);
+        off = enc_consume!(buf, off; encode_bytes, &self.src_addr.0);
+        off = enc_consume!(buf, off; encode_bytes, &self.dst_addr.0);
         stream_done!(off, off);
     }
 

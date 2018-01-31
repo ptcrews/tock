@@ -1018,7 +1018,7 @@ pub fn decompress(ctx_store: &ContextStore,
         written + (buf.len() - consumed) - mem::size_of::<IP6Header>()
     };
     ip6_header.payload_len = (payload_len as u16).to_be();
-    IP6Header::encode(out_buf, ip6_header).done().ok_or(())?;
+    IP6Header::encode(&ip6_header, out_buf).done().ok_or(())?;
     Ok((consumed, written))
 }
 

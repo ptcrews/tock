@@ -417,7 +417,6 @@ impl<'a> TxState<'a> {
         self.prepare_first_fragment(ip6_packet, frame, ctx_store)
     }
 
-    // TODO: Handle TCP packets
     fn prepare_first_fragment<'b>(&self,
                                   ip6_packet: &'b IP6Packet<'b>,
                                   mut frame: Frame,
@@ -447,16 +446,7 @@ impl<'a> TxState<'a> {
 
         // Need to fragment
         if lowpan_len > remaining_capacity {
-            let mut frag_header = [0 as u8; lowpan_frag::FRAG1_HDR_SIZE];
-            set_frag_hdr(self.dgram_size.get(),
-                         self.dgram_tag.get(),
-                         /*offset = */
-                         0,
-                         &mut frag_header,
-                         true);
-            // TODO: Check success
-            frame.append_payload(&frag_header[0..lowpan_frag::FRAG1_HDR_SIZE]);
-            remaining_capacity -= lowpan_frag::FRAG1_HDR_SIZE;
+            remaining_capacity -= self.write_frag_hdr(&mut frame, true);
         }
 
         // Write the 6lowpan header
@@ -476,71 +466,95 @@ impl<'a> TxState<'a> {
             remaining_payload
         };
         // TODO: Check success
+        let (consumed, payload_len) = self.write_additional_headers(ip6_packet,
+                                                                    &mut frame,
+                                                                    consumed,
+                                                                    payload_len);
 
-        let total_header_len = ip6_packet.get_total_hdr_size();
-        // We still have headers left
-        if consumed < total_header_len {
-            // TODO: Make this constant?
-            let mut headers = [0 as u8; 60];
-            // TODO: Check return value
-            ip6_packet.encode(&mut headers);
-
-            let headers_to_write = min(payload_len, total_header_len-consumed);
-            frame.append_payload(&headers[consumed..consumed+headers_to_write]);
-            payload_len -= headers_to_write;
-            consumed += headers_to_write;
-        }
         frame.append_payload(&ip6_packet.get_payload()[0..payload_len]);
         self.dgram_offset.set(consumed + payload_len);
         Ok(frame)
     }
 
-    // TODO: Support the case where not all headers were sent in the first
-    // fragment - this is currently supported by none of the code (RFC 6282 Section 2)
     fn prepare_next_fragment<'b>(&self,
                                  ip6_packet: &'b IP6Packet<'b>,
                                  mut frame: Frame)
         -> Result<Frame, (ReturnCode, &'static mut [u8])> {
 
         let mut dgram_offset = self.dgram_offset.get();
-        let remaining_capacity = frame.remaining_data_capacity() -
-            lowpan_frag::FRAGN_HDR_SIZE;
+        let mut remaining_capacity = frame.remaining_data_capacity();
+        remaining_capacity -= self.write_frag_hdr(&mut frame, false);
+
         // This rounds payload_len down to the nearest multiple of 8 if it
         // is not the last fragment (per RFC 4944)
-        let remaining_bytes = (self.dgram_size.get() as usize) - dgram_offset;
-        let mut payload_len = if remaining_bytes > remaining_capacity {
+        let remaining_payload = (self.dgram_size.get() as usize) - dgram_offset;
+        let mut payload_len = if remaining_payload > remaining_capacity {
             remaining_capacity & !0b111
         } else {
-            remaining_bytes
+            remaining_payload
         };
 
-        let mut frag_header = [0 as u8; lowpan_frag::FRAGN_HDR_SIZE];
-        set_frag_hdr(self.dgram_size.get(),
-                     self.dgram_tag.get(),
-                     dgram_offset,
-                     &mut frag_header,
-                     false);
-        // TODO: Check error
-        frame.append_payload(&frag_header);
-        let total_hdr_len = ip6_packet.get_total_hdr_size();
-        if total_hdr_len > dgram_offset {
-            // TODO: Didn't send some headers - need to serialize
-            let headers_to_write = min(payload_len, total_hdr_len - dgram_offset);
-            // TODO: Fix this
-            let mut headers = [0 as u8; 60];
-            frame.append_payload(&mut headers[dgram_offset..dgram_offset+headers_to_write]);
-            payload_len -= headers_to_write;
-            dgram_offset += headers_to_write;
-        }
+        let (dgram_offset, payload_len) = self.write_additional_headers(ip6_packet,
+                                                                        &mut frame,
+                                                                        dgram_offset,
+                                                                        payload_len);
 
         if payload_len > 0 {
-            let payload_offset = dgram_offset - total_hdr_len;
+            let payload_offset = dgram_offset - ip6_packet.get_total_hdr_size();
             frame.append_payload(&ip6_packet.get_payload()[payload_offset..payload_offset + payload_len]);
         }
 
         // Update the offset to be used for the next fragment
         self.dgram_offset.set(dgram_offset + payload_len);
         Ok(frame)
+    }
+
+    // TODO: Is this the cleanest function possible? Should we pass dgram_offset
+    // and payload as references and modify them directly?
+    fn write_additional_headers<'b>(&self,
+                                    ip6_packet: &'b IP6Packet<'b>,
+                                    frame: &mut Frame,
+                                    dgram_offset: usize,
+                                    payload_len: usize) -> (usize, usize) {
+        let total_hdr_len = ip6_packet.get_total_hdr_size();
+        let mut payload_len = payload_len;
+        let mut dgram_offset = dgram_offset;
+        if total_hdr_len > dgram_offset {
+            // TODO: Didn't send some headers - need to serialize
+            let headers_to_write = min(payload_len, total_hdr_len - dgram_offset);
+            // TODO: Fix this
+            let mut headers = [0 as u8; 60];
+            ip6_packet.encode(&mut headers);
+            frame.append_payload(&mut headers[dgram_offset..dgram_offset+headers_to_write]);
+            payload_len -= headers_to_write;
+            dgram_offset += headers_to_write;
+        }
+        (payload_len, dgram_offset)
+    }
+
+    fn write_frag_hdr(&self, frame: &mut Frame, first_frag: bool) -> usize {
+        if first_frag {
+            let mut frag_header = [0 as u8; lowpan_frag::FRAG1_HDR_SIZE];
+            set_frag_hdr(self.dgram_size.get(),
+                         self.dgram_tag.get(),
+                         /*offset = */
+                         0,
+                         &mut frag_header,
+                         true);
+            // TODO: Check success
+            frame.append_payload(&frag_header);
+            lowpan_frag::FRAG1_HDR_SIZE
+        } else {
+            let mut frag_header = [0 as u8; lowpan_frag::FRAGN_HDR_SIZE];
+            set_frag_hdr(self.dgram_size.get(),
+                         self.dgram_tag.get(),
+                         self.dgram_offset.get(),
+                         &mut frag_header,
+                         first_frag);
+            // TODO: Check error
+            frame.append_payload(&frag_header);
+            lowpan_frag::FRAGN_HDR_SIZE
+        }
     }
 
     fn end_transmit(&self) {
