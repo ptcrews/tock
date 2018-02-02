@@ -29,13 +29,12 @@ pub trait UDPSocket:UDPSend {
     fn send_done(&self, udp_packet: &'static mut UDPPacket, result: ReturnCode);
 }
 
-pub struct UDPPacket<'a> { /* UDP Packet struct */
+pub struct UDPPacket { /* UDP Packet struct */
     pub header: UDPHeader,
-    pub payload: &'a mut [u8], 
     //pub len: u16, // on further reflection, this field seems unneccessary
 }
 
-impl<'a> UDPPacket<'a> {
+impl UDPPacket {
     pub fn reset(&self){} //Sets fields to appropriate defaults    
     pub fn get_offset(&self) -> usize{8} //Always returns 8 TODO: B/c size of UDPHeader
 

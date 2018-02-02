@@ -160,6 +160,8 @@ pub fn is_lowpan(packet: &[u8]) -> bool {
 /// after the first two bytes in the IPv6 next header extension. Returns
 /// `Err(())` in the case of an invalid IPv6 packet.
 fn is_ip6_nh_compressible(ip6_packet: &IP6Packet) -> Result<(bool, u8), ()> {
+    return Ok((false, 0));
+    /* TODO
     match ip6_packet.payload {
         TransportPacket::UDP(_) => {
             Ok((true, 0))
@@ -168,6 +170,7 @@ fn is_ip6_nh_compressible(ip6_packet: &IP6Packet) -> Result<(bool, u8), ()> {
             Ok((false, 0))
         },
     }
+    */
     /*
     match ip6_packet.get_next_header() {
         // IP6 encapsulated headers are always compressed
@@ -413,6 +416,7 @@ pub fn compress<'a>(ctx_store: &ContextStore,
             }
         */
             //ip6_nh::UDP => {
+            /* TODO
             TransportPacket::UDP(ref udp_packet) => {
                 let mut nhc_header = nhc::DISPATCH_UDP;
 
@@ -431,6 +435,7 @@ pub fn compress<'a>(ctx_store: &ContextStore,
                 // There cannot be any more next headers after UDP
                 //break;
             }
+            */
             /* TODO: Currently don't handle any extension headers... :(
             ip6_nh::FRAGMENT | ip6_nh::HOP_OPTS | ip6_nh::ROUTING | ip6_nh::DST_OPTS |
             ip6_nh::MOBILITY => {
