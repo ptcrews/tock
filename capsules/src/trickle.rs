@@ -8,6 +8,7 @@
 use core::cell::Cell;
 use core::cmp::min;
 use kernel::hil::{time, rng};
+use kernel::hil::rng::RNG;
 use kernel::hil::time::Frequency;
 
 // TODO: Replace default constants
@@ -21,14 +22,13 @@ const K: usize = 4;         // Redundancy constant
 // general for all radio/Mac layers.
 pub trait TrickleClient {
     fn transmit(&self);
+    fn new_interval(&self);
 }
 
 pub trait Trickle {
     fn set_default_parameters(&self, i_max: usize, i_min: usize, k: usize);
     fn initialize(&self);
     fn received_transmission(&self, bool);
-
-    // TODO: Functions to change default parameters
 }
 
 pub struct TrickleData<'a, A: time::Alarm + 'a> {
@@ -46,11 +46,12 @@ pub struct TrickleData<'a, A: time::Alarm + 'a> {
     t_fired: Cell<bool>,    // Whether timer t has already fired for the interval
 
     client: &'a TrickleClient,
+    rng: &'a RNG,
     clock: &'a A,
 }
 
 impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
-    pub fn new(client: &'a TrickleClient, clock: &'a A) -> TrickleData<'a, A> {
+    pub fn new(client: &'a TrickleClient, rng: &'a RNG, clock: &'a A) -> TrickleData<'a, A> {
         let mut i_max_val = I_MIN;
         for _ in 0..I_MAX {
             i_max_val *= 2;
@@ -68,6 +69,7 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
             t_fired: Cell::new(false),
 
             client: client,
+            rng: rng,
             clock: clock
         }
     }
@@ -77,19 +79,14 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
     // guarantee that (even if other interrupts come in) we restart
     // the state machine correctly.
     fn start_next_interval(&self) {
+        // Double interval size
+        self.i_cur.set(min(self.i_cur.get()*2, self.i_max_val.get()));
         // Reset the counter
         self.c.set(0);
-
-        // TODO: Get random byte(s)
-        let random_bytes = 0x15;
-        // This should select a random time in the second half of the interval
-        let interval_offset = (random_bytes % (self.i_cur.get()/2)) + self.i_cur.get()/2;
-
-        self.t.set(interval_offset);
         self.t_fired.set(false);
 
-        // Set the transmit timer
-        self.set_timer(interval_offset);
+        self.client.new_interval();
+        self.rng.get();
     }
 
     fn transmission_timer_fired(&self) {
@@ -103,14 +100,6 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
         if self.c.get() < self.k.get() {
             self.client.transmit();
         }
-    }
-
-    fn interval_timer_fired(&self) {
-        // Double interval size
-        if self.i_cur.get() < self.i_max_val.get() {
-            self.i_cur.set(min(self.i_cur.get()*2, self.i_max_val.get()));
-        }
-        self.start_next_interval();
     }
 
     // Time is in ms
@@ -159,7 +148,7 @@ impl<'a, A: time::Alarm + 'a> time::Client for TrickleData<'a, A> {
     fn fired(&self) {
         // This happens after the timer expires
         if self.t_fired.get() {
-            self.interval_timer_fired();
+            self.start_next_interval();
         } else {
             self.transmission_timer_fired();
         }
@@ -167,7 +156,20 @@ impl<'a, A: time::Alarm + 'a> time::Client for TrickleData<'a, A> {
 }
 
 impl<'a, A: time::Alarm + 'a> rng::Client for TrickleData<'a, A> {
+    // TODO: Is u32 enough randomness?
     fn randomness_available(&self, randomness: &mut Iterator<Item = u32>) -> rng::Continue {
-        rng::Continue::Done // or rng::Continue::More
+        match randomness.next() {
+            Some(random) => {
+                // This should select a random time in the second half of the interval
+                let interval_offset = (random as usize % (self.i_cur.get()/2)) + self.i_cur.get()/2;
+
+                self.t.set(interval_offset);
+
+                // Set the transmit timer
+                self.set_timer(interval_offset);
+                rng::Continue::Done // or rng::Continue::More
+            },
+            None => rng::Continue::More
+        }
     }
 }

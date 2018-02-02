@@ -47,6 +47,7 @@ pub mod usb;
 pub mod usb_user;
 pub mod usbc_client;
 pub mod trickle;
+pub mod deluge;
 #[macro_use]
 pub mod net;
 pub mod ieee802154;
