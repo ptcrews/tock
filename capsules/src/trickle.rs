@@ -29,6 +29,7 @@ pub trait Trickle {
     fn set_default_parameters(&self, i_max: usize, i_min: usize, k: usize);
     fn initialize(&self);
     fn received_transmission(&self, bool);
+    fn get_current_interval(&self) -> usize;
 }
 
 pub struct TrickleData<'a, A: time::Alarm + 'a> {
@@ -141,6 +142,10 @@ impl<'a, A: time::Alarm + 'a> Trickle for TrickleData<'a, A> {
                 self.start_next_interval();
             }
         }
+    }
+
+    fn get_current_interval(&self) -> usize {
+        self.i_cur.get()
     }
 }
 

@@ -8,9 +8,20 @@ use core::cmp::min;
 
 use trickle::{Trickle, TrickleClient};
 
-pub struct ObjectProfile<'a> {
+struct AgeVector<'a> {
     size: usize,
     profile: &'a [u8], // TODO: What type of integers encode a version #?
+}
+
+enum DelugePayloadType<'a> {
+    MaintainSummary((usize, usize)),
+    MaintainObjectProfile((usize, AgeVector<'a>)),
+    // RequestForData(),
+    // ?
+}
+
+struct DelugePayload<'a> {
+    payload: DelugePayloadType<'a>,
 }
 
 const DELUGE_PROFILE_HDR: u8 = 0xd0;
@@ -24,26 +35,31 @@ enum DelugeState {
 }
 
 pub struct DelugeData<'a> {
-    k_profile: Cell<usize>,
-    v_current: Cell<usize>,
-    largest_page: Cell<usize>,
-    recv_v_old: Cell<bool>,
+    // General application state
+    version: Cell<usize>,       // v in paper
+    largest_page: Cell<usize>,  // \gamma in paper
+
+    // Deluge network state
+    received_old_v: Cell<bool>, // Whether to transmit full object profile or not
+    obj_update_count: Cell<usize>,
     last_page_req_time: Cell<usize>,
     data_packet_recv_time: Cell<usize>,
 
     state: Cell<DelugeState>,
 
+    // Other
     trickle: &'a Trickle,
 }
 
 impl<'a> DelugeData<'a> {
     pub fn new(trickle: &'a Trickle) -> DelugeData<'a> {
         DelugeData{
-            // We let Trickle track the k_summary part
-            k_profile: Cell::new(0),
-            v_current: Cell::new(0),
+            version: Cell::new(0),
             largest_page: Cell::new(0),
-            recv_v_old: Cell::new(false),
+
+            received_old_v: Cell::new(false),
+            obj_update_count: Cell::new(0),
+            // TODO: Initialize these to max?
             last_page_req_time: Cell::new(0),
             data_packet_recv_time: Cell::new(0),
 
@@ -53,60 +69,57 @@ impl<'a> DelugeData<'a> {
         }
     }
 
-    fn receive_packet(&self, packet: &[u8]) {
-        if packet[0] == DELUGE_PROFILE_HDR {
-            let version = packet[1] as usize;
-            let size = packet[2] as usize;
-            let profile = &packet[3..size+3];
-            let obj_prof = ObjectProfile {
-                size: size,
-                profile: profile,
-            };
-            self.receive_object_profile(version, &obj_prof);
-        } else if packet[0] == DELUGE_SUM_HDR {
-            let version = packet[1] as usize;
-            let largest_page = packet[2] as usize;
-            self.receive_summary(version, largest_page);
-        } // TODO: Receive request for data from page p \leq \gamma from version v
-    }
+    // TODO: Handle other inconsistent transmission cases: 1) advertisements
+    // with inconsistent summaries, 2) any requests, or 3) any data packets
+    fn received_packet<'b>(&self, packet: &'b DelugePayload<'b>) {
+        match packet.payload {
+            DelugePayloadType::MaintainSummary((version, page_num)) => {
+                // Inconsistent summary
+                if version != self.version.get() {
+                    self.trickle.received_transmission(false);
+                } else if page_num > self.largest_page.get() {
 
-    fn receive_summary(&self, version: usize, largest_page: usize) {
-        // Inconsistent summary
-        if version != self.v_current.get() {
-            self.trickle.received_transmission(false);
-        } else {
-            if largest_page > self.largest_page.get() {
-                // Confirm that request p \leq \gamma was *not* previously
-                // received within time t = 2*interval AND that
-                // a data packet for page p \leq \gamma +1 was previously received
-                // in time t = interval
-                // If so, transition to RX state
-            }
-            self.trickle.received_transmission(true);
-        }
-    }
+                    // Get the current interval, then notify Trickle that
+                    // we received an inconsitent transmission
+                    let cur_interval = self.trickle.get_current_interval();
+                    self.trickle.received_transmission(false);
 
-    // M4
-    fn receive_object_profile(&self, version: usize, profile: &ObjectProfile) {
-        if version < self.v_current.get() && self.k_profile.get() < CONST_K {
-            // TODO: Transmit object profile
-        } else {
-            self.k_profile.set(self.k_profile.get() + 1);
-            self.trickle.received_transmission(true);
+                    if (self.last_page_req_time.get() > cur_interval * 2)
+                        && (self.data_packet_recv_time.get() > cur_interval) {
+                        //TODO self.transition_to_rx();
+                    }
+                } else {
+                    // Transmission only consistent if v=v', y=y'
+                    self.trickle.received_transmission(true);
+                }
+            },
+            // Note that we diverge a bit from the explicit behavior described
+            // in part M.4 in the Deluge paper. In particular, we don't
+            // independently track the # of received object profiles versus
+            // # of received summaries
+            DelugePayloadType::MaintainObjectProfile((version, ref profile)) => {
+                if version < self.version.get() {
+                    self.received_old_v.set(true);
+                    self.trickle.received_transmission(false);
+                } else {
+                    self.trickle.received_transmission(true);
+                }
+            },
         }
     }
 }
 
 impl<'a> TrickleClient for DelugeData<'a> {
     fn transmit(&self) {
-        // Transmit summary
-        if self.k_profile.get() < CONST_K {
+        if self.received_old_v.get() {
             // Transmit object profile
+        } else {
+            // Transmit object summary
         }
     }
 
     fn new_interval(&self) {
-        self.k_profile.set(0);
-        self.recv_v_old.set(false);
+        self.received_old_v.set(false);
+        self.obj_update_count.set(0);
     }
 }
