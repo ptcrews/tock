@@ -69,9 +69,23 @@ impl<'a> DelugeData<'a> {
         }
     }
 
+    fn transition_state(&self, new_state: DelugeState) {
+        self.state.set(new_state);
+        match new_state {
+            DelugeState::Maintenance => {
+            },
+            DelugeState::Transmit => {
+            },
+            DelugeState::Receive => {
+            },
+        }
+    }
+
+    // TODO: Handle M.5 - setting last_page_req_time and data_packet_recv_time
+    // appropriately
     // TODO: Handle other inconsistent transmission cases: 1) advertisements
     // with inconsistent summaries, 2) any requests, or 3) any data packets
-    fn received_packet<'b>(&self, packet: &'b DelugePayload<'b>) {
+    fn maintain_received_packet<'b>(&self, packet: &'b DelugePayload<'b>) {
         match packet.payload {
             DelugePayloadType::MaintainSummary((version, page_num)) => {
                 // Inconsistent summary
@@ -123,3 +137,14 @@ impl<'a> TrickleClient for DelugeData<'a> {
         self.obj_update_count.set(0);
     }
 }
+
+/*
+ * impl<'a> ReceiveClient for DelugeData<'a> {
+ *      fn receive<'b>(&self, _: &'b [u8]) {
+ *          match self.state {
+ *              DelugeState::Maintenance => self.maintain_received_packet(),
+ *              DelugeState::Transmit => self.transmit_received_packet(),
+ *              DelugeState::Receive => self.receive_received_packet(),
+ *          }
+ *      }
+ * }
