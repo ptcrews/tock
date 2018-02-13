@@ -370,13 +370,6 @@ impl<'a> TxState<'a> {
                          radio: &Mac)
                          -> Result<(bool, Frame), (ReturnCode, &'static mut [u8])> {
 
-        // Want the total datagram size we are sending to be less than
-        // the length of the packet - otherwise, we risk reading off the
-        // end of the array
-        if self.dgram_size.get() > ip6_packet.get_total_len() { //Flipped this inequality, I think it was wrong..?
-            return Err((ReturnCode::ENOMEM, frag_buf));
-        }
-
         // This consumes frag_buf
         let frame = radio.prepare_data_frame(frag_buf,
                                              self.dst_pan.get(),
@@ -394,6 +387,13 @@ impl<'a> TxState<'a> {
             self.end_transmit();
             Ok((true, frame))
         } else {
+            // Want the total datagram size we are sending to be less than
+            // the length of the packet - otherwise, we risk reading off the
+            // end of the array
+            if self.dgram_size.get() != ip6_packet.get_total_len() { //Flipped this inequality, I think it was wrong..?
+                return Err((ReturnCode::ENOMEM, frame.into_buf()));
+            }
+
             let frame = self.prepare_next_fragment(ip6_packet, frame)?;
             Ok((false, frame))
         }
@@ -466,7 +466,7 @@ impl<'a> TxState<'a> {
             remaining_payload
         };
         // TODO: Check success
-        let (consumed, payload_len) = self.write_additional_headers(ip6_packet,
+        let (payload_len, consumed) = self.write_additional_headers(ip6_packet,
                                                                     &mut frame,
                                                                     consumed,
                                                                     payload_len);
@@ -494,7 +494,7 @@ impl<'a> TxState<'a> {
             remaining_payload
         };
 
-        let (dgram_offset, payload_len) = self.write_additional_headers(ip6_packet,
+        let (payload_len, dgram_offset) = self.write_additional_headers(ip6_packet,
                                                                         &mut frame,
                                                                         dgram_offset,
                                                                         payload_len);
