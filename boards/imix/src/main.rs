@@ -28,8 +28,8 @@ pub mod io;
 mod i2c_dummy;
 #[allow(dead_code)]
 mod spi_dummy;
-#[allow(dead_code)]
-mod lowpan_frag_dummy;
+//#[allow(dead_code)]
+//mod lowpan_frag_dummy;
 
 #[allow(dead_code)]
 mod power;
@@ -463,12 +463,6 @@ pub unsafe fn reset_handler() {
         capsules::usb_user::UsbSyscallDriver::new(
             usb_client, kernel::Grant::create()));
 
-    let lowpan_frag_test = lowpan_frag_dummy::initialize_all(radio_mac as &'static Mac,
-                                                             mux_alarm as &'static
-                                                                MuxAlarm<'static,
-                                                                    sam4l::ast::Ast>);
-    radio_mac.set_transmit_client(lowpan_frag_test);
-
     let imix = Imix {
         console: console,
         alarm: alarm,
@@ -516,6 +510,5 @@ pub unsafe fn reset_handler() {
                                     &mut APP_MEMORY,
                                     &mut PROCESSES,
                                     FAULT_RESPONSE);
-    lowpan_frag_test.start(); //Comment me out to run receive code
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }

@@ -4,9 +4,9 @@
 use core::mem;
 use core::result::Result;
 use net::ieee802154::MacAddress;
-use net::ip::{IP6Packet, TransportPacket};
+use net::ip::IP6Packet;
 use net::ip_utils::{IP6Header, IPAddr, ip6_nh};
-use net::udp::UDPPacket;
+use net::udp::UDPHeader;
 use net::util;
 use net::util::{slice_to_u16, u16_to_slice};
 
@@ -696,7 +696,7 @@ fn compress_multicast(dst_ip_addr: &IPAddr,
     }
 }
 
-fn compress_udp_ports(udp_packet: &UDPPacket , buf: &mut [u8], written: &mut usize) -> u8 {
+fn compress_udp_ports(udp_packet: &UDPHeader, buf: &mut [u8], written: &mut usize) -> u8 {
     let src_port = udp_packet.get_src_port();
     let dst_port = udp_packet.get_dst_port();
 
@@ -732,7 +732,7 @@ fn compress_udp_ports(udp_packet: &UDPPacket , buf: &mut [u8], written: &mut usi
     return udp_port_nhc;
 }
 
-fn compress_udp_checksum(udp_packet: &UDPPacket, buf: &mut [u8], written: &mut usize) -> u8 {
+fn compress_udp_checksum(udp_packet: &UDPHeader, buf: &mut [u8], written: &mut usize) -> u8 {
     // TODO: Checksum is always inline, elision is currently not supported
     let cksum = udp_packet.get_cksum();
     buf[*written] = cksum as u8;

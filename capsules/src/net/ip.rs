@@ -4,8 +4,8 @@
 
 use net::ip_utils::{IPAddr, IP6Header};
 use ieee802154::mac::Frame;
-use net::udp::{UDPPacket};
-use net::tcp::{TCPPacket};
+use net::udp::{UDPHeader};
+use net::tcp::{TCPHeader};
 use kernel::ReturnCode;
 
 use net::stream::{decode_u16, decode_u8, decode_bytes};
@@ -16,8 +16,8 @@ use net::stream::SResult;
 // IP6 packets directly - we must have/use RawIPPackets instead. This makes
 // it difficult to recursively compress IP6 packets as required by 6lowpan
 pub enum TransportHeader {
-    UDP(UDPPacket),
-    TCP(TCPPacket), // NOTE: TCP,ICMP,RawIP traits not yet implemented
+    UDP(UDPHeader),
+    TCP(TCPHeader), // NOTE: TCP,ICMP,RawIP traits not yet implemented
                         // , but follow logically from UDPPacket. 
 /*
     ICMP(ICMPPacket<'a>),
@@ -25,7 +25,7 @@ pub enum TransportHeader {
 }
 
 pub struct IPPayload<'a> {
-    pub payload_header: TransportPacket,
+    pub header: TransportHeader,
     pub payload: &'a mut [u8],
 }
 
