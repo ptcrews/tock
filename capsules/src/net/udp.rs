@@ -3,7 +3,6 @@
    in depth in the Thread_Stack_Design.txt document. */
 
 use net::ip_utils::{IPAddr};
-use ieee802154::mac::Frame;
 use net::stream::{decode_u16, decode_u8, decode_bytes};
 use net::stream::{encode_u16, encode_u8, encode_bytes};
 use net::stream::SResult;
@@ -16,6 +15,43 @@ pub struct UDPHeader {
     pub dst_port: u16,
     pub len: u16,
     pub cksum: u16,
+}
+
+
+//TODO: Remove functions reduntantly implemented on Header and Packet
+impl UDPHeader {
+    pub fn get_offset(&self) -> usize{8} //Always returns 8 TODO: B/c size of UDPHeader
+
+    pub fn set_dst_port(&mut self, port: u16) {
+        self.dst_port = port.to_be();
+    }
+    pub fn set_src_port(&mut self, port: u16) {
+        self.src_port = port.to_be();
+    }
+
+    pub fn set_len(&mut self, len: u16) {
+        self.len = len.to_be();
+    }
+
+    pub fn set_cksum(&mut self, cksum: u16) {
+        self.cksum = cksum.to_be();
+    }
+
+    pub fn get_src_port(&self) -> u16 {
+        u16::from_be(self.src_port)
+    }
+
+    pub fn get_dst_port(&self) -> u16 {
+        u16::from_be(self.dst_port)
+    }
+
+    pub fn get_len(&self) -> u16 {
+        u16::from_be(self.len)
+    }
+
+    pub fn get_cksum(&self) -> u16 {
+        u16::from_be(self.cksum)
+    }
 }
 
 pub struct UDPSocketExample { /* Example UDP socket implementation */
@@ -50,10 +86,8 @@ impl<'a> UDPPacket<'a> {
         self.header.len = len.to_be();
     }
 
-    // TODO: Check endianness
-    // Assumes cksum passed in network byte order
     pub fn set_cksum(&mut self, cksum: u16) {
-        self.header.cksum = cksum;
+        self.header.cksum = cksum.to_be();
     }
 
     pub fn get_src_port(&self) -> u16 {
@@ -69,7 +103,7 @@ impl<'a> UDPPacket<'a> {
     }
 
     pub fn get_cksum(&self) -> u16 {
-        self.header.cksum
+        u16::from_be(self.header.cksum)
     }
 
     pub fn set_payload(&self, payload: &'a [u8]){} //TODO
