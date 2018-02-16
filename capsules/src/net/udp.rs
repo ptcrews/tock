@@ -25,13 +25,12 @@ pub struct UDPSocketExample { /* Example UDP socket implementation */
     pub src_port: u16,
 }
 
-/*
 pub trait UDPSocket:UDPSend {
     fn bind(&self, src_ip: IPAddr, src_port: u16) -> ReturnCode;
-    fn send(&self, dest: IPAddr, udp_packet: &'static mut UDPPacket) -> ReturnCode;
-    fn send_done(&self, udp_packet: &'static mut UDPPacket, result: ReturnCode);
+    fn send<'a>(&self, dest: IPAddr, udp_header: UDPHeader, buf: &'a [u8]) -> ReturnCode;
+    // TODO: Isn't this supposed to be a callback?
+    fn send_done(&self, udp_header: UDPHeader, result: ReturnCode);
 }
-*/
 
 impl UDPHeader {
     pub fn reset(&self){} //Sets fields to appropriate defaults    
@@ -70,6 +69,9 @@ impl UDPHeader {
         self.cksum
     }
 
+    // TODO: This function is not ideal; here, we are breaking layering in
+    // order to set the payload. This is an artifact of the networking stack
+    // design, and I cannot find an easy way to fix this.
     pub fn set_payload<'a>(&self, buffer: &'a [u8], ip_payload: &'a mut IPPayload<'a>) -> Result<(), ()> {
         if ip_payload.payload.len() < buffer.len() {
             return Err(());
@@ -99,9 +101,8 @@ impl UDPHeader {
     }
 }
 
-/*
 pub trait UDPSend {
-    fn send(dest: IPAddr, udp_packet: &'static mut UDPPacket); // dest rqrd
-    fn send_done(buf: &'static mut UDPPacket, result: ReturnCode);
+    fn send<'a>(&self, dest: IPAddr, udp_header: UDPHeader, buf: &'a [u8]) -> ReturnCode;
+    // TODO: Isn't this supposed to be a callback?
+    fn send_done(&self, udp_header: UDPHeader, result: ReturnCode);
 }
-*/
