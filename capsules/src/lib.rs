@@ -46,10 +46,10 @@ pub mod app_flash_driver;
 pub mod usb;
 pub mod usb_user;
 pub mod usbc_client;
-pub mod trickle;
-pub mod deluge;
 #[macro_use]
 pub mod net;
+pub mod trickle;
+pub mod deluge;
 pub mod ieee802154;
 pub mod temperature;
 pub mod humidity;

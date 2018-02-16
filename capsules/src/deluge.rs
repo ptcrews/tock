@@ -4,35 +4,100 @@
 //! Date: 2018-02-01
 
 use core::cell::Cell;
+use core::mem;
 use core::cmp::min;
 use kernel::hil::time;
 use kernel::common::{List, ListLink, ListNode};
 use kernel::common::take_cell::TakeCell;
+use net::stream::{decode_u16, decode_u8};
+use net::stream::SResult;
 
 use trickle::{Trickle, TrickleClient};
 
 #[derive(Copy, Clone)]
-enum DelugePayloadType {
+enum DelugePacketType {
     MaintainSummary {
-        version: usize,
-        page_num: usize,
+        version: u16,
+        page_num: u16,
     },
     MaintainObjectProfile {
-        version: usize,
-        age_vector_size: usize,
+        version: u16,
+        age_vector_size: u16,
     },
     // RequestForData(),
     // ?
 }
 
-struct DelugePayload {
-    payload_type: DelugePayloadType,
-    offset: Cell<usize>,
+const DELUGE_PACKET_HDR: u8 = 0xd0;
+
+const MAINTAIN_SUMMARY: u8 = 0x01;
+const MAINTAIN_PROFILE: u8 = 0x02;
+//const REQUEST_FOR_DATA: u8 = 0x03;
+
+struct DelugePacket {
+    object_id: u16,
+    payload_type: DelugePacketType,
+    offset: usize,
     buffer: TakeCell<'static, [u8]>,
 }
 
-const DELUGE_PROFILE_HDR: u8 = 0xd0;
-const DELUGE_SUM_HDR: u8 = 0xd1;
+impl DelugePacket {
+    pub fn new() -> DelugePacket {
+
+        DelugePacket {
+            object_id: 0,
+            payload_type: DelugePacketType::MaintainSummary { version: 0, page_num: 0 },
+            offset: 0,
+            buffer: TakeCell::empty(),
+        }
+    }
+
+    // TODO: Should change to stream?
+    pub fn decode(packet: &'static mut [u8]) -> SResult<DelugePacket> {
+        // TODO: This is probably wrong
+        let len = mem::size_of::<DelugePacket>() + 1;
+        stream_len_cond!(packet, len);
+
+        let mut deluge_packet = DelugePacket::new();
+        let (off, packet_hdr) = dec_try!(packet, 0; decode_u8);
+
+        if packet_hdr != DELUGE_PACKET_HDR {
+            stream_err!(());
+        }
+
+        let (off, object_id) = dec_try!(packet, off; decode_u16);
+        // TODO: Unsafe
+        let (off, packet_type) = DelugePacket::decode_payload_type(off, packet).done().unwrap();
+        deluge_packet.object_id = object_id;
+        deluge_packet.payload_type = packet_type;
+        deluge_packet.offset = off;
+        deluge_packet.buffer.replace(packet);
+        stream_done!(off, deluge_packet);
+    }
+
+    fn decode_payload_type(off: usize, buf: &[u8]) -> SResult<DelugePacketType> {
+        let (off, type_as_int) = dec_try!(buf, off; decode_u8);
+        match type_as_int {
+            MAINTAIN_SUMMARY => {
+                let (off, version) = dec_try!(buf, off; decode_u16);
+                let (off, page_num) = dec_try!(buf, off; decode_u16);
+                let result = DelugePacketType::MaintainSummary { version: version, page_num: page_num };
+                stream_done!(off, result);
+            },
+            MAINTAIN_PROFILE => {
+                let (off, version) = dec_try!(buf, off; decode_u16);
+                let (off, age_vec_sz) = dec_try!(buf, off; decode_u16);
+                let result = DelugePacketType::MaintainObjectProfile { version: version,
+                    age_vector_size: age_vec_sz };
+                stream_done!(off, result);
+            },
+            _ => {
+                stream_err!(());
+            }
+        }
+    }
+}
+
 const CONST_K: usize = 0x1;
 
 #[derive(Copy, Clone, PartialEq)]
@@ -61,8 +126,8 @@ impl<'a> ListNode<'a, ProgramState<'a>> for ProgramState<'a> {
 
 pub struct DelugeData<'a, A: time::Alarm + 'a> {
     // General application state
-    version: Cell<usize>,       // v in paper
-    largest_page: Cell<usize>,  // \gamma in paper
+    version: Cell<u16>,       // v in paper
+    largest_page: Cell<u16>,  // \gamma in paper
 
     // Deluge network state
     received_old_v: Cell<bool>, // Whether to transmit full object profile or not
@@ -116,9 +181,9 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
     // appropriately
     // TODO: Handle other inconsistent transmission cases: 1) advertisements
     // with inconsistent summaries, 2) any requests, or 3) any data packets
-    fn mt_state_received_packet<'b>(&self, packet: &'b DelugePayload) {
+    fn mt_state_received_packet<'b>(&self, packet: &'b DelugePacket) {
         match packet.payload_type {
-            DelugePayloadType::MaintainSummary { version, page_num } => {
+            DelugePacketType::MaintainSummary { version, page_num } => {
                 // Inconsistent summary
                 if version != self.version.get() {
                     self.trickle.received_transmission(false);
@@ -142,7 +207,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
             // in part M.4 in the Deluge paper. In particular, we don't
             // independently track the # of received object profiles versus
             // # of received summaries
-            DelugePayloadType::MaintainObjectProfile{ version, age_vector_size } => {
+            DelugePacketType::MaintainObjectProfile{ version, age_vector_size } => {
                 if version < self.version.get() {
                     self.received_old_v.set(true);
                     self.trickle.received_transmission(false);
@@ -153,18 +218,18 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
         }
     }
 
-    fn rx_state_received_packet<'b>(&self, packet: &'b DelugePayload) {
+    fn rx_state_received_packet<'b>(&self, packet: &'b DelugePacket) {
         match packet.payload_type {
             // TODO: Confirm: Don't do anything for these packets?
-            DelugePayloadType::MaintainSummary { version, page_num } => {
+            DelugePacketType::MaintainSummary { version, page_num } => {
             },
-            DelugePayloadType::MaintainObjectProfile { version, age_vector_size } => {
+            DelugePacketType::MaintainObjectProfile { version, age_vector_size } => {
             },
             // TODO: Process packet
         }
     }
 
-    fn rx_state_process_packet<'b>(&self, packet: &'b DelugePayload) {
+    fn rx_state_process_packet<'b>(&self, packet: &'b DelugePacket) {
     }
 
     fn rx_state_completed_page(&self) {
@@ -173,10 +238,10 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
         self.transition_state(DelugeState::Maintenance);
     }
 
-    fn tx_state_received_packet<'b>(&self, packet: &'b DelugePayload) {
+    fn tx_state_received_packet<'b>(&self, packet: &'b DelugePacket) {
     }
 
-    fn decode_packet(&self, buf: &[u8], packet: &mut DelugePayload) -> Result<(), ()> {
+    fn decode_packet(&self, buf: &[u8], packet: &mut DelugePacket) -> Result<(), ()> {
         Ok(())
     }
 }
