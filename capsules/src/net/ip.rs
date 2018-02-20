@@ -72,11 +72,27 @@ impl<'a> IP6Packet<'a> {
         40
     }
 
-    pub fn set_transpo_cksum(&self){} //Looks at internal buffer assuming
+    pub fn set_transpo_cksum(&mut self){ //Looks at internal buffer assuming
     // it contains a valid IP packet, checks the payload type. If the payload
     // type requires a cksum calculation, this function calculates the 
     // psuedoheader cksum and calls the appropriate transport packet function
     // using this pseudoheader cksum to set the transport packet cksum
+        /*
+        match self.payload {
+            TransportPacket::UDP(ref mut udp_packet) => {
+
+            let cksum = compute_udp_checksum(&self.header, &udp_packet.header, udp_packet.header.get_len(), udp_packet.payload);
+
+            udp_packet.set_cksum(cksum);
+
+
+            },
+            _ => {
+                debug!("Transport cksum setting not supported for this transport payload");
+            }
+        }
+        */
+    }
 
     pub fn change_transport_type(&mut self) {
     }

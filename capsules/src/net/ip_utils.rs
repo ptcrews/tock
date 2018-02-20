@@ -1,6 +1,8 @@
 use net::stream::{decode_u16, decode_u8, decode_bytes};
 use net::stream::{encode_u16, encode_u8, encode_bytes};
 use net::stream::SResult;
+use net::udp::{UDPHeader};
+use net::util::{slice_to_u16};
 
 #[derive(Copy,Clone,PartialEq)]
 pub enum MacAddr {
@@ -213,4 +215,80 @@ impl IP6Header {
     pub fn set_hop_limit(&mut self, new_hl: u8) {
         self.hop_limit = new_hl;
     }
+}
+
+
+//Utility functions for calculating the checksum over a UDP/TCP packet
+
+trait OnesComplement {
+    fn ones_complement_add(self, other: Self) -> Self;
+}
+
+/// Implements one's complement addition for use in calculating the UDP checksum
+impl OnesComplement for u16 {
+    fn ones_complement_add(self, other: u16) -> u16 {
+        let (sum, overflow) = self.overflowing_add(other);
+        if overflow { sum + 1 } else { sum }
+    }
+}
+
+/// Computes the UDP checksum for a UDP packet sent over IPv6.
+/// Returns the checksum in host byte-order.
+//TODO: Replace use of this function with use of the function found in ip_utils
+// that operates on the new packet format rather than the received buffer
+// Alternatively, dont support checksum elision bc of security concerns
+pub fn compute_udp_checksum(ip6_header: &IP6Header,
+                        udp_header: &UDPHeader,
+                        udp_length: u16,
+                        payload: &[u8])
+                        -> u16 {
+    // The UDP checksum is computed on the IPv6 pseudo-header concatenated
+    // with the UDP header and payload, but with the UDP checksum field
+    // zeroed out. Hence, this function assumes that `udp_header` has already
+    // been filled with the UDP header, except for the ignored checksum.
+    let mut checksum: u16 = 0;
+
+    // IPv6 pseudo-header
+    // +--16 bits--+--16 bits--+--16 bits--+--16 bits--+
+    // |                                               |
+    // +              Source IPv6 Address              +
+    // |                                               |
+    // +-----------+-----------+-----------+-----------+
+    // |                                               |
+    // +           Destination IPv6 Address            +
+    // |                                               |
+    // +-----------+-----------+-----------+-----------+
+    // |      UDP Length       |     0     |  NH type  |
+    // +-----------+-----------+-----------+-----------+
+
+    // Source and destination addresses
+    for two_bytes in ip6_header.src_addr.0.chunks(2) {
+        checksum = checksum.ones_complement_add(slice_to_u16(two_bytes));
+    }
+    for two_bytes in ip6_header.dst_addr.0.chunks(2) {
+        checksum = checksum.ones_complement_add(slice_to_u16(two_bytes));
+    }
+
+    // UDP length and UDP next header type. Note that we can avoid adding zeros,
+    // but the pseudo header must be in network byte-order.
+    checksum = checksum.ones_complement_add(udp_length.to_be());
+    checksum = checksum.ones_complement_add((ip6_nh::UDP as u16).to_be());
+
+    // UDP header without the checksum (which is the last two bytes)
+    checksum = checksum.ones_complement_add(udp_header.src_port);
+    checksum = checksum.ones_complement_add(udp_header.dst_port);
+    checksum = checksum.ones_complement_add(udp_header.len);
+
+    // UDP payload
+    for bytes in payload.chunks(2) {
+        checksum = checksum.ones_complement_add(if bytes.len() == 2 {
+            slice_to_u16(bytes)
+        } else {
+            (bytes[0] as u16).to_be()
+        });
+    }
+
+    // Return the complement of the checksum, unless it is 0, in which case we
+    // the checksum is one's complement -0 for a non-zero binary representation
+    if !checksum != 0 { !checksum } else { checksum }
 }

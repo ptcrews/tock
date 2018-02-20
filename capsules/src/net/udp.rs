@@ -20,20 +20,9 @@ pub struct UDPHeader {
     pub cksum: u16,
 }
 
-pub struct UDPSocketExample { /* Example UDP socket implementation */
-    pub src_ip: IPAddr,
-    pub src_port: u16,
-}
 
-pub trait UDPSocket:UDPSend {
-    fn bind(&self, src_ip: IPAddr, src_port: u16) -> ReturnCode;
-    fn send<'a>(&self, dest: IPAddr, udp_header: UDPHeader, buf: &'a [u8]) -> ReturnCode;
-    // TODO: Isn't this supposed to be a callback?
-    fn send_done(&self, udp_header: UDPHeader, result: ReturnCode);
-}
-
+//TODO: Remove functions reduntantly implemented on Header and Packet
 impl UDPHeader {
-    pub fn reset(&self){} //Sets fields to appropriate defaults    
     pub fn get_offset(&self) -> usize{8} //Always returns 8 TODO: B/c size of UDPHeader
 
     pub fn set_dst_port(&mut self, port: u16) {
@@ -47,9 +36,8 @@ impl UDPHeader {
         self.len = len.to_be();
     }
 
-    // TODO: Check endianness
-    // Assumes cksum passed in network byte order
     pub fn set_cksum(&mut self, cksum: u16) {
+        //self.cksum = cksum.to_be();
         self.cksum = cksum;
     }
 
@@ -66,6 +54,7 @@ impl UDPHeader {
     }
 
     pub fn get_cksum(&self) -> u16 {
+        //u16::from_be(self.cksum)
         self.cksum
     }
 
@@ -99,6 +88,18 @@ impl UDPHeader {
         off = enc_consume!(buf, off; encode_u16, self.cksum);
         stream_done!(off, off);
     }
+}
+
+pub struct UDPSocketExample { /* Example UDP socket implementation */
+    pub src_ip: IPAddr,
+    pub src_port: u16,
+}
+
+pub trait UDPSocket:UDPSend {
+    fn bind(&self, src_ip: IPAddr, src_port: u16) -> ReturnCode;
+    fn send<'a>(&self, dest: IPAddr, udp_header: UDPHeader, buf: &'a [u8]) -> ReturnCode;
+    // TODO: Isn't this supposed to be a callback?
+    fn send_done(&self, udp_header: UDPHeader, result: ReturnCode);
 }
 
 pub trait UDPSend {

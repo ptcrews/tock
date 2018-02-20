@@ -218,6 +218,9 @@ impl OnesComplement for u16 {
 
 /// Computes the UDP checksum for a UDP packet sent over IPv6.
 /// Returns the checksum in host byte-order.
+//TODO: Replace use of this function with use of the function found in ip_utils
+// that operates on the new packet format rather than the received buffer
+// Alternatively, dont support checksum elision bc of security concerns
 fn compute_udp_checksum(ip6_header: &IP6Header,
                         udp_header: &[u8],
                         udp_length: u16,
@@ -1361,6 +1364,8 @@ fn decompress_udp_checksum(udp_nhc: u8,
         // TODO: Need to verify that the packet was sent with *some* kind
         // of integrity check at a lower level (otherwise, we need to drop
         // the packet)
+        //Hudson: I think we are better off not supporting checksum elision
+
         compute_udp_checksum(ip6_header, udp_header, udp_length, &buf[*consumed..])
     } else {
         let checksum = u16::from_be(slice_to_u16(&buf[*consumed..*consumed + 2]));
