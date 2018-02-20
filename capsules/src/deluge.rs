@@ -9,6 +9,8 @@ use core::cmp::min;
 use kernel::hil::time;
 use kernel::common::{List, ListLink, ListNode};
 use kernel::common::take_cell::TakeCell;
+use net::sixlowpan::SixlowpanClient;
+use kernel::ReturnCode;
 use net::stream::{decode_u16, decode_u8};
 use net::stream::SResult;
 
@@ -24,20 +26,28 @@ enum DelugePacketType {
         version: u16,
         age_vector_size: u16,
     },
-    // RequestForData(),
-    // ?
+    RequestForData {
+        version: u16,
+        bit_vector_size: u16,
+    },
+    DataPacket {
+        version: u16,
+        page_num: u16,
+    },
 }
 
 const DELUGE_PACKET_HDR: u8 = 0xd0;
 
 const MAINTAIN_SUMMARY: u8 = 0x01;
 const MAINTAIN_PROFILE: u8 = 0x02;
-//const REQUEST_FOR_DATA: u8 = 0x03;
+const REQUEST_FOR_DATA: u8 = 0x03;
+const DATA_PACKET: u8 = 0x04;
 
 struct DelugePacket {
     object_id: u16,
     payload_type: DelugePacketType,
     offset: usize,
+    // TODO: Perhaps put a bound on this?
     buffer: TakeCell<'static, [u8]>,
 }
 
@@ -52,8 +62,7 @@ impl DelugePacket {
         }
     }
 
-    // TODO: Should change to stream?
-    pub fn decode(packet: &'static mut [u8]) -> SResult<DelugePacket> {
+    pub fn decode(packet: &[u8]) -> SResult<DelugePacket> {
         // TODO: This is probably wrong
         let len = mem::size_of::<DelugePacket>() + 1;
         stream_len_cond!(packet, len);
@@ -71,7 +80,10 @@ impl DelugePacket {
         deluge_packet.object_id = object_id;
         deluge_packet.payload_type = packet_type;
         deluge_packet.offset = off;
-        deluge_packet.buffer.replace(packet);
+        // TODO: Non-optimal, as it requires we allocate an additional buffer
+        // for the Deluge packet
+        deluge_packet.buffer.map(|mut buf| buf.copy_from_slice(&packet));
+        //deluge_packet.buffer.replace(packet);
         stream_done!(off, deluge_packet);
     }
 
@@ -96,6 +108,8 @@ impl DelugePacket {
             }
         }
     }
+
+    // TODO: Encode function
 }
 
 const CONST_K: usize = 0x1;
@@ -113,6 +127,8 @@ pub trait DelugeProgramClient {
 
 pub struct ProgramState<'a> {
     unique_id: Cell<usize>,
+    cur_page_num: Cell<usize>,
+    page: TakeCell<'static, mut [u8]>,
     client: &'a DelugeProgramClient,
 
     next: ListLink<'a, ProgramState<'a>>,
@@ -121,6 +137,14 @@ pub struct ProgramState<'a> {
 impl<'a> ListNode<'a, ProgramState<'a>> for ProgramState<'a> {
     fn next(&self) -> &'a ListLink<ProgramState<'a>> {
         &self.next
+    }
+}
+
+impl<'a> ProgramState<'a> {
+    //pub fn new()
+
+    pub fn is_page_complete(&self) -> bool {
+
     }
 }
 
@@ -215,15 +239,30 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                     self.trickle.received_transmission(true);
                 }
             },
+            DelugePacketType::RequestForData { version, bit_vector_size } => {
+                // TODO: Do nothing?
+            },
+            DelugePacketType::DataPacket { version, page_num } => {
+                // Update our version if necessary
+            },
         }
     }
 
+    // TODO: Handle transition to MT if a' < a over \lambda transmissions
     fn rx_state_received_packet<'b>(&self, packet: &'b DelugePacket) {
         match packet.payload_type {
             // TODO: Confirm: Don't do anything for these packets?
             DelugePacketType::MaintainSummary { version, page_num } => {
             },
             DelugePacketType::MaintainObjectProfile { version, age_vector_size } => {
+            },
+            DelugePacketType::RequestForData { version, bit_vector_size } => {
+                // Reset timer
+                self.rx_state_reset_timer();
+            },
+            DelugePacketType::DataPacket { version, page_num } => {
+                // Reset timer
+                self.rx_state_reset_timer();
             },
             // TODO: Process packet
         }
@@ -238,11 +277,12 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
         self.transition_state(DelugeState::Maintenance);
     }
 
-    fn tx_state_received_packet<'b>(&self, packet: &'b DelugePacket) {
+    fn rx_state_reset_timer(&self) {
+        let tics = self.clock.now().wrapping_add((time as u32) * A::Frequency::frequency());
+        self.clock.set_alarm(tics);
     }
 
-    fn decode_packet(&self, buf: &[u8], packet: &mut DelugePacket) -> Result<(), ()> {
-        Ok(())
+    fn tx_state_received_packet<'b>(&self, packet: &'b DelugePacket) {
     }
 }
 
@@ -266,14 +306,24 @@ impl<'a, A: time::Alarm + 'a> TrickleClient for DelugeData<'a, A> {
     }
 }
 
-/*
- * impl<'a> ReceiveClient for DelugeData<'a> {
- *      fn receive<'b>(&self, _: &'b [u8]) {
- *          match self.state {
- *              DelugeState::Maintenance => self.maintain_received_packet(),
- *              DelugeState::Transmit => self.transmit_received_packet(),
- *              DelugeState::Receive => self.receive_received_packet(),
- *          }
- *      }
- * }
- */
+impl<'a, A: time::Alarm + 'a> SixlowpanClient for DelugeData<'a, A> {
+    fn receive<'b>(&self, buf: &'b [u8], len: u16, result: ReturnCode) {
+        // TODO: Remove unwrap
+        // TODO: Fix the way buffers are handled - simply doesn't make sense
+        let (_, packet) = DelugePacket::decode(&buf[..len as usize]).done().unwrap();
+        match self.state.get() {
+            DelugeState::Maintenance => {
+                self.mt_state_received_packet(&packet);
+            },
+            DelugeState::Receive => {
+                self.rx_state_received_packet(&packet);
+            },
+            DelugeState::Transmit => {
+                self.tx_state_received_packet(&packet);
+            },
+        }
+    }
+
+    fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
+    }
+}
