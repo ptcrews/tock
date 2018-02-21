@@ -4,9 +4,9 @@
 use core::mem;
 use core::result::Result;
 use net::ieee802154::MacAddress;
-use net::ip::{IP6Packet, TransportPacket};
+use net::ip::IP6Packet;
 use net::ip_utils::{IP6Header, IPAddr, ip6_nh};
-use net::udp::UDPPacket;
+use net::udp::UDPHeader;
 use net::util;
 use net::util::{slice_to_u16, u16_to_slice};
 
@@ -160,6 +160,8 @@ pub fn is_lowpan(packet: &[u8]) -> bool {
 /// after the first two bytes in the IPv6 next header extension. Returns
 /// `Err(())` in the case of an invalid IPv6 packet.
 fn is_ip6_nh_compressible(ip6_packet: &IP6Packet) -> Result<(bool, u8), ()> {
+    return Ok((false, 0));
+    /* TODO
     match ip6_packet.payload {
         TransportPacket::UDP(_) => {
             Ok((true, 0))
@@ -168,6 +170,7 @@ fn is_ip6_nh_compressible(ip6_packet: &IP6Packet) -> Result<(bool, u8), ()> {
             Ok((false, 0))
         },
     }
+    */
     /*
     match ip6_packet.get_next_header() {
         // IP6 encapsulated headers are always compressed
@@ -416,6 +419,7 @@ pub fn compress<'a>(ctx_store: &ContextStore,
             }
         */
             //ip6_nh::UDP => {
+            /* TODO
             TransportPacket::UDP(ref udp_packet) => {
                 let mut nhc_header = nhc::DISPATCH_UDP;
 
@@ -434,6 +438,7 @@ pub fn compress<'a>(ctx_store: &ContextStore,
                 // There cannot be any more next headers after UDP
                 //break;
             }
+            */
             /* TODO: Currently don't handle any extension headers... :(
             ip6_nh::FRAGMENT | ip6_nh::HOP_OPTS | ip6_nh::ROUTING | ip6_nh::DST_OPTS |
             ip6_nh::MOBILITY => {
@@ -694,7 +699,7 @@ fn compress_multicast(dst_ip_addr: &IPAddr,
     }
 }
 
-fn compress_udp_ports(udp_packet: &UDPPacket , buf: &mut [u8], written: &mut usize) -> u8 {
+fn compress_udp_ports(udp_packet: &UDPHeader, buf: &mut [u8], written: &mut usize) -> u8 {
     let src_port = udp_packet.get_src_port();
     let dst_port = udp_packet.get_dst_port();
 
@@ -730,7 +735,7 @@ fn compress_udp_ports(udp_packet: &UDPPacket , buf: &mut [u8], written: &mut usi
     return udp_port_nhc;
 }
 
-fn compress_udp_checksum(udp_packet: &UDPPacket, buf: &mut [u8], written: &mut usize) -> u8 {
+fn compress_udp_checksum(udp_packet: &UDPHeader, buf: &mut [u8], written: &mut usize) -> u8 {
     // TODO: Checksum is always inline, elision is currently not supported
     let cksum = udp_packet.get_cksum();
     buf[*written] = cksum as u8;

@@ -14,8 +14,24 @@ pub struct TCPHeader {
     pub urg_ptr: u16,
 }
 
-pub struct TCPPacket<'a> { /* TCP Packet Struct */
-    pub head: TCPHeader,
-    pub payload: &'a mut [u8],
-    pub len: u16, // length of payload
+/*
+impl<'a> TCPPacket<'a> {
+    pub fn new(buf: &mut [u8]) -> TCPPacket<'a> {
+        let header = TCPHeader {
+            src_port: 0,
+            dst_port: 0,
+            seq_num: 0,
+            ack_num: 0,
+            offset_and_control: 0,
+            window: 0,
+            cksum: 0,
+            urg_ptr: 0,
+        };
+        TCPPacket {
+            head: header,
+            payload: buf,
+            len: 0,
+        }
+    }
 }
+*/

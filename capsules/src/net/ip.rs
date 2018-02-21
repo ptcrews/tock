@@ -2,31 +2,88 @@
    of the networking stack. For a full description of the networking stack on
    tock, see the Thread_Stack_Design.txt document */
 
-use net::ip_utils::{IPAddr, IP6Header, compute_udp_checksum};
-use net::udp::{UDPPacket};
-use net::tcp::{TCPPacket};
+use net::ip_utils::{IPAddr, IP6Header};
+use ieee802154::mac::Frame;
+use net::udp::{UDPHeader};
+use net::tcp::{TCPHeader};
 use kernel::ReturnCode;
 
 use net::stream::{decode_u16, decode_u8, decode_bytes};
 use net::stream::{encode_u16, encode_u8, encode_bytes};
 use net::stream::SResult;
 
-
 // TODO: Note that this design decision means that we cannot have recursive
 // IP6 packets directly - we must have/use RawIPPackets instead. This makes
 // it difficult to recursively compress IP6 packets as required by 6lowpan
-pub enum TransportPacket<'a> {
-    UDP(UDPPacket<'a>),
-    TCP(TCPPacket<'a>), // NOTE: TCP,ICMP,RawIP traits not yet implemented
+pub enum TransportHeader {
+    UDP(UDPHeader),
+    TCP(TCPHeader), // NOTE: TCP,ICMP,RawIP traits not yet implemented
                         // , but follow logically from UDPPacket. 
 /*
     ICMP(ICMPPacket<'a>),
+    // TODO: Need a length in RawIPPacket for the buffer in TransportHeader
     Raw(RawIPPacket<'a>), */
+}
+
+pub struct IPPayload<'a> {
+    pub header: TransportHeader,
+    pub payload: &'a mut [u8],
+}
+
+impl<'a> IPPayload<'a> {
+    pub fn new(header: TransportHeader, payload: &'a mut [u8]) -> IPPayload<'a> {
+        IPPayload {
+            header: header,
+            payload: payload,
+        }
+    }
+
+    pub fn change_type(&mut self, new_type: TransportHeader) {
+        self.header = new_type;
+    }
+
+    pub fn change_payload(&mut self, new_payload: &[u8]) -> ReturnCode {
+        match self.header {
+            TransportHeader::UDP(udp_header) => {
+                udp_header.set_payload(new_payload, self);
+            },
+            _ => {
+                unimplemented!();
+            },
+        }
+        ReturnCode::SUCCESS
+    }
+
+    pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
+        let (offset, _) = match self.header {
+            TransportHeader::UDP(udp_header) => {
+                udp_header.encode(buf, offset).done().unwrap()
+            },
+            _ => {
+                unimplemented!();
+                stream_done!(offset, offset);
+            },
+        };
+        let payload_length = self.get_payload_length();
+        let offset = enc_consume!(buf, offset; encode_bytes, &self.payload[..payload_length]);
+        stream_done!(offset, offset);
+    }
+
+    fn get_payload_length(&self) -> usize {
+        match self.header {
+            TransportHeader::UDP(udp_header) => {
+                udp_header.get_len() as usize - udp_header.get_hdr_size()
+            },
+            _ => {
+                unimplemented!();
+            },
+        }
+    }
 }
 
 pub struct IP6Packet<'a> {
     pub header: IP6Header,
-    pub payload: TransportPacket<'a>,
+    pub payload: IPPayload<'a>,
 }
 
 // Note: We want to have the IP6Header struct implement these methods,
@@ -43,6 +100,8 @@ impl<'a> IP6Packet<'a> {
     }
 
     pub fn get_payload(&self) -> &[u8] {
+        unimplemented!();
+        /*
         match self.payload {
             TransportPacket::UDP(ref udp_packet) => {
                 return udp_packet.payload
@@ -51,14 +110,18 @@ impl<'a> IP6Packet<'a> {
                 return tcp_packet.payload
             },
         }
+        */
     }
 
     pub fn get_total_hdr_size(&self) -> usize {
+        /*
         let transport_hdr_size = match self.payload {
             TransportPacket::UDP(ref udp_packet) => udp_packet.get_hdr_size(),
             TransportPacket::TCP(ref tcp_packet) => 0, //tcp_packet.get_hdr_size(),
         };
-        40 + transport_hdr_size
+        */
+        //40 + transport_hdr_size
+        40
     }
 
     pub fn set_transpo_cksum(&mut self){ //Looks at internal buffer assuming
@@ -66,7 +129,7 @@ impl<'a> IP6Packet<'a> {
     // type requires a cksum calculation, this function calculates the 
     // psuedoheader cksum and calls the appropriate transport packet function
     // using this pseudoheader cksum to set the transport packet cksum
-        
+        /*
         match self.payload {
             TransportPacket::UDP(ref mut udp_packet) => {
 
@@ -80,29 +143,22 @@ impl<'a> IP6Packet<'a> {
                 debug!("Transport cksum setting not supported for this transport payload");
             }
         }
+        */
+    }
+
+    pub fn change_transport_type(&mut self) {
     }
 
     // TODO: Implement
-    /*
-    pub fn decode(buf: &[u8]) -> SResult<IP6Header> {
-        // TODO: Let size of header be a constant
-        stream_len_cond!(buf, 40);
-
-        let mut ip6_header = Self::new();
-        // Note that `dec_consume!` uses the length of the output buffer to
-        // determine how many bytes are to be read.
-        let off = dec_consume!(buf, 0; decode_bytes, &mut ip6_header.version_class_flow);
-        let (off, payload_len_be) = dec_try!(buf, off; decode_u16);
-        ip6_header.payload_len = u16::from_be(payload_len_be);
-        let (off, next_header) = dec_try!(buf, off; decode_u8);
-        ip6_header.next_header = next_header;
-        let (off, hop_limit) = dec_try!(buf, off; decode_u8);
-        ip6_header.hop_limit = hop_limit;
-        let off = dec_consume!(buf, off; decode_bytes, &mut ip6_header.src_addr.0);
-        let off = dec_consume!(buf, off; decode_bytes, &mut ip6_header.dst_addr.0);
-        stream_done!(off, ip6_header);
+    pub fn decode(buf: &[u8], ip6_packet: &mut IP6Packet) -> Result<usize, ()> {
+        let (offset, header) = IP6Header::decode(buf).done().ok_or(())?;
+        ip6_packet.header = header;
+        // TODO: When deserializing, its not clear to me how to construct
+        // the inner packet. Easiset would be to probably assume the 
+        // TODO: Not sure how to convert an IP6Packet with a UDP payload to 
+        // an IP6Packet with a TCP payload.
+        Ok(offset)
     }
-    */
 
     pub fn encode(&self, buf: &mut [u8]) -> SResult<usize> {
         let ip6_header = self.header;
@@ -111,15 +167,16 @@ impl<'a> IP6Packet<'a> {
         // Also, handle unwrap safely
         let (off, _) = ip6_header.encode(buf).done().unwrap();
 
-        match self.payload {
-            TransportPacket::UDP(ref udp_packet) => {
-                udp_packet.encode(buf, off)
+        let result = match self.payload.header {
+            TransportHeader::UDP(udp_header) => {
+                udp_header.encode(buf, off)
             },
             // TODO
             _ => {
                 stream_done!(off, off);
             },
-        }
+        };
+        unimplemented!();
     }
 
 }
