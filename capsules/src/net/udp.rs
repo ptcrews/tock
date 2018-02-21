@@ -26,35 +26,33 @@ impl UDPHeader {
     pub fn get_offset(&self) -> usize{8} //Always returns 8 TODO: B/c size of UDPHeader
 
     pub fn set_dst_port(&mut self, port: u16) {
-        self.dst_port = port.to_be();
+        self.dst_port = port;
     }
     pub fn set_src_port(&mut self, port: u16) {
-        self.src_port = port.to_be();
+        self.src_port = port;
     }
 
     pub fn set_len(&mut self, len: u16) {
-        self.len = len.to_be();
+        self.len = len;
     }
 
     pub fn set_cksum(&mut self, cksum: u16) {
-        //self.cksum = cksum.to_be();
         self.cksum = cksum;
     }
 
     pub fn get_src_port(&self) -> u16 {
-        u16::from_be(self.src_port)
+        self.src_port
     }
 
     pub fn get_dst_port(&self) -> u16 {
-        u16::from_be(self.dst_port)
+        self.dst_port
     }
 
     pub fn get_len(&self) -> u16 {
-        u16::from_be(self.len)
+        self.len
     }
 
     pub fn get_cksum(&self) -> u16 {
-        //u16::from_be(self.cksum)
         self.cksum
     }
 
