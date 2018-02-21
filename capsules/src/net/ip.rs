@@ -21,12 +21,64 @@ pub enum TransportHeader {
                         // , but follow logically from UDPPacket. 
 /*
     ICMP(ICMPPacket<'a>),
+    // TODO: Need a length in RawIPPacket for the buffer in TransportHeader
     Raw(RawIPPacket<'a>), */
 }
 
 pub struct IPPayload<'a> {
     pub header: TransportHeader,
     pub payload: &'a mut [u8],
+}
+
+impl<'a> IPPayload<'a> {
+    pub fn new(header: TransportHeader, payload: &'a mut [u8]) -> IPPayload<'a> {
+        IPPayload {
+            header: header,
+            payload: payload,
+        }
+    }
+
+    pub fn change_type(&mut self, new_type: TransportHeader) {
+        self.header = new_type;
+    }
+
+    pub fn change_payload(&mut self, new_payload: &[u8]) -> ReturnCode {
+        match self.header {
+            TransportHeader::UDP(udp_header) => {
+                udp_header.set_payload(new_payload, self);
+            },
+            _ => {
+                unimplemented!();
+            },
+        }
+        ReturnCode::SUCCESS
+    }
+
+    pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
+        let (offset, _) = match self.header {
+            TransportHeader::UDP(udp_header) => {
+                udp_header.encode(buf, offset).done().unwrap()
+            },
+            _ => {
+                unimplemented!();
+                stream_done!(offset, offset);
+            },
+        };
+        let payload_length = self.get_payload_length();
+        let offset = enc_consume!(buf, offset; encode_bytes, &self.payload[..payload_length]);
+        stream_done!(offset, offset);
+    }
+
+    fn get_payload_length(&self) -> usize {
+        match self.header {
+            TransportHeader::UDP(udp_header) => {
+                udp_header.get_len() as usize - udp_header.get_hdr_size()
+            },
+            _ => {
+                unimplemented!();
+            },
+        }
+    }
 }
 
 pub struct IP6Packet<'a> {
@@ -114,19 +166,17 @@ impl<'a> IP6Packet<'a> {
         // TODO: Confirm this works (that stream_done! doesn't break stuff)
         // Also, handle unwrap safely
         let (off, _) = ip6_header.encode(buf).done().unwrap();
-        unimplemented!();
 
-        /*
-        match self.payload {
-            TransportPacket::UDP(ref udp_packet) => {
-                udp_packet.encode(buf, off)
+        let result = match self.payload.header {
+            TransportHeader::UDP(udp_header) => {
+                udp_header.encode(buf, off)
             },
             // TODO
             _ => {
                 stream_done!(off, off);
             },
-        }
-        */
+        };
+        unimplemented!();
     }
 
 }

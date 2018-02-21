@@ -61,7 +61,7 @@ impl UDPHeader {
     // TODO: This function is not ideal; here, we are breaking layering in
     // order to set the payload. This is an artifact of the networking stack
     // design, and I cannot find an easy way to fix this.
-    pub fn set_payload<'a>(&self, buffer: &'a [u8], ip_payload: &'a mut IPPayload<'a>) -> Result<(), ()> {
+    pub fn set_payload<'a>(&self, buffer: &'a [u8], ip_payload: &mut IPPayload) -> Result<(), ()> {
         if ip_payload.payload.len() < buffer.len() {
             return Err(());
         }
