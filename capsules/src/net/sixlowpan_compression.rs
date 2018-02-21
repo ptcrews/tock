@@ -392,35 +392,36 @@ pub fn compress<'a>(ctx_store: &ContextStore,
     // At each iteration, next_headers begins at the first byte of the
     // current uncompressed next header.
     // Since we aren't recursing, we only handle UDP
-    //while is_nhc {
-        match ip6_packet.payload {
-            /* TODO: Currently don't handle IP encapsulation
-            ip6_nh::IP6 => {
+
+//     while is_nhc {
+//        match ip6_packet.payload.header {
+             //TODO: Currently don't handle IP encapsulation
+            /*ip6_nh::IP6 => {
                 // For IPv6 encapsulation, the NH bit in the NHC ID is 0
                 let nhc_header = nhc::DISPATCH_NHC | nhc::IP6;
                 buf[written] = nhc_header;
                 written += 1;
 
                 // Recursively place IPHC-encoded IPv6 after the NHC ID
-                /*
-                 * TODO: Support recursive behavior
-                let (encap_consumed, encap_written) = compress(ctx_store,
+                //
+                // TODO: Support recursive behavior
+                // let (encap_consumed, encap_written) = compress(ctx_store,
                                                                next_headers,
                                                                src_mac_addr,
                                                                dst_mac_addr,
                                                                &mut buf[written..])?;
-                consumed += encap_consumed;
-                written += encap_written;
-                */
+                // consumed += encap_consumed;
+                // written += encap_written;
+                
 
                 // The above recursion handles the rest of the packet
                 // headers, so we are done
                 break;
-            }
-        */
-            //ip6_nh::UDP => {
-            /* TODO
-            TransportPacket::UDP(ref udp_packet) => {
+            } */
+        
+            /*ip6_nh::UDP => {
+            
+            TransportHeader::UDP(ref udp_packet) => {
                 let mut nhc_header = nhc::DISPATCH_UDP;
 
                 // Leave a space for the UDP LoWPAN_NHC byte
@@ -485,8 +486,8 @@ pub fn compress<'a>(ctx_store: &ContextStore,
             // This case should not be reachable because
             // is_ip6_nh_compressible guarantees that is_nhc is true
             // only if ip6_nh_type is one of the types matched above
-            _ => panic!("Unreachable case"),
-        }
+//            _ => panic!("Unreachable case (currently only support udp payloads)"),
+//        }
     //}
     Ok((consumed, written))
 }

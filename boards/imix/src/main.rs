@@ -29,7 +29,7 @@ mod i2c_dummy;
 #[allow(dead_code)]
 mod spi_dummy;
 //#[allow(dead_code)]
-//mod lowpan_frag_dummy;
+mod lowpan_frag_dummy;
 
 #[allow(dead_code)]
 mod power;
@@ -462,6 +462,10 @@ pub unsafe fn reset_handler() {
             capsules::usbc_client::Client<'static, sam4l::usbc::Usbc<'static>>>,
         capsules::usb_user::UsbSyscallDriver::new(
             usb_client, kernel::Grant::create()));
+    let lowpan_frag_test = lowpan_frag_dummy::initialize_all(radio_mac as &'static Mac,
+                                                          mux_alarm as &'static
+                                                             MuxAlarm<'static,
+                                                                 sam4l::ast::Ast>);
 
     let imix = Imix {
         console: console,
@@ -494,6 +498,8 @@ pub unsafe fn reset_handler() {
     }
     sam4l::gpio::PB[07].set();
 
+
+
     imix.nrf51822.initialize();
 
     // These two lines need to be below the creation of the chip for
@@ -510,5 +516,7 @@ pub unsafe fn reset_handler() {
                                     &mut APP_MEMORY,
                                     &mut PROCESSES,
                                     FAULT_RESPONSE);
+
+    lowpan_frag_test.start();
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }
