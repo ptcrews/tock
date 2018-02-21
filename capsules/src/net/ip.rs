@@ -100,7 +100,7 @@ impl<'a> IP6Packet<'a> {
     }
 
     pub fn get_payload(&self) -> &[u8] {
-        unimplemented!();
+        self.payload.payload
         /*
         match self.payload {
             TransportPacket::UDP(ref udp_packet) => {
