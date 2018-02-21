@@ -2,13 +2,14 @@
    layer in the Tock Networking stack. This networking stack is explained more
    in depth in the Thread_Stack_Design.txt document. */
 
-use net::ip_utils::{IPAddr};
-use net::ip::{IPPayload, TransportHeader};
+use net::ip_utils::{IPAddr, IP6Header};
+use net::ip::{IPPayload, TransportHeader, IP6SendStruct, IP6Packet, IP6Client};
 use ieee802154::mac::Frame;
 use net::stream::{decode_u16, decode_u8, decode_bytes};
 use net::stream::{encode_u16, encode_u8, encode_bytes};
 use net::stream::SResult;
 use kernel::ReturnCode;
+use kernel::common::take_cell::TakeCell;
 
 // TODO: These values should be in host-byte order; if we want
 // host-byte order, use the getters/setters in UDPPacket
@@ -106,10 +107,27 @@ pub trait UDPSend {
     fn send_done(&self, udp_header: UDPHeader, result: ReturnCode);
 }
 
-/*
-pub struct UDPSync<'a> {
-    ip_packet: IP6Packet<'a>,
-    sixlowpan_tx: TxState<'a>,
-    radio: &'a Mac<'a>,
+pub struct UDPSendStruct<'a> {
+    ip6_packet: TakeCell<'static, IP6Packet<'static>>,
+    ip_send_struct: &'a IP6SendStruct<'a>,
 }
-*/
+
+impl<'a> UDPSendStruct<'a> {
+    pub fn new(ip6_packet: &'static mut IP6Packet<'a>,
+               ip_send_struct: &'a IP6SendStruct<'a>) -> UDPSendStruct<'a> {
+        UDPSendStruct {
+            ip6_packet: TakeCell::new(ip6_packet),
+            ip_send_struct: ip_send_struct,
+        }
+    }
+
+    pub fn initialize(&self) {
+        self.ip6_packet.map(|ip6_packet| ip6_packet.header = IP6Header::default());
+    }
+}
+
+impl<'a> IP6Client for UDPSendStruct<'a> {
+    fn send_done(&self, ip6_packet: &'static mut IP6Packet, result: ReturnCode) {
+        self.ip6_packet.replace(ip6_packet);
+    }
+}
