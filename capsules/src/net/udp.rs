@@ -8,8 +8,9 @@ use net::stream::{encode_u16, encode_u8, encode_bytes};
 use net::stream::SResult;
 use kernel::ReturnCode;
 
-// TODO: These values should be in network-byte order; if we want
+// TODO: These values should be in host-byte order; if we want
 // host-byte order, use the getters/setters in UDPPacket
+//Because enc_consume!() handles byte order flips for us?
 pub struct UDPHeader {
     pub src_port: u16,
     pub dst_port: u16,
