@@ -182,12 +182,16 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     radio_mac.set_receive_client(sixlowpan);
 
     // Following code initializes an IP6Packet using the global UDP_DGRAM buffer as the payload of a UDPPacket
-    let udp_hdr: UDPHeader = UDPHeader {
-        src_port: 12345,
-        dst_port: 54321,
-        len: (PAYLOAD_LEN as u16).to_be(),
-        cksum: 0, //cksum is set later down once UDPPacket initialized
+    let mut udp_hdr: UDPHeader = UDPHeader {
+        src_port: 0,
+        dst_port: 0,
+        len: 0,
+        cksum: 0, 
     };
+    udp_hdr.set_src_port(12345);
+    udp_hdr.set_dst_port(54321);
+    udp_hdr.set_len(PAYLOAD_LEN as u16);
+    //checksum is calculated and set later
 
     let mut ip6_hdr: IP6Header = IP6Header::new();
     ip6_hdr.set_next_header(17); //UDP
@@ -235,7 +239,7 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
     */
 
     pub fn start(&self) {
-        self.run_test_and_increment();
+        //self.run_test_and_increment();
         self.schedule_next();
     }
 
@@ -440,6 +444,8 @@ impl<'a, A: time::Alarm> SixlowpanRxClient for LowpanTest<'a, A> {
 
 impl<'a, A: time::Alarm> TxClient for LowpanTest<'a, A> {
     fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
+
+        //debug!("sendDone return code is: {:?}", result);
         self.send_next(tx_buf);
     }
 }
@@ -482,28 +488,29 @@ fn ipv6_check_receive_packet(tf: TF,
                         debug!("Mismatched IP len");
                     }
                     if rcvip6hdr.get_next_header() != ip6_packet.header.get_next_header() {
-                        debug!("Mismatched next hdr");
+                        debug!("Mismatched next hdr. Rcvd is: {:?}, expctd is: {:?}", rcvip6hdr.get_next_header(), ip6_packet.header.get_next_header());
                     }
                     if rcvip6hdr.get_hop_limit() != ip6_packet.header.get_hop_limit() {
                         debug!("Mismatched hop limit");
                     }
+
                     //Now check UDP headers
-// For some reason this code causes the tx imix to panic sometimes????
+
                     match ip6_packet.payload {
                         TransportPacket::UDP(ref sent_udp_pkt) => {
                             if rcvudphdr.get_src_port() != 
                                sent_udp_pkt.header.get_src_port() {
-                                 debug!("mismatched src_port")   
+                                 debug!("Mismatched src_port. Rcvd is: {:?}, expctd is: {:?}", rcvudphdr.get_src_port(), sent_udp_pkt.get_src_port());  
                             }
 
                             if rcvudphdr.get_dst_port() != 
                                sent_udp_pkt.header.get_dst_port() {
-                                 debug!("mismatched dst_port")   
+                                 debug!("Mismatched dst_port. Rcvd is: {:?}, expctd is: {:?}", rcvudphdr.get_dst_port(), sent_udp_pkt.get_dst_port());  
                             }
 
                             if rcvudphdr.get_len() != 
                                sent_udp_pkt.header.get_len() {
-                                 debug!("mismatched udp len")   
+                                 debug!("Mismatched udp_len. Rcvd is: {:?}, expctd is: {:?}", rcvudphdr.get_len(), sent_udp_pkt.get_len());  
                             }
 
                             if rcvudphdr.get_cksum() != 

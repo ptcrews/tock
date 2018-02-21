@@ -500,6 +500,8 @@ pub unsafe fn reset_handler() {
     }
     sam4l::gpio::PB[07].set();
 
+
+
     imix.nrf51822.initialize();
 
     // These two lines need to be below the creation of the chip for
