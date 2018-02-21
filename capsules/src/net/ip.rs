@@ -3,9 +3,10 @@
    tock, see the Thread_Stack_Design.txt document */
 
 use net::ip_utils::{IPAddr, IP6Header};
-use ieee802154::mac::Frame;
+use ieee802154::mac::{Frame, Mac};
 use net::udp::{UDPHeader};
 use net::tcp::{TCPHeader};
+use net::sixlowpan::TxState;
 use kernel::ReturnCode;
 
 use net::stream::{decode_u16, decode_u8, decode_bytes};
@@ -157,6 +158,7 @@ impl<'a> IP6Packet<'a> {
         // the inner packet. Easiset would be to probably assume the 
         // TODO: Not sure how to convert an IP6Packet with a UDP payload to 
         // an IP6Packet with a TCP payload.
+        unimplemented!();
         Ok(offset)
     }
 
@@ -166,23 +168,18 @@ impl<'a> IP6Packet<'a> {
         // TODO: Confirm this works (that stream_done! doesn't break stuff)
         // Also, handle unwrap safely
         let (off, _) = ip6_header.encode(buf).done().unwrap();
-
-        let result = match self.payload.header {
-            TransportHeader::UDP(udp_header) => {
-                udp_header.encode(buf, off)
-            },
-            // TODO
-            _ => {
-                stream_done!(off, off);
-            },
-        };
-        unimplemented!();
+        self.payload.encode(buf, off)
     }
-
 }
 
 pub trait IP6Send {
     fn send_to(&self, dest: IPAddr, ip6_packet: IP6Packet); //Convenience fn, sets dest addr, sends
     fn send(&self, ip6_packet: IP6Packet); //Length can be determined from IP6Packet
     fn send_done(&self, ip6_packet: IP6Packet, result: ReturnCode);
+}
+
+pub struct IP6SendStruct<'a> {
+    ip_packet: IP6Packet<'a>,
+    sixlowpan: TxState<'a>,
+    radio: &'a Mac<'a>,
 }

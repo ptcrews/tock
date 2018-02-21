@@ -107,3 +107,11 @@ pub trait UDPSend {
     // TODO: Isn't this supposed to be a callback?
     fn send_done(&self, udp_header: UDPHeader, result: ReturnCode);
 }
+
+/*
+pub struct UDPSync<'a> {
+    ip_packet: IP6Packet<'a>,
+    sixlowpan_tx: TxState<'a>,
+    radio: &'a Mac<'a>,
+}
+*/
