@@ -61,16 +61,16 @@ use kernel::hil::time::Frequency;
 
 pub const MLP: [u8; 8] = [0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7];
 
-pub const SRC_ADDR: IPAddr = IPAddr([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+/* pub const SRC_ADDR: IPAddr = IPAddr([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                                      0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
 pub const DST_ADDR: IPAddr = IPAddr([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+                                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);*/ 
 
-/* pub const SRC_ADDR: IPAddr = IPAddr([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+pub const SRC_ADDR: IPAddr = IPAddr([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
                                      0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f]);
 pub const DST_ADDR: IPAddr = IPAddr([0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29,
-                                     0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f]); */
+                                     0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f]);
 pub const SRC_MAC_ADDR: MacAddress = MacAddress::Long([0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
                                                        0x17]);
 pub const DST_MAC_ADDR: MacAddress = MacAddress::Long([0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
@@ -467,7 +467,7 @@ fn ipv6_check_receive_packet(tf: TF,
                              recv_packet: &[u8],
                              len: u16) {
     ipv6_prepare_packet(tf, hop_limit, sac, dac);
-    debug!("In receive packet for some reason!");
+    debug!("Checking received packet of length: {}", len);
     let mut test_success = true;
     unsafe { 
         // First, need to check header fields match:
@@ -479,26 +479,33 @@ fn ipv6_check_receive_packet(tf: TF,
                 Some(ref ip6_packet) => {
                     //First check IP headers
                     if rcvip6hdr.get_version() != ip6_packet.header.get_version() {
+                        test_success = false;
                         debug!("Mismatched IP ver");
                     }
                     
                     if rcvip6hdr.get_traffic_class() != ip6_packet.header.get_traffic_class() {
                         debug!("Mismatched tc");
+                        test_success = false;
                     }
                     if rcvip6hdr.get_dscp() != ip6_packet.header.get_dscp() {
                         debug!("Mismatched dcsp");
+                        test_success = false;
                     }
                     if rcvip6hdr.get_ecn() != ip6_packet.header.get_ecn() {
                         debug!("Mismatched ecn");
+                        test_success = false;
                     }
                     if rcvip6hdr.get_payload_len() != ip6_packet.header.get_payload_len() {
                         debug!("Mismatched IP len");
+                        test_success = false;
                     }
                     if rcvip6hdr.get_next_header() != ip6_packet.header.get_next_header() {
                         debug!("Mismatched next hdr. Rcvd is: {:?}, expctd is: {:?}", rcvip6hdr.get_next_header(), ip6_packet.header.get_next_header());
+                        test_success = false;
                     }
                     if rcvip6hdr.get_hop_limit() != ip6_packet.header.get_hop_limit() {
                         debug!("Mismatched hop limit");
+                        test_success = false;
                     }
 
                     //Now check UDP headers
@@ -506,23 +513,27 @@ fn ipv6_check_receive_packet(tf: TF,
                     match ip6_packet.payload.header {
                         TransportHeader::UDP(ref sent_udp_pkt) => {
                             if u16::from_be(rcvudphdr.get_src_port()) != 
-                               sent_udp_pkt.get_src_port() {
-                                 debug!("Mismatched src_port. Rcvd is: {:?}, expctd is: {:?}", rcvudphdr.get_src_port(), sent_udp_pkt.get_src_port());  
+                                sent_udp_pkt.get_src_port() {
+                                debug!("Mismatched src_port. Rcvd is: {:?}, expctd is: {:?}", rcvudphdr.get_src_port(), sent_udp_pkt.get_src_port());  
+                                test_success = false;
                             }
 
                             if u16::from_be(rcvudphdr.get_dst_port()) != 
-                               sent_udp_pkt.get_dst_port() {
-                                 debug!("Mismatched dst_port. Rcvd is: {:?}, expctd is: {:?}", rcvudphdr.get_dst_port(), sent_udp_pkt.get_dst_port());  
+                                sent_udp_pkt.get_dst_port() {
+                                debug!("Mismatched dst_port. Rcvd is: {:?}, expctd is: {:?}", rcvudphdr.get_dst_port(), sent_udp_pkt.get_dst_port());  
+                                test_success = false;
                             }
 
                             if u16::from_be(rcvudphdr.get_len()) != 
-                               sent_udp_pkt.get_len() {
-                                 debug!("Mismatched udp_len. Rcvd is: {:?}, expctd is: {:?}", rcvudphdr.get_len(), sent_udp_pkt.get_len());  
+                                sent_udp_pkt.get_len() {
+                                debug!("Mismatched udp_len. Rcvd is: {:?}, expctd is: {:?}", rcvudphdr.get_len(), sent_udp_pkt.get_len());  
+                                test_success = false;
                             }
 
                             if u16::from_be(rcvudphdr.get_cksum()) != 
-                               sent_udp_pkt.get_cksum() {
-                                 debug!("mismatched cksum")   
+                                sent_udp_pkt.get_cksum() {
+                                debug!("mismatched cksum");  
+                                test_success = false;
                             }
                         }
                         _ => {
@@ -534,18 +545,20 @@ fn ipv6_check_receive_packet(tf: TF,
         } 
 
         
-
+        let mut payload_success = true;
         for i in (IP6_HDR_SIZE + UDP_HDR_SIZE)..len as usize {
             if recv_packet[i] != UDP_DGRAM[i - (IP6_HDR_SIZE + UDP_HDR_SIZE)] {
                 test_success = false;
+                payload_success = false;
                 debug!("Packets differ at idx: {} where recv = {}, ref = {}",
                        i-(IP6_HDR_SIZE + UDP_HDR_SIZE),
                        recv_packet[i],
                        UDP_DGRAM[i-(IP6_HDR_SIZE + UDP_HDR_SIZE)]);
-                break;
+                //break;
             }
         }
-        debug!("Payload match is: {}", test_success); 
+        debug!("Payload match is: {}", payload_success); 
+        debug!("Test success is: {}", test_success);
     }
 }
 
@@ -707,7 +720,7 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
                             ip6_header.dst_addr.0[4..12].copy_from_slice(&MLP);
                             ip6_header.dst_addr.0[12..16].copy_from_slice(&DST_ADDR.0[12..16]);
                         }
-                    }
+                    } 
                 } //This bracket ends mutable borrow of ip6_packet for header
                 //Now that packet is fully prepared, set checksum
                 ip6_packet.set_transpo_cksum(); //calculates and sets UDP cksum

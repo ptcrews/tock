@@ -219,7 +219,7 @@ impl IP6Header {
 
 
 //Utility functions for calculating the checksum over a UDP/TCP packet
-
+/*
 trait OnesComplement {
     fn ones_complement_add(self, other: Self) -> Self;
 }
@@ -234,9 +234,6 @@ impl OnesComplement for u16 {
 
 /// Computes the UDP checksum for a UDP packet sent over IPv6.
 /// Returns the checksum in host byte-order.
-//TODO: Replace use of this function with use of the function found in ip_utils
-// that operates on the new packet format rather than the received buffer
-// Alternatively, dont support checksum elision bc of security concerns
 pub fn compute_udp_checksum(ip6_header: &IP6Header,
                         udp_header: &UDPHeader,
                         udp_length: u16,
@@ -275,9 +272,9 @@ pub fn compute_udp_checksum(ip6_header: &IP6Header,
     checksum = checksum.ones_complement_add((ip6_nh::UDP as u16).to_be());
 
     // UDP header without the checksum (which is the last two bytes)
-    checksum = checksum.ones_complement_add(udp_header.src_port);
-    checksum = checksum.ones_complement_add(udp_header.dst_port);
-    checksum = checksum.ones_complement_add(udp_header.len);
+    checksum = checksum.ones_complement_add(udp_header.src_port.to_be());
+    checksum = checksum.ones_complement_add(udp_header.dst_port.to_be());
+    checksum = checksum.ones_complement_add(udp_header.len.to_be());
 
     // UDP payload
     for bytes in payload.chunks(2) {
@@ -291,4 +288,77 @@ pub fn compute_udp_checksum(ip6_header: &IP6Header,
     // Return the complement of the checksum, unless it is 0, in which case we
     // the checksum is one's complement -0 for a non-zero binary representation
     if !checksum != 0 { !checksum } else { checksum }
+} */
+
+
+// Function that computes the UDP checksum of a UDP packet
+
+
+pub fn compute_udp_checksum(ip6_header: &IP6Header,
+                        udp_header: &UDPHeader,
+                        udp_length: u16,
+                        payload: &[u8])
+                        -> u16 {
+
+    //This checksum is calculated according to some of the recommendations found in RFC 1071.
+
+    let src_port = udp_header.src_port;
+    let dst_port = udp_header.dst_port;
+    
+    let mut sum: u32 = 0;
+    {
+        //First, iterate through src/dst address and add them to the sum
+        let mut i = 0;
+        while i <= 14 { 
+            let msb_src: u16 = ((ip6_header.src_addr.0[i]) as u16) << 8;
+            let lsb_src: u16 = ip6_header.src_addr.0[i+1] as u16;
+            let temp_src: u16 = msb_src + lsb_src;
+            sum += temp_src as u32;
+
+            let msb_dst: u16 = ((ip6_header.dst_addr.0[i]) as u16) << 8;
+            let lsb_dst: u16 = ip6_header.dst_addr.0[i+1] as u16;
+            let temp_dst: u16 = msb_dst + lsb_dst;
+            sum += temp_dst as u32;
+
+            i += 2; //Iterate two bytes at a time bc 16 bit checksum
+        }
+
+    }
+    sum += udp_header.len as u32;
+    //Finally, add UDP next header
+    sum += 17; //was "padded next header"
+
+    //return sum as u16;
+    //Next, add the UDP header elements to the sum
+    sum += src_port as u32;
+    sum += dst_port as u32;
+    sum += udp_header.len as u32; 
+    //Now just need to iterate thru data and add it to the sum
+    {
+        let mut i: usize = 0;
+        while i < ((udp_length - 8) as usize) {
+            let msb_dat: u16 = ((payload[i]) as u16) << 8;
+            let lsb_dat: u16 = payload[i + 1] as u16;
+            let temp_dat: u16 = msb_dat + lsb_dat;
+            sum += temp_dat as u32;
+
+            i += 2; //Iterate two bytes at a time bc 16 bit checksum
+        }
+        //debug!("Checksum is currently: {:?}", sum);
+    }
+    //now all 16 bit addition has occurred
+
+    while sum > 65535 {
+        let sum_high: u32 = sum >> 16; //upper 16 bits of sum
+        let sum_low: u32 = sum & 65535; //lower 16 bits of sum
+        sum = sum_high + sum_low;
+    }
+
+    //Finally, flip all bits
+    sum = !sum;
+    sum = sum & 65535; //Remove upper 16 bits (which should be FFFF after flip)
+    
+    (sum as u16) //Return result as u16 in host byte order
+
 }
+

@@ -2,7 +2,7 @@
    of the networking stack. For a full description of the networking stack on
    tock, see the Thread_Stack_Design.txt document */
 
-use net::ip_utils::{IPAddr, IP6Header};
+use net::ip_utils::{IPAddr, IP6Header, compute_udp_checksum};
 use ieee802154::mac::{Frame, Mac};
 use net::ieee802154::MacAddress;
 use net::udp::{UDPHeader};
@@ -133,13 +133,13 @@ impl<'a> IP6Packet<'a> {
     // type requires a cksum calculation, this function calculates the 
     // psuedoheader cksum and calls the appropriate transport packet function
     // using this pseudoheader cksum to set the transport packet cksum
-        /*
-        match self.payload {
-            TransportPacket::UDP(ref mut udp_packet) => {
+        
+        match self.payload.header {
+            TransportHeader::UDP(ref mut udp_header) => {
 
-            let cksum = compute_udp_checksum(&self.header, &udp_packet.header, udp_packet.header.get_len(), udp_packet.payload);
+            let cksum = compute_udp_checksum(&self.header, &udp_header, udp_header.get_len(), self.payload.payload);
 
-            udp_packet.set_cksum(cksum);
+            udp_header.set_cksum(cksum);
 
 
             },
@@ -147,7 +147,7 @@ impl<'a> IP6Packet<'a> {
                 debug!("Transport cksum setting not supported for this transport payload");
             }
         }
-        */
+        
     }
 
     pub fn change_transport_type(&mut self) {
