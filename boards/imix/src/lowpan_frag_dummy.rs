@@ -77,6 +77,7 @@ pub const DST_MAC_ADDR: MacAddress = MacAddress::Long([0x18, 0x19, 0x1a, 0x1b, 0
                                                        0x1f]);
 //TODO: No longer pass MAC addresses to 6lowpan code, so these values arent used rn
 pub const IP6_HDR_SIZE: usize = 40;
+pub const UDP_HDR_SIZE: usize = 8;
 pub const PAYLOAD_LEN: usize = 200;
 pub static mut RF233_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_SIZE];
 
@@ -84,8 +85,6 @@ pub static mut RF233_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_S
 const DEFAULT_CTX_PREFIX_LEN: u8 = 8;
 static DEFAULT_CTX_PREFIX: [u8; 16] = [0x0 as u8; 16];
 static mut RX_STATE_BUF: [u8; 1280] = [0x0; 1280];
-static mut RADIO_BUF_TMP: [u8; radio::MAX_BUF_SIZE] = [0x0; radio::MAX_BUF_SIZE];
-
 
 #[derive(Copy,Clone,Debug,PartialEq)]
 enum TF {
@@ -125,10 +124,9 @@ enum DAC {
 
 pub const TEST_DELAY_MS: u32 = 10000;
 pub const TEST_LOOP: bool = false;
-
 // Below was IP6_DGRAM before change to typed buffers
 //static mut IP6_DGRAM: [u8; IP6_HDR_SIZE + PAYLOAD_LEN] = [0; IP6_HDR_SIZE + PAYLOAD_LEN];
-static mut UDP_DGRAM: [u8; PAYLOAD_LEN - 8] = [0; PAYLOAD_LEN - 8]; //Becomes payload of UDP
+static mut UDP_DGRAM: [u8; PAYLOAD_LEN - UDP_HDR_SIZE] = [0; PAYLOAD_LEN - UDP_HDR_SIZE]; //Becomes payload of UDP
 
 //Use a globa variable option, initialize as None, then actually initialize in initialize all
 
@@ -178,7 +176,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     sixlowpan_state.set_rx_client(lowpan_frag_test);
     lowpan_frag_test.alarm.set_client(lowpan_frag_test);
 
-    //radio_mac.set_transmit_client(lowpan_frag_test); //TODO: What is this? - Hudson
+    //radio_mac.set_transmit_client(lowpan_frag_test); //TODO: Should this be here or main.rs?
     radio_mac.set_receive_client(sixlowpan);
 
     // Following code initializes an IP6Packet using the global UDP_DGRAM buffer as the payload
@@ -405,13 +403,22 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
                                                           tx_buf,
                                                           self.radio) {
                         Ok((is_done, frame)) => {
+                            //TODO: Fix ordering so that debug output does not indicate extra frame sent
                             debug!("Sent frame!");
                             if is_done {
                                 debug!("Sent packet!");
                                 self.schedule_next();
                             } else {
-                                // TODO: Check err
-                                self.radio.transmit(frame);
+                                // TODO: Handle err (not just debug statement)
+                                let (retcode, opt) = self.radio.transmit(frame);
+                                debug!("Retcode from radio transmit is: {:?}", retcode);
+                                match retcode {
+                                    ReturnCode::SUCCESS => {
+                                        
+                                    },
+                                    _ => debug!("Error in radio transmit") 
+                                }
+                                
                             }
                         },
                         Err((retcode, buf)) => {
@@ -466,7 +473,7 @@ fn ipv6_check_receive_packet(tf: TF,
         // First, need to check header fields match:
         let rcvip6hdr: IP6Header = ptr::read(recv_packet.as_ptr() as *const _); //Cast IP hdr
         let rcvudphdr: UDPHeader = ptr::read((recv_packet.as_ptr().offset(40)) as *const _); //Cast UDP hdr
-
+        
         //Now compare to the headers that would be being sent by prepare packet
         match IP6_DG_OPT {
                 Some(ref ip6_packet) => {
@@ -498,22 +505,22 @@ fn ipv6_check_receive_packet(tf: TF,
 
                     match ip6_packet.payload.header {
                         TransportHeader::UDP(ref sent_udp_pkt) => {
-                            if rcvudphdr.get_src_port() != 
+                            if u16::from_be(rcvudphdr.get_src_port()) != 
                                sent_udp_pkt.get_src_port() {
                                  debug!("Mismatched src_port. Rcvd is: {:?}, expctd is: {:?}", rcvudphdr.get_src_port(), sent_udp_pkt.get_src_port());  
                             }
 
-                            if rcvudphdr.get_dst_port() != 
+                            if u16::from_be(rcvudphdr.get_dst_port()) != 
                                sent_udp_pkt.get_dst_port() {
                                  debug!("Mismatched dst_port. Rcvd is: {:?}, expctd is: {:?}", rcvudphdr.get_dst_port(), sent_udp_pkt.get_dst_port());  
                             }
 
-                            if rcvudphdr.get_len() != 
+                            if u16::from_be(rcvudphdr.get_len()) != 
                                sent_udp_pkt.get_len() {
                                  debug!("Mismatched udp_len. Rcvd is: {:?}, expctd is: {:?}", rcvudphdr.get_len(), sent_udp_pkt.get_len());  
                             }
 
-                            if rcvudphdr.get_cksum() != 
+                            if u16::from_be(rcvudphdr.get_cksum()) != 
                                sent_udp_pkt.get_cksum() {
                                  debug!("mismatched cksum")   
                             }
@@ -528,36 +535,32 @@ fn ipv6_check_receive_packet(tf: TF,
 
         
 
-        for i in 48..len as usize {//TODO: Remove magic numbers for header sizes
-            if recv_packet[i] != UDP_DGRAM[i - 48] {
+        for i in (IP6_HDR_SIZE + UDP_HDR_SIZE)..len as usize {
+            if recv_packet[i] != UDP_DGRAM[i - (IP6_HDR_SIZE + UDP_HDR_SIZE)] {
                 test_success = false;
                 debug!("Packets differ at idx: {} where recv = {}, ref = {}",
-                       i-48,
+                       i-(IP6_HDR_SIZE + UDP_HDR_SIZE),
                        recv_packet[i],
-                       UDP_DGRAM[i-48]);
+                       UDP_DGRAM[i-(IP6_HDR_SIZE + UDP_HDR_SIZE)]);
                 break;
-                //panic!("rcv Test failed"); //TODO: Remove
             }
         }
-        debug!("Payload match is: {}", test_success);
+        debug!("Payload match is: {}", test_success); 
     }
 }
 
 //TODO: Change this function to modify IP6Packet struct instead of raw buffer
 fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
+    debug!("Entering prepare packet"); 
     {
         //Changes here bc payload buffer now inside IP6_Packet, and hdr not inclulded
         let payload = unsafe { &mut UDP_DGRAM[0..] };//No longer need to skip ip header
-        for i in 0..PAYLOAD_LEN - 8 { //-8 for UDP Header...TODO: remove use of magic numbers
+        for i in 0..(PAYLOAD_LEN - UDP_HDR_SIZE) { 
             payload[i] = 0 as u8;
         }
     }
     unsafe {//Had to use unsafe here bc IP6_DG_OPT is mutable static
-        //OLD:
-        //let ip6_header: &mut IP6Header = unsafe { mem::transmute(UDP_DGRAM.as_mut_ptr()) };
-        //*ip6_header = IP6Header::new();
 
-        //NEW:
         match IP6_DG_OPT {
             Some(ref mut ip6_packet) => {
                 
@@ -581,7 +584,7 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
                         ip6_header.set_flow_label(0xABCDE);
                     }
 
-                    ip6_header.set_next_header(ip6_nh::NO_NEXT);
+                    ip6_header.set_next_header(ip6_nh::UDP);
 
                     ip6_header.set_hop_limit(hop_limit);
 

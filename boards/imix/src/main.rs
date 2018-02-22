@@ -466,6 +466,7 @@ pub unsafe fn reset_handler() {
                                                           mux_alarm as &'static
                                                              MuxAlarm<'static,
                                                                  sam4l::ast::Ast>);
+    radio_mac.set_transmit_client(lowpan_frag_test);
 
     let imix = Imix {
         console: console,

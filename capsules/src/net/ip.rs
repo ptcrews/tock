@@ -118,14 +118,14 @@ impl<'a> IP6Packet<'a> {
     }
 
     pub fn get_total_hdr_size(&self) -> usize {
-        /*
-        let transport_hdr_size = match self.payload {
-            TransportPacket::UDP(ref udp_packet) => udp_packet.get_hdr_size(),
-            TransportPacket::TCP(ref tcp_packet) => 0, //tcp_packet.get_hdr_size(),
+        
+        let transport_hdr_size = match self.payload.header {
+            TransportHeader::UDP(udp_hdr) => udp_hdr.get_hdr_size(),
+            _ => 0, 
         };
-        */
-        //40 + transport_hdr_size
-        40
+        
+        40 + transport_hdr_size
+        
     }
 
     pub fn set_transpo_cksum(&mut self){ //Looks at internal buffer assuming

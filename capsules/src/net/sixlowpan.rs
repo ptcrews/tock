@@ -363,7 +363,7 @@ impl<'a> TxState<'a> {
     }
 
     // Assumes we have already called init_transmit
-    // This assumes packet is a slice representing its length
+
     pub fn next_fragment<'b>(&self,
                          ip6_packet: &'b IP6Packet<'b>,
                          frag_buf: &'static mut [u8],
