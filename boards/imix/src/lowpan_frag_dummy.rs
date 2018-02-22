@@ -569,7 +569,7 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
         //Changes here bc payload buffer now inside IP6_Packet, and hdr not inclulded
         let payload = unsafe { &mut UDP_DGRAM[0..] };//No longer need to skip ip header
         for i in 0..(PAYLOAD_LEN - UDP_HDR_SIZE) { 
-            payload[i] = 0 as u8;
+            payload[i] = i as u8;
         }
     }
     unsafe {//Had to use unsafe here bc IP6_DG_OPT is mutable static
