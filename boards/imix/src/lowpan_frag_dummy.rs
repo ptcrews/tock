@@ -448,11 +448,22 @@ impl<'a, A: time::Alarm> SixlowpanRxClient for LowpanTest<'a, A> {
     }
 }
 
-
+static mut ARRAY: [u8; 100] = [0x0; 100];
 impl<'a, A: time::Alarm> TxClient for LowpanTest<'a, A> {
     fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
 
         debug!("sendDone return code is: {:?}", result);
+        unsafe { //This unsafe block introduces a delay between frames to prevent 
+                // a race condition on the receiver
+            let mut i = 0;
+            while(i < 10000000) {
+                ARRAY[i % 100] = ((i % 100) as u8);
+                i = i + 1;
+                if (i % 1000000 == 0) {
+                    debug!("Delay, step {:?}", i / 1000000);
+                }
+            }
+        }
         self.send_next(tx_buf);
     }
 }
