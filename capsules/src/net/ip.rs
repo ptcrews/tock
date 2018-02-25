@@ -191,6 +191,7 @@ const DST_MAC_ADDR: MacAddress = MacAddress::Short(0xf00f);
 
 pub struct IP6SendStruct<'a> {
     ip6_packet: TakeCell<'static, IP6Packet<'static>>,
+    src_addr: Cell<IPAddr>,
     tx_buf: TakeCell<'static, [u8]>,
     sixlowpan: TxState<'a>,
     radio: &'a Mac<'a>,
@@ -204,11 +205,30 @@ impl<'a> IP6SendStruct<'a> {
                client: &'a IP6Client) -> IP6SendStruct<'a> {
         IP6SendStruct {
             ip6_packet: TakeCell::empty(),
+            src_addr: Cell::new(IPAddr::new()),
             tx_buf: TakeCell::new(tx_buf),
             sixlowpan: sixlowpan,
             radio: radio,
             client: Cell::new(Some(client)),
         }
+    }
+
+    pub fn set_addr(&self, src_addr: IPAddr) {
+        self.src_addr.set(src_addr);
+    }
+
+    pub fn set_next_header(&self) {
+    }
+
+    pub fn initialize_packet(&self) {
+        self.ip6_packet.map(|ip6_packet| {
+            ip6_packet.header = IP6Header::default();
+            ip6_packet.header.src_addr = self.src_addr.get();
+        });
+    }
+
+    pub fn set_header(&self, ip6_header: IP6Header) {
+        self.ip6_packet.map(|ip6_packet| ip6_packet.header = ip6_header);
     }
 
     pub fn send_to(&self, dest: IPAddr, ip6_packet: &'static mut IP6Packet<'static>)
