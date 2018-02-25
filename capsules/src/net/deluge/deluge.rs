@@ -7,6 +7,7 @@ use core::cell::Cell;
 use core::mem;
 use core::cmp::min;
 use kernel::hil::time;
+use kernel::hil::time::Frequency;
 use kernel::common::{List, ListLink, ListNode};
 use kernel::common::take_cell::TakeCell;
 use net::sixlowpan::SixlowpanClient;
@@ -14,7 +15,8 @@ use kernel::ReturnCode;
 use net::stream::{decode_u16, decode_u8};
 use net::stream::SResult;
 
-use trickle::{Trickle, TrickleClient};
+use net::deluge::trickle::{Trickle, TrickleClient};
+use net::deluge::program_state::DelugeProgramClient;
 
 #[derive(Copy, Clone)]
 enum DelugePacketType {
@@ -121,33 +123,6 @@ enum DelugeState {
     Receive,
 }
 
-pub trait DelugeProgramClient {
-    fn updated_page(&self);
-}
-
-pub struct ProgramState<'a> {
-    unique_id: Cell<usize>,
-    cur_page_num: Cell<usize>,
-    page: TakeCell<'static, mut [u8]>,
-    client: &'a DelugeProgramClient,
-
-    next: ListLink<'a, ProgramState<'a>>,
-}
-
-impl<'a> ListNode<'a, ProgramState<'a>> for ProgramState<'a> {
-    fn next(&self) -> &'a ListLink<ProgramState<'a>> {
-        &self.next
-    }
-}
-
-impl<'a> ProgramState<'a> {
-    //pub fn new()
-
-    pub fn is_page_complete(&self) -> bool {
-
-    }
-}
-
 pub struct DelugeData<'a, A: time::Alarm + 'a> {
     // General application state
     version: Cell<u16>,       // v in paper
@@ -159,9 +134,8 @@ pub struct DelugeData<'a, A: time::Alarm + 'a> {
     last_page_req_time: Cell<usize>,
     data_packet_recv_time: Cell<usize>,
 
+    client: &'a DelugeProgramClient,
     state: Cell<DelugeState>,
-
-    program_states: List<'a, ProgramState<'a>>,
 
     // Other
     trickle: &'a Trickle,
@@ -169,7 +143,9 @@ pub struct DelugeData<'a, A: time::Alarm + 'a> {
 }
 
 impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
-    pub fn new(trickle: &'a Trickle, alarm: &'a A) -> DelugeData<'a, A> {
+    pub fn new(client: &'a DelugeProgramClient,
+               trickle: &'a Trickle,
+               alarm: &'a A) -> DelugeData<'a, A> {
         DelugeData{
             version: Cell::new(0),
             largest_page: Cell::new(0),
@@ -181,8 +157,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
             data_packet_recv_time: Cell::new(0),
 
             state: Cell::new(DelugeState::Maintenance),
-
-            program_states: List::new(),
+            client: client,
 
             trickle: trickle,
             alarm: alarm,
@@ -278,8 +253,10 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
     }
 
     fn rx_state_reset_timer(&self) {
-        let tics = self.clock.now().wrapping_add((time as u32) * A::Frequency::frequency());
-        self.clock.set_alarm(tics);
+        // TODO
+        let time = 1;
+        let tics = self.alarm.now().wrapping_add((time as u32) * A::Frequency::frequency());
+        self.alarm.set_alarm(tics);
     }
 
     fn tx_state_received_packet<'b>(&self, packet: &'b DelugePacket) {

@@ -48,8 +48,6 @@ pub mod usb_user;
 pub mod usbc_client;
 #[macro_use]
 pub mod net;
-pub mod trickle;
-pub mod deluge;
 pub mod ieee802154;
 pub mod temperature;
 pub mod humidity;
