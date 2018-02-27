@@ -150,8 +150,6 @@ impl<'a> DelugePacket<'a> {
         off = enc_consume!(buffer, off; encode_bytes, self.buffer);
         stream_done!(off, off);
     }
-
-    // TODO: Encode function
 }
 
 const CONST_K: usize = 0x1;
@@ -317,11 +315,11 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                                                    page_num as usize,
                                                    packet_num as usize,
                                                    &mut packet_buf) {
-            let data_packet = DelugePacketType::DataPacket { version,
+            let payload_type = DelugePacketType::DataPacket { version,
                                                              page_num,
                                                              packet_num };
             let mut deluge_packet = DelugePacket::new(&packet_buf);
-            deluge_packet.payload_type = data_packet;
+            deluge_packet.payload_type = payload_type;
             self.transmit_packet(&deluge_packet);
         }
     }
@@ -346,8 +344,27 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
     fn transmit_packet(&self, deluge_packet: &DelugePacket) {
         let mut send_buf: [u8; program_state::PACKET_SIZE + MAX_HEADER_SIZE] 
             = [0; program_state::PACKET_SIZE + MAX_HEADER_SIZE];
-        deluge_packet.encode(&mut send_buf);
-        //self.
+        // TODO: Check results
+        let _encode_result = deluge_packet.encode(&mut send_buf);
+        let _result = self.deluge_transmit_layer.transmit_packet(&send_buf);
+    }
+}
+
+impl<'a, A: time::Alarm + 'a> time::Client for DelugeData<'a, A> {
+    fn fired(&self) {
+        // Do nothing if not in the receive state
+        if self.state.get() == DelugeState::Receive {
+            self.rx_state_reset_timer();
+            let payload_type = DelugePacketType::RequestForData {
+                version: self.program_state.current_version_number() as u16,
+                // TODO: This will cause problems if we want the *next* page
+                page_num: self.program_state.current_page_number() as u16,
+                packet_num: self.program_state.current_packet_number() as u16,
+            };
+            let mut deluge_packet = DelugePacket::new(&[]);
+            deluge_packet.payload_type = payload_type;
+            self.transmit_packet(&deluge_packet);
+        }
     }
 }
 
@@ -358,11 +375,23 @@ impl<'a, A: time::Alarm + 'a> TrickleClient for DelugeData<'a, A> {
         if self.state.get() != DelugeState::Maintenance {
             return;
         }
-        if self.received_old_v.get() {
+        let payload_type = if self.received_old_v.get() {
             // Transmit object profile
+            // TODO: Fix the age vector to be correct
+            DelugePacketType::MaintainObjectProfile { 
+                version: self.program_state.current_version_number() as u16,
+                age_vector_size: 0 as u16 
+            }
         } else {
             // Transmit object summary
-        }
+            DelugePacketType::MaintainSummary {
+                version: self.program_state.current_version_number() as u16,
+                page_num: self.program_state.current_page_number() as u16,
+            }
+        };
+        let mut deluge_packet = DelugePacket::new(&[]);
+        deluge_packet.payload_type = payload_type;
+        self.transmit_packet(&deluge_packet);
     }
 
     fn new_interval(&self) {

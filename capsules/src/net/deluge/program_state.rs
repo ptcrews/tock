@@ -11,6 +11,7 @@ pub trait DelugeProgramState {
     fn receive_packet(&self, version: usize, page_num: usize, packet_num: usize, payload: &[u8]) -> bool;
     fn current_page_number(&self) -> usize;
     fn current_version_number(&self) -> usize;
+    fn current_packet_number(&self) -> usize;
     fn get_requested_packet(&self, version: usize, page_num: usize, packet_num: usize, buf: &mut [u8]) -> bool;
 }
 
@@ -102,6 +103,10 @@ impl<'a> DelugeProgramState for ProgramState<'a> {
 
     fn current_version_number(&self) -> usize {
         self.version.get()
+    }
+
+    fn current_packet_number(&self) -> usize {
+        self.rx_largest_packet.get()
     }
 
     fn get_requested_packet(&self, version: usize, page_num: usize, packet_num: usize, buf: &mut [u8]) -> bool {
