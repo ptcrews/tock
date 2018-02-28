@@ -369,10 +369,6 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
         // receiving a frame.
         if self.interrupt_pending.get() {
             match self.state.get() {
-<<<<<<< HEAD
-                InternalState::RX_READING_FRAME_DONE |
-                InternalState::RX_READING_FRAME_FCS_DONE => {}
-=======
                 InternalState::RX_TURNING_OFF |
                 InternalState::RX_START_READING |
                 InternalState::RX_READING_FRAME_DONE |
@@ -798,15 +794,6 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 self.state_transition_read(
                     RF233Register::PHY_RSSI,
                     InternalState::RX_READING_FRAME_FCS_DONE,
-                );
-            }
-            InternalState::RX_READING_FRAME_FCS_DONE => {
-                // Store whether the CRC was valid, then turn the radio back on.
-                self.crc_valid.set((result & PHY_RSSI_RX_CRC_VALID) != 0);
-                self.state_transition_write(
-                    RF233Register::TRX_STATE,
-                    RF233TrxCmd::RX_AACK_ON as u8,
-                    InternalState::RX_ENABLING_RECEPTION,
                 );
             }
             InternalState::RX_READING_FRAME_FCS_DONE => {
