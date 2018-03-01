@@ -11,8 +11,6 @@ use net::stream::SResult;
 use kernel::ReturnCode;
 use kernel::common::take_cell::TakeCell;
 
-// TODO: These values should be in host-byte order; if we want
-// host-byte order, use the getters/setters in UDPPacket
 #[derive(Copy, Clone)]
 pub struct UDPHeader {
     pub src_port: u16,
@@ -32,12 +30,11 @@ impl Default for UDPHeader {
     }
 }
 
-//TODO: Remove functions reduntantly implemented on Header and Packet
 impl UDPHeader {
     pub fn new() -> UDPHeader {
         UDPHeader::default()
     }
-    pub fn get_offset(&self) -> usize{8} //Always returns 8 TODO: B/c size of UDPHeader
+    pub fn get_offset(&self) -> usize{8} //Always returns size of UDP Header
 
     pub fn set_dst_port(&mut self, port: u16) {
         self.dst_port = port;
@@ -88,7 +85,6 @@ impl UDPHeader {
         8
     }
 
-    // Note that we encode all values in network-byte order
     pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
         // TODO
         stream_len_cond!(buf, 8 + offset);
@@ -101,7 +97,7 @@ impl UDPHeader {
         stream_done!(off, off);
     }
 
-    pub fn decode(buf: &[u8]) -> SResult<UDPHeader> {
+    pub fn decode(buf: &[u8]) -> SResult<UDPHeader> { //TODO: Test me
         stream_len_cond!(buf, 8);
         let mut udp_header = Self::new();
         let off = 0;
