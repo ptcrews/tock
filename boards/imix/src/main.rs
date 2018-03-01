@@ -518,6 +518,6 @@ pub unsafe fn reset_handler() {
                                     &mut PROCESSES,
                                     FAULT_RESPONSE);
 
-    lowpan_frag_test.start();
+//    lowpan_frag_test.start();
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }

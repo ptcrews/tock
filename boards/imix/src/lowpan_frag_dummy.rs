@@ -464,7 +464,7 @@ impl<'a, A: time::Alarm> TxClient for LowpanTest<'a, A> {
                     debug!("Delay, step {:?}", i / 1000000);
                 }
             }
-        }
+        } 
         self.send_next(tx_buf);
     }
 }

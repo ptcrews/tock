@@ -1,22 +1,4 @@
-//! Driver for sending 802.15.4 packets with an Atmel RF233.
-//!
-//! This implementation is completely non-blocking. This means that the state
-//! machine is somewhat complex, as it must interleave interrupt handling with
-//! requests and radio state management. See the SPI `read_write_done` handler
-//! for details.
-//!
-//! To do items:
-//!
-//! - Support TX power control
-//! - Support channel selection
-//! - Support link-layer acknowledgements
-//! - Support power management (turning radio off)
-//
-// Author: Philip Levis
-// Date: Jan 12 2017
-//
 
-// I like them sometimes, for formatting -pal
 #![allow(unused_parens)]
 
 use core::cell::Cell;
@@ -29,7 +11,7 @@ use rf233_const::*;
 
 const INTERRUPT_ID: usize = 0x2154;
 
-#[allow(non_camel_case_types,dead_code)]
+#[allow(non_camel_case_types, dead_code)]
 #[derive(Copy, Clone, PartialEq)]
 enum InternalState {
     // There are 6 high-level states:
@@ -62,7 +44,8 @@ enum InternalState {
     START_IEEE7_SET,
     START_SHORT0_SET,
     START_SHORT1_SET,
-    START_CSMA_SEEDED,
+    START_CSMA_0_SEEDED,
+    START_CSMA_1_SEEDED,
     START_RPC_SET,
 
     // Radio is configured, turning it on.
@@ -72,6 +55,11 @@ enum InternalState {
 
     // Radio is in the RX_AACK_ON state, ready to receive packets.
     READY,
+
+    // States that transition the radio to and from SLEEP
+    SLEEP_TRX_OFF,
+    SLEEP,
+    SLEEP_WAKE,
 
     // States pertaining to packet transmission.
     // Note that this state machine can be aborted due to
@@ -124,7 +112,7 @@ enum InternalState {
     RX_START_READING,     // Starting to read a packet out of the radio
     RX_READING_FRAME_LEN, // We've read the length of the frame
     RX_READING_FRAME_LEN_DONE,
-    RX_READING_FRAME, // Reading the packet out of the radio
+    RX_READING_FRAME,      // Reading the packet out of the radio
     RX_READING_FRAME_DONE, // Now read a register to verify FCS
     RX_READING_FRAME_FCS_DONE,
     RX_ENABLING_RECEPTION, // Re-enabling reception
@@ -182,6 +170,9 @@ pub struct RF233<'a, S: spi::SpiMasterDevice + 'a> {
     interrupt_handling: Cell<bool>,
     interrupt_pending: Cell<bool>,
     config_pending: Cell<bool>,
+    sleep_pending: Cell<bool>,
+    wake_pending: Cell<bool>,
+    power_client_pending: Cell<bool>,
     reset_pin: &'a gpio::Pin,
     sleep_pin: &'a gpio::Pin,
     irq_pin: &'a gpio::Pin,
@@ -268,6 +259,8 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
         &self,
         mut _write: &'static mut [u8],
         mut read: Option<&'static mut [u8]>,
+        _len: usize,
+    ) {
         self.spi_busy.set(false);
         let rbuf = read.take().unwrap();
         let status = rbuf[0] & 0x1f;
@@ -351,6 +344,9 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                         );
                         return;
                     } else {
+                        self.state_transition_read(RF233Register::TRX_STATUS, InternalState::READY);
+                        return;
+                    }
                 }
             }
         }
@@ -358,6 +354,12 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
         // No matter what, if the READY state is reached, the radio is on. This
         // needs to occur before handling the interrupt below.
         if self.state.get() == InternalState::READY {
+            self.wake_pending.set(false);
+
+            // If we just woke up, note that we need to call the PowerClient
+            if !self.radio_on.get() {
+                self.power_client_pending.set(true);
+            }
             self.radio_on.set(true);
         }
 
@@ -374,7 +376,6 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 InternalState::RX_READING_FRAME_DONE |
                 InternalState::RX_READING_FRAME_FCS_DONE => {
                 }
->>>>>>> bf8e0e2... This patch is to deal with issue #617 Radio Race Condition.
                 _ => {
                     self.interrupt_pending.set(false);
                     self.handle_interrupt();
@@ -385,22 +386,40 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
         // Similarly, if a configuration is pending, we only start the
         // configuration process when we are in a state where it is legal to
         // start the configuration process.
-        if self.config_pending.get() {
-            if self.state.get() == InternalState::READY {
-                self.state_transition_write(RF233Register::SHORT_ADDR_0,
-                                            (self.addr.get() & 0xff) as u8,
-                                            InternalState::CONFIG_SHORT0_SET);
-            }
+        if self.config_pending.get() && self.state.get() == InternalState::READY {
+            self.state_transition_write(
+                RF233Register::SHORT_ADDR_0,
+                (self.addr.get() & 0xff) as u8,
+                InternalState::CONFIG_SHORT0_SET,
+            );
         }
 
         match self.state.get() {
             // Default on state; wait for transmit() call or receive interrupt
-            InternalState::READY => {}
-
+            InternalState::READY => {
+                // If stop() was called, start turning off the radio.
+                if self.sleep_pending.get() {
+                    self.sleep_pending.set(false);
+                    self.radio_on.set(false);
+                    self.state_transition_write(
+                        RF233Register::TRX_STATE,
+                        RF233TrxCmd::OFF as u8,
+                        InternalState::SLEEP_TRX_OFF,
+                    );
+                } else if self.power_client_pending.get() {
+                    // fixes bug where client would start transmitting before this state completed
+                    self.power_client_pending.set(false);
+                    self.power_client.get().map(|p| {
+                        p.changed(self.radio_on.get());
+                    });
+                }
+            }
             // Starting state, begin start sequence.
             InternalState::START => {
-                self.state_transition_read(RF233Register::IRQ_STATUS,
-                                           InternalState::START_PART_READ);
+                self.state_transition_read(
+                    RF233Register::IRQ_STATUS,
+                    InternalState::START_PART_READ,
+                );
             }
             InternalState::START_PART_READ => {
                 self.state_transition_read(
@@ -416,61 +435,78 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                         InternalState::START_TURNING_OFF,
                     );
                 } else {
-                    self.state_transition_write(RF233Register::TRX_CTRL_1,
-                                                TRX_CTRL_1,
-                                                InternalState::START_CTRL1_SET);
+                    self.state_transition_write(
+                        RF233Register::TRX_CTRL_1,
+                        TRX_CTRL_1,
+                        InternalState::START_CTRL1_SET,
+                    );
                 }
             }
             InternalState::START_TURNING_OFF => {
                 self.irq_pin.make_input();
                 self.irq_pin.clear();
                 self.irq_ctl.set_input_mode(gpio::InputMode::PullNone);
-                self.irq_pin.enable_interrupt(INTERRUPT_ID, gpio::InterruptMode::RisingEdge);
+                self.irq_pin
+                    .enable_interrupt(INTERRUPT_ID, gpio::InterruptMode::RisingEdge);
 
-                self.state_transition_write(RF233Register::TRX_CTRL_1,
-                                            TRX_CTRL_1,
-                                            InternalState::START_CTRL1_SET);
+                self.state_transition_write(
+                    RF233Register::TRX_CTRL_1,
+                    TRX_CTRL_1,
+                    InternalState::START_CTRL1_SET,
+                );
             }
             InternalState::START_CTRL1_SET => {
                 let val = self.channel.get() | PHY_CC_CCA_MODE_CS_OR_ED;
-                self.state_transition_write(RF233Register::PHY_CC_CCA,
-                                            val,
-                                            InternalState::START_CCA_SET);
+                self.state_transition_write(
+                    RF233Register::PHY_CC_CCA,
+                    val,
+                    InternalState::START_CCA_SET,
+                );
             }
             InternalState::START_CCA_SET => {
                 let val = power_to_setting(self.tx_power.get());
-                self.state_transition_write(RF233Register::PHY_TX_PWR,
-                                            val,
-                                            InternalState::START_PWR_SET);
+                self.state_transition_write(
+                    RF233Register::PHY_TX_PWR,
+                    val,
+                    InternalState::START_PWR_SET,
+                );
             }
-            InternalState::START_PWR_SET => {
-                self.state_transition_write(RF233Register::TRX_CTRL_2,
-                                            TRX_CTRL_2,
-                                            InternalState::START_CTRL2_SET)
-            }
+            InternalState::START_PWR_SET => self.state_transition_write(
+                RF233Register::TRX_CTRL_2,
+                TRX_CTRL_2,
+                InternalState::START_CTRL2_SET,
+            ),
             InternalState::START_CTRL2_SET => {
-                self.state_transition_write(RF233Register::IRQ_MASK,
-                                            IRQ_MASK,
-                                            InternalState::START_IRQMASK_SET);
+                self.state_transition_write(
+                    RF233Register::IRQ_MASK,
+                    IRQ_MASK,
+                    InternalState::START_IRQMASK_SET,
+                );
             }
 
             InternalState::START_IRQMASK_SET => {
-                self.state_transition_write(RF233Register::XAH_CTRL_1,
-                                            XAH_CTRL_1,
-                                            InternalState::START_XAH1_SET);
+                self.state_transition_write(
+                    RF233Register::XAH_CTRL_1,
+                    XAH_CTRL_1,
+                    InternalState::START_XAH1_SET,
+                );
             }
 
             InternalState::START_XAH1_SET => {
                 // This encapsulates the frame retry and CSMA retry
                 // settings in the RF233 C code
-                self.state_transition_write(RF233Register::XAH_CTRL_0,
-                                            XAH_CTRL_0,
-                                            InternalState::START_XAH0_SET);
+                self.state_transition_write(
+                    RF233Register::XAH_CTRL_0,
+                    XAH_CTRL_0,
+                    InternalState::START_XAH0_SET,
+                );
             }
             InternalState::START_XAH0_SET => {
-                self.state_transition_write(RF233Register::PAN_ID_0,
-                                            (self.pan.get() >> 8) as u8,
-                                            InternalState::START_PANID0_SET);
+                self.state_transition_write(
+                    RF233Register::PAN_ID_0,
+                    (self.pan.get() >> 8) as u8,
+                    InternalState::START_PANID0_SET,
+                );
             }
             InternalState::START_PANID0_SET => {
                 self.state_transition_write(
@@ -483,26 +519,29 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 self.state_transition_write(
                     RF233Register::IEEE_ADDR_0,
                     self.addr_long.get()[0],
-            }
-            InternalState::START_PANID1_SET => {
-                self.state_transition_write(RF233Register::IEEE_ADDR_0,
-                                            self.addr_long.get()[0],
-                                            InternalState::START_IEEE0_SET);
+                    InternalState::START_IEEE0_SET,
+                );
             }
             InternalState::START_IEEE0_SET => {
-                self.state_transition_write(RF233Register::IEEE_ADDR_1,
-                                            self.addr_long.get()[1],
-                                            InternalState::START_IEEE1_SET);
+                self.state_transition_write(
+                    RF233Register::IEEE_ADDR_1,
+                    self.addr_long.get()[1],
+                    InternalState::START_IEEE1_SET,
+                );
             }
             InternalState::START_IEEE1_SET => {
-                self.state_transition_write(RF233Register::IEEE_ADDR_2,
-                                            self.addr_long.get()[2],
-                                            InternalState::START_IEEE2_SET);
+                self.state_transition_write(
+                    RF233Register::IEEE_ADDR_2,
+                    self.addr_long.get()[2],
+                    InternalState::START_IEEE2_SET,
+                );
             }
             InternalState::START_IEEE2_SET => {
-                self.state_transition_write(RF233Register::IEEE_ADDR_3,
-                                            self.addr_long.get()[3],
-                                            InternalState::START_IEEE3_SET);
+                self.state_transition_write(
+                    RF233Register::IEEE_ADDR_3,
+                    self.addr_long.get()[3],
+                    InternalState::START_IEEE3_SET,
+                );
             }
             InternalState::START_IEEE3_SET => {
                 self.state_transition_write(
@@ -512,19 +551,25 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 );
             }
             InternalState::START_IEEE4_SET => {
-                self.state_transition_write(RF233Register::IEEE_ADDR_5,
-                                            self.addr_long.get()[5],
-                                            InternalState::START_IEEE5_SET);
+                self.state_transition_write(
+                    RF233Register::IEEE_ADDR_5,
+                    self.addr_long.get()[5],
+                    InternalState::START_IEEE5_SET,
+                );
             }
             InternalState::START_IEEE5_SET => {
-                self.state_transition_write(RF233Register::IEEE_ADDR_6,
-                                            self.addr_long.get()[6],
-                                            InternalState::START_IEEE6_SET);
+                self.state_transition_write(
+                    RF233Register::IEEE_ADDR_6,
+                    self.addr_long.get()[6],
+                    InternalState::START_IEEE6_SET,
+                );
             }
             InternalState::START_IEEE6_SET => {
-                self.state_transition_write(RF233Register::IEEE_ADDR_7,
-                                            self.addr_long.get()[7],
-                                            InternalState::START_IEEE7_SET);
+                self.state_transition_write(
+                    RF233Register::IEEE_ADDR_7,
+                    self.addr_long.get()[7],
+                    InternalState::START_IEEE7_SET,
+                );
             }
             InternalState::START_IEEE7_SET => {
                 self.state_transition_write(
@@ -534,9 +579,11 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 );
             }
             InternalState::START_SHORT0_SET => {
-                self.state_transition_write(RF233Register::SHORT_ADDR_1,
-                                            (self.addr.get() >> 8) as u8,
-                                            InternalState::START_SHORT1_SET);
+                self.state_transition_write(
+                    RF233Register::SHORT_ADDR_1,
+                    (self.addr.get() >> 8) as u8,
+                    InternalState::START_SHORT1_SET,
+                );
             }
             InternalState::START_SHORT1_SET => {
                 self.state_transition_write(
@@ -561,13 +608,17 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
             }
             InternalState::START_RPC_SET => {
                 // If asleep, turn on
-                self.state_transition_read(RF233Register::TRX_STATUS,
-                                           InternalState::ON_STATUS_READ);
+                self.state_transition_read(
+                    RF233Register::TRX_STATUS,
+                    InternalState::ON_STATUS_READ,
+                );
             }
             InternalState::ON_STATUS_READ => {
-                self.state_transition_write(RF233Register::TRX_STATE,
-                                            RF233TrxCmd::PLL_ON as u8,
-                                            InternalState::ON_PLL_WAITING);
+                self.state_transition_write(
+                    RF233Register::TRX_STATE,
+                    RF233TrxCmd::PLL_ON as u8,
+                    InternalState::ON_PLL_WAITING,
+                );
             }
             InternalState::ON_PLL_WAITING => {
                 // Waiting for the PLL interrupt, do nothing
@@ -640,11 +691,8 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
             InternalState::TX_STATUS_PRECHECK2 => {
                 if (status == ExternalState::BUSY_RX_AACK as u8
                     || status == ExternalState::BUSY_TX_ARET as u8
-            }
-            InternalState::TX_STATUS_PRECHECK2 => {
-                if (status == ExternalState::BUSY_RX_AACK as u8 ||
-                    status == ExternalState::BUSY_TX_ARET as u8 ||
-                    status == ExternalState::BUSY_RX as u8) {
+                    || status == ExternalState::BUSY_RX as u8)
+                {
                     self.receiving.set(true);
                     self.state.set(InternalState::RX);
                 } else {
@@ -676,10 +724,7 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                         RF233Register::TRX_STATE,
                         RF233TrxCmd::TX_ARET_ON as u8,
                         InternalState::TX_ARET_ON,
-                } else {
-                    self.state_transition_write(RF233Register::TRX_STATE,
-                                                RF233TrxCmd::TX_ARET_ON as u8,
-                                                InternalState::TX_ARET_ON);
+                    );
                 }
             }
             InternalState::TX_ARET_ON => {
@@ -704,10 +749,8 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
             InternalState::TX_READ_ACK => {
                 self.state_transition_read(
                     RF233Register::TRX_STATE,
-            }
-            InternalState::TX_READ_ACK => {
-                self.state_transition_read(RF233Register::TRX_STATE,
-                                           InternalState::TX_RETURN_TO_RX);
+                    InternalState::TX_RETURN_TO_RX,
+                );
             }
 
             // Insert read of TRX_STATUS here, checking TRAC
@@ -718,9 +761,9 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                     let buf = self.tx_buf.take();
                     self.state_transition_read(RF233Register::TRX_STATUS, InternalState::READY);
 
-                    self.tx_client
-                        .get()
-                        .map(|c| { c.send_done(buf.unwrap(), ack, ReturnCode::SUCCESS); });
+                    self.tx_client.get().map(|c| {
+                        c.send_done(buf.unwrap(), ack, ReturnCode::SUCCESS);
+                    });
                 } else {
                     self.register_read(RF233Register::TRX_STATUS);
                 }
@@ -807,6 +850,14 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
             }
             InternalState::RX_ENABLING_RECEPTION => {
                 self.receiving.set(false);
+
+                // Stay awake if we receive a packet, another call to stop()
+                // is therefore necessary to shut down the radio. Currently
+                // mainly benefits the XMAC wrapper that would like to avoid
+                // a shutdown when in the expected case the radio should stay
+                // awake.
+                self.sleep_pending.set(false);
+
                 // Just read a packet: if a transmission is pending,
                 // start the transmission state machine
                 if self.transmitting.get() {
@@ -835,11 +886,8 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 self.state_transition_write(
                     RF233Register::PAN_ID_0,
                     (self.pan.get() & 0xff) as u8,
-            }
-            InternalState::CONFIG_SHORT1_SET => {
-                self.state_transition_write(RF233Register::PAN_ID_0,
-                                            (self.pan.get() & 0xff) as u8,
-                                            InternalState::CONFIG_PAN0_SET);
+                    InternalState::CONFIG_PAN0_SET,
+                );
             }
             InternalState::CONFIG_PAN0_SET => {
                 self.state_transition_write(
@@ -852,11 +900,8 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 self.state_transition_write(
                     RF233Register::IEEE_ADDR_0,
                     self.addr_long.get()[0],
-            }
-            InternalState::CONFIG_PAN1_SET => {
-                self.state_transition_write(RF233Register::IEEE_ADDR_0,
-                                            self.addr_long.get()[0],
-                                            InternalState::CONFIG_IEEE0_SET);
+                    InternalState::CONFIG_IEEE0_SET,
+                );
             }
             InternalState::CONFIG_IEEE0_SET => {
                 self.state_transition_write(
@@ -869,11 +914,8 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 self.state_transition_write(
                     RF233Register::IEEE_ADDR_2,
                     self.addr_long.get()[2],
-            }
-            InternalState::CONFIG_IEEE1_SET => {
-                self.state_transition_write(RF233Register::IEEE_ADDR_2,
-                                            self.addr_long.get()[2],
-                                            InternalState::CONFIG_IEEE2_SET);
+                    InternalState::CONFIG_IEEE2_SET,
+                );
             }
             InternalState::CONFIG_IEEE2_SET => {
                 self.state_transition_write(
@@ -886,11 +928,8 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 self.state_transition_write(
                     RF233Register::IEEE_ADDR_4,
                     self.addr_long.get()[4],
-            }
-            InternalState::CONFIG_IEEE3_SET => {
-                self.state_transition_write(RF233Register::IEEE_ADDR_4,
-                                            self.addr_long.get()[4],
-                                            InternalState::CONFIG_IEEE4_SET);
+                    InternalState::CONFIG_IEEE4_SET,
+                );
             }
             InternalState::CONFIG_IEEE4_SET => {
                 self.state_transition_write(
@@ -900,9 +939,11 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 );
             }
             InternalState::CONFIG_IEEE5_SET => {
-                self.state_transition_write(RF233Register::IEEE_ADDR_6,
-                                            self.addr_long.get()[6],
-                                            InternalState::CONFIG_IEEE6_SET);
+                self.state_transition_write(
+                    RF233Register::IEEE_ADDR_6,
+                    self.addr_long.get()[6],
+                    InternalState::CONFIG_IEEE6_SET,
+                );
             }
             InternalState::CONFIG_IEEE6_SET => {
                 self.state_transition_write(
@@ -927,7 +968,6 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                     InternalState::CONFIG_DONE,
                 );
             }
-
             InternalState::CONFIG_DONE => {
                 self.config_pending.set(false);
                 self.state_transition_read(RF233Register::TRX_STATUS, InternalState::READY);
@@ -970,6 +1010,9 @@ impl<'a, S: spi::SpiMasterDevice + 'a> RF233<'a, S> {
             interrupt_handling: Cell::new(false),
             interrupt_pending: Cell::new(false),
             config_pending: Cell::new(false),
+            sleep_pending: Cell::new(false),
+            wake_pending: Cell::new(false),
+            power_client_pending: Cell::new(false),
             tx_buf: TakeCell::empty(),
             rx_buf: TakeCell::empty(),
             tx_len: Cell::new(0),
@@ -1019,7 +1062,6 @@ impl<'a, S: spi::SpiMasterDevice + 'a> RF233<'a, S> {
     }
 
     fn register_write(&self, reg: RF233Register, val: u8) -> ReturnCode {
-
         if (self.spi_busy.get() || self.spi_tx.is_none() || self.spi_rx.is_none()) {
             return ReturnCode::EBUSY;
         }
@@ -1034,7 +1076,6 @@ impl<'a, S: spi::SpiMasterDevice + 'a> RF233<'a, S> {
     }
 
     fn register_read(&self, reg: RF233Register) -> ReturnCode {
-
         if (self.spi_busy.get() || self.spi_tx.is_none() || self.spi_rx.is_none()) {
             return ReturnCode::EBUSY;
         }
@@ -1133,9 +1174,8 @@ impl<'a, S: spi::SpiMasterDevice + 'a> radio::RadioConfig for RF233<'a, S> {
             // Delay wakeup until the radio turns all the way off
             self.wake_pending.set(true);
             self.register_read(RF233Register::PART_NUM);
-            return ReturnCode::EALREADY;
         }
-        self.register_read(RF233Register::PART_NUM);
+
         ReturnCode::SUCCESS
     }
 
@@ -1168,7 +1208,7 @@ impl<'a, S: spi::SpiMasterDevice + 'a> radio::RadioConfig for RF233<'a, S> {
     }
 
     fn busy(&self) -> bool {
-        self.state.get() != InternalState::READY
+        self.state.get() != InternalState::READY && self.state.get() != InternalState::SLEEP
     }
 
     fn set_config_client(&self, client: &'static radio::ConfigClient) {
@@ -1275,6 +1315,7 @@ impl<'a, S: spi::SpiMasterDevice + 'a> radio::RadioData for RF233<'a, S> {
     ) -> (ReturnCode, Option<&'static mut [u8]>) {
         let state = self.state.get();
         let frame_len = frame_len + radio::MFR_SIZE;
+
         if !self.radio_on.get() {
             return (ReturnCode::EOFF, Some(spi_buf));
         } else if self.tx_buf.is_some() || self.transmitting.get() {
@@ -1289,12 +1330,13 @@ impl<'a, S: spi::SpiMasterDevice + 'a> radio::RadioData for RF233<'a, S> {
         self.tx_buf.replace(spi_buf);
         self.tx_len.set(frame_len as u8);
         self.transmitting.set(true);
+
         if !self.receiving.get() && state == InternalState::READY {
             self.state_transition_read(
                 RF233Register::TRX_STATUS,
                 InternalState::TX_STATUS_PRECHECK1,
             );
         }
-        return (ReturnCode::SUCCESS, None);
+        (ReturnCode::SUCCESS, None)
     }
 }
