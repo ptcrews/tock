@@ -3,7 +3,8 @@
    in depth in the Thread_Stack_Design.txt document. */
 
 use net::ip_utils::{IPAddr, IP6Header, ip6_nh};
-use net::ip::{IPPayload, TransportHeader, IP6SendStruct, IP6Packet, IP6Client};
+use net::ip::{IPPayload, TransportHeader, IP6Packet};
+use net::ipv6::ipv6_send::{IP6SendStruct, IP6Client};
 use ieee802154::mac::Frame;
 use net::stream::{decode_u16, decode_u8, decode_bytes};
 use net::stream::{encode_u16, encode_u8, encode_bytes};
@@ -146,14 +147,17 @@ impl<'a> UDPSendStruct<'a> {
     }
 
     pub fn initialize(&self) {
-        self.ip_send_struct
+        //self.ip_send_struct
+        /*
         self.ip6_packet.map(|ip6_packet| {
             ip6_packet.initialize_header();
             ip6_packet.set_next_header(ip6_nh::UDP);
         });
+        */
     }
 
     pub fn send_to(&self, dest: IPAddr, dest_port: u16, src_port: u16, buf: &'a [u8]) -> ReturnCode {
+        ReturnCode::FAIL
     }
 
     pub fn send(&self, dest: IPAddr, udp_header: UDPHeader, buf: &'a [u8]) -> ReturnCode {
