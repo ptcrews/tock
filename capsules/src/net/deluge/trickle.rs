@@ -25,7 +25,8 @@ pub trait TrickleClient {
     fn new_interval(&self);
 }
 
-pub trait Trickle {
+pub trait Trickle<'a> {
+    fn set_client(&self, client: &'a TrickleClient);
     fn set_default_parameters(&self, i_max: usize, i_min: usize, k: usize);
     fn initialize(&self);
     fn received_transmission(&self, bool);
@@ -46,13 +47,13 @@ pub struct TrickleData<'a, A: time::Alarm + 'a> {
     c: Cell<usize>,         // Counter for how many transmissions have been received
     t_fired: Cell<bool>,    // Whether timer t has already fired for the interval
 
-    client: &'a TrickleClient,
+    client: Cell<Option<&'a TrickleClient>>,
     rng: &'a RNG,
-    clock: &'a A,
+    clock: A,
 }
 
 impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
-    pub fn new(client: &'a TrickleClient, rng: &'a RNG, clock: &'a A) -> TrickleData<'a, A> {
+    pub fn new(rng: &'a RNG, clock: A) -> TrickleData<'a, A> {
         let mut i_max_val = I_MIN;
         for _ in 0..I_MAX {
             i_max_val *= 2;
@@ -69,7 +70,7 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
             c: Cell::new(0),
             t_fired: Cell::new(false),
 
-            client: client,
+            client: Cell::new(None),
             rng: rng,
             clock: clock
         }
@@ -86,7 +87,7 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
         self.c.set(0);
         self.t_fired.set(false);
 
-        self.client.new_interval();
+        self.client.get().map(|client| client.new_interval());
         self.rng.get();
     }
 
@@ -99,7 +100,7 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
         self.set_timer(time_left);
 
         if self.c.get() < self.k.get() {
-            self.client.transmit();
+            self.client.get().map(|client| client.transmit());
         }
     }
 
@@ -112,7 +113,10 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
     }
 }
 
-impl<'a, A: time::Alarm + 'a> Trickle for TrickleData<'a, A> {
+impl<'a, A: time::Alarm + 'a> Trickle<'a> for TrickleData<'a, A> {
+    fn set_client(&self, client: &'a TrickleClient) {
+        self.client.set(Some(client));
+    }
 
     fn set_default_parameters(&self, i_max: usize, i_min: usize, k: usize) {
         self.i_max.set(i_max);

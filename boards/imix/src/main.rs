@@ -31,6 +31,8 @@ mod i2c_dummy;
 mod spi_dummy;
 #[allow(dead_code)]
 mod lowpan_frag_dummy;
+#[allow(dead_code)]
+mod trickle_test;
 
 #[allow(dead_code)]
 mod power;
@@ -524,6 +526,8 @@ pub unsafe fn reset_handler() {
         capsules::usb_user::UsbSyscallDriver::new(usb_client, kernel::Grant::create())
     );
 
+    let trickle_test_struct = trickle_test::initialize_all(radio_mac, mux_alarm);
+
     let imix = Imix {
         console: console,
         alarm: alarm,
@@ -573,5 +577,6 @@ pub unsafe fn reset_handler() {
         &mut PROCESSES,
         FAULT_RESPONSE,
     );
+    trickle_test_struct.start();
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }

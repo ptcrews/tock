@@ -173,14 +173,14 @@ pub struct DelugeData<'a, A: time::Alarm + 'a> {
 
     // Other
     deluge_transmit_layer: &'a DelugeTransmit,
-    trickle: &'a Trickle,
+    trickle: &'a Trickle<'a>,
     alarm: &'a A,
 }
 
 impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
     pub fn new(program_state: &'a DelugeProgramState,
                transmit_layer: &'a DelugeTransmit,
-               trickle: &'a Trickle,
+               trickle: &'a Trickle<'a>,
                alarm: &'a A) -> DelugeData<'a, A> {
         DelugeData{
             received_old_v: Cell::new(false),
