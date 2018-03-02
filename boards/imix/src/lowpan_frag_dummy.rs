@@ -45,7 +45,7 @@ use capsules::ieee802154::mac::{Mac, TxClient};
 use capsules::net::ieee802154::MacAddress;
 use capsules::net::ip_utils::{IP6Header, IPAddr, ip6_nh};
 use capsules::net::ip::{IP6Packet, TransportHeader, IPPayload};
-use capsules::net::udp::{UDPHeader};
+use capsules::net::udp::udp::{UDPHeader};
 use capsules::net::sixlowpan::{Sixlowpan, SixlowpanState, TxState, SixlowpanRxClient, SixlowpanTxClient};
 use capsules::net::sixlowpan_compression;
 use capsules::net::sixlowpan_compression::Context;
@@ -209,7 +209,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         payload: ip_pyld,
     };
 
-    ip6_dg.set_transpo_cksum(); //calculates and sets UDP cksum
+    ip6_dg.set_transport_checksum(); //calculates and sets UDP cksum
 
     IP6_DG_OPT = Some(ip6_dg); //Now, other places in code should have access to initialized 
     // IP6Packet. Note that this code is inherently unsafe and we make no effort to prevent
@@ -738,7 +738,7 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
                     } 
                 } //This bracket ends mutable borrow of ip6_packet for header
                 //Now that packet is fully prepared, set checksum
-                ip6_packet.set_transpo_cksum(); //calculates and sets UDP cksum
+                ip6_packet.set_transport_checksum(); //calculates and sets UDP cksum
             },//End of Some{}
             None => debug!("Error! tried to prepare uninitialized IP6Packet"),
         }

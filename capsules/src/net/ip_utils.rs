@@ -1,7 +1,7 @@
 use net::stream::{decode_u16, decode_u8, decode_bytes};
 use net::stream::{encode_u16, encode_u8, encode_bytes};
 use net::stream::SResult;
-use net::udp::{UDPHeader};
+use net::udp::udp::{UDPHeader};
 use net::util::{slice_to_u16};
 
 #[derive(Copy,Clone,PartialEq)]
@@ -219,10 +219,10 @@ impl IP6Header {
 
 
 pub fn compute_udp_checksum(ip6_header: &IP6Header,
-                        udp_header: &UDPHeader,
-                        udp_length: u16,
-                        payload: &[u8])
-                        -> u16 {
+                            udp_header: &UDPHeader,
+                            udp_length: u16,
+                            payload: &[u8])
+                            -> u16 {
 
     //This checksum is calculated according to some of the recommendations found in RFC 1071.
 

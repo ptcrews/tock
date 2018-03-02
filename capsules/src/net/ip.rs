@@ -5,7 +5,7 @@
 use net::ip_utils::{IPAddr, IP6Header, compute_udp_checksum, ip6_nh};
 use ieee802154::mac::{Frame, Mac};
 use net::ieee802154::MacAddress;
-use net::udp::{UDPHeader};
+use net::udp::udp::{UDPHeader};
 use net::tcp::{TCPHeader};
 use net::sixlowpan::{TxState, SixlowpanTxClient};
 use kernel::ReturnCode;
@@ -42,22 +42,20 @@ impl<'a> IPPayload<'a> {
         }
     }
 
-    // This shouldn't be called normally, as we also need to change the IPv6
-    // next header field.
-    pub fn change_type(&mut self, new_type: TransportHeader) {
-        self.header = new_type;
-    }
-
-    pub fn change_payload(&mut self, new_payload: &[u8]) -> ReturnCode {
-        match self.header {
-            TransportHeader::UDP(udp_header) => {
-                udp_header.set_payload(new_payload, self);
-            },
-            _ => {
-                unimplemented!();
-            },
+    pub fn set_payload(&mut self, transport_header: TransportHeader, payload: &[u8])
+            -> (u8, u16) {
+        if self.payload.len() < payload.len() {
+            // TODO: Error
         }
-        ReturnCode::SUCCESS
+        self.payload.copy_from_slice(&payload);
+        match transport_header {
+            TransportHeader::UDP(mut udp_header) => {
+                let length = (payload.len() + udp_header.get_hdr_size()) as u16;
+                udp_header.set_len(length);
+                (ip6_nh::UDP, length)
+            },
+            _ => (ip6_nh::NO_NEXT, payload.len() as u16),
+        }
     }
 
     pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
@@ -117,7 +115,7 @@ impl<'a> IP6Packet<'a> {
         40 + transport_hdr_size
     }
 
-    pub fn set_transpo_cksum(&mut self){ //Looks at internal buffer assuming
+    pub fn set_transport_checksum(&mut self){ //Looks at internal buffer assuming
     // it contains a valid IP packet, checks the payload type. If the payload
     // type requires a cksum calculation, this function calculates the 
     // psuedoheader cksum and calls the appropriate transport packet function
@@ -139,14 +137,10 @@ impl<'a> IP6Packet<'a> {
         }
     }
 
-    pub fn change_transport_type(&mut self, new_header: TransportHeader) {
-        let next_header = match new_header {
-            TransportHeader::UDP(_) => {
-                ip6_nh::UDP
-            },
-            _ => ip6_nh::NO_NEXT,
-        };
+    pub fn set_payload(&mut self, transport_header: TransportHeader, payload: &[u8]) {
+        let (next_header, payload_len) = self.payload.set_payload(transport_header, payload);
         self.header.set_next_header(next_header);
+        self.header.set_payload_len(payload_len);
     }
 
     // TODO: Implement

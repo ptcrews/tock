@@ -352,14 +352,24 @@ impl<'a> TxState<'a> {
         }
     }
 
+    // TODO: Figure out the correct interface here; don't want to
+    // init while busy, so either call init once globally or disallow
+    // init-ing while busy
+    // NOTE: Only one logical user should have access to a TxState at any
+    // time, so shouldn't be a problem (probably)
     pub fn init(&self,
                 src_mac_addr: MacAddress,
                 dst_mac_addr: MacAddress,
-                security: Option<(SecurityLevel, KeyId)>) {
-        self.src_mac_addr.set(src_mac_addr);
-        self.dst_mac_addr.set(dst_mac_addr);
-        self.security.set(security);
-        self.busy.set(false);
+                security: Option<(SecurityLevel, KeyId)>) -> ReturnCode {
+        if self.busy.get() {
+            ReturnCode::EBUSY
+        } else {
+            self.src_mac_addr.set(src_mac_addr);
+            self.dst_mac_addr.set(dst_mac_addr);
+            self.security.set(security);
+            self.busy.set(false);
+            ReturnCode::SUCCESS
+        }
     }
 
     // Assumes we have already called init_transmit
