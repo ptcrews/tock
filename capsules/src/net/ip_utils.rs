@@ -1,7 +1,7 @@
 use net::stream::{decode_u16, decode_u8, decode_bytes};
 use net::stream::{encode_u16, encode_u8, encode_bytes};
 use net::stream::SResult;
-use net::udp::{UDPHeader};
+use net::udp::udp::{UDPHeader};
 use net::util::{slice_to_u16};
 
 #[derive(Copy,Clone,PartialEq)]
