@@ -43,8 +43,9 @@ impl<'a> IP6SendStruct<'a> {
     pub fn new(ip6_packet: &'static mut IP6Packet<'static>,
                tx_buf: &'static mut [u8],
                sixlowpan: TxState<'a>,
-               radio: &'a Mac<'a>,
-               client: &'a IP6Client) -> IP6SendStruct<'a> {
+               radio: &'a Mac<'a>//, //Edit by Hudson bc of circular construction
+               //client: &'a IP6Client
+                                    ) -> IP6SendStruct<'a> {
         IP6SendStruct {
             ip6_packet: TakeCell::new(ip6_packet),
             src_addr: Cell::new(IPAddr::new()),
@@ -52,11 +53,16 @@ impl<'a> IP6SendStruct<'a> {
             tx_buf: TakeCell::new(tx_buf),
             sixlowpan: sixlowpan,
             radio: radio,
-            client: Cell::new(Some(client)),
+//            client: Cell::new(Some(client)),
+            client: Cell::new(None), 
         }
     }
 
     pub fn init(&self) {
+    }
+
+    pub fn set_client(&self, client: &'a IP6Client) {
+        self.client.set(Some(client));
     }
 
     pub fn set_addr(&self, src_addr: IPAddr) {

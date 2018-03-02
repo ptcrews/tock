@@ -95,6 +95,14 @@ pub struct IP6Packet<'a> {
 // allocating/modifying the entire IP6Packet
 impl<'a> IP6Packet<'a> {
     // Sets fields to appropriate defaults
+
+    pub fn new(pyld: IPPayload<'a>) -> IP6Packet<'a>{
+        IP6Packet {
+            header: IP6Header::default(),
+            payload: pyld,
+        }
+    }
+
     pub fn reset(&mut self) {
         self.header = IP6Header::default();
     }
