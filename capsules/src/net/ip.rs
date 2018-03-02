@@ -133,6 +133,7 @@ impl<'a> IP6Packet<'a> {
 
             },
             _ => {
+                unimplemented!();
                 debug!("Transport cksum setting not supported for this transport payload");
             }
         }

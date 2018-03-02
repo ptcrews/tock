@@ -16,7 +16,7 @@
 //! ...
 //! // Radio initialization code
 //! ...
-//! let app_lowpan_frag_test = lowpan_frag_dummy::initialize_all(radio_mac as &'static Mac,
+//! let app_lowpan_frag_test = app_layer_lowpan_frag::initialize_all(radio_mac as &'static Mac,
 //!                                                          mux_alarm as &'static
 //!                                                             MuxAlarm<'static,
 //!                                                                 sam4l::ast::Ast>);
@@ -33,12 +33,13 @@ use capsules::ieee802154::mac::{Mac, TxClient};
 use capsules::net::ieee802154::MacAddress;
 use capsules::net::ip_utils::{IP6Header, IPAddr, ip6_nh};
 use capsules::net::ip::{IP6Packet, TransportHeader, IPPayload};
-use capsules::net::udp::{UDPHeader};
+use capsules::net::udp::{UDPHeader, UDPSendStruct};
 use capsules::net::sixlowpan::{Sixlowpan, SixlowpanState, TxState, SixlowpanTxClient};
 use capsules::net::sixlowpan_compression;
 use capsules::net::sixlowpan_compression::Context;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use core::cell::Cell;
+use capsules::net::ipv6::ipv6_send::{IP6SendStruct};
 
 use core::mem;
 use core::ptr;
@@ -63,6 +64,15 @@ static mut RX_STATE_BUF: [u8; 1280] = [0x0; 1280];
 pub const TEST_DELAY_MS: u32 = 10000;
 pub const TEST_LOOP: bool = false;
 static mut UDP_PAYLOAD: [u8; PAYLOAD_LEN] = [0; PAYLOAD_LEN]; //Becomes payload of UDP
+static mut udp_hdr: UDPHeader = UDPHeader {
+    src_port: 0,
+    dst_port: 0,
+    len: 0,
+    cksum:0,
+};
+static mut tr_hdr: TransportHeader = TransportHeader::UDP(udp_hdr);
+pub static mut RF233_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_SIZE];
+
 
 //Use a global variable option, initialize as None, then actually initialize in initialize all
 
@@ -71,6 +81,7 @@ pub struct LowpanTest<'a, A: time::Alarm + 'a> {
     sixlowpan_tx: TxState<'a>,
     radio: &'a Mac<'a>,
     test_counter: Cell<usize>,
+    udp_sender: UDPSendStruct<'a>
 }
 //TODO: Initialize UDP sender/send_done client in initialize all
 pub unsafe fn initialize_all(radio_mac: &'static Mac,
@@ -90,30 +101,58 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
                                                  &sam4l::ast::AST));
 
     let sixlowpan_state = sixlowpan as &SixlowpanState;
-    let sixlowpan_tx = capsules::net::sixlowpan::TxState::new(sixlowpan_state);
+    let sixlowpan_tx = capsules::net::sixlowpan::TxState::new(sixlowpan_state); 
+ 
+
+    udp_hdr.set_src_port(src_port);
+    udp_hdr.set_dst_port(dst_port);
+    udp_hdr.set_len(udp_len);
+
+    let ip_pyld: IPPayload = IPPayload::new(tr_hdr, &mut UDP_PAYLOAD);
+    
+    let mut ip6_hdr: IP6Header = IP6Header::new();
+    ip6_hdr.set_next_header(ip6_nh::UDP); 
+    ip6_hdr.set_payload_len(PAYLOAD_LEN as u16 + 8);
+    ip6_hdr.src_addr = SRC_ADDR;
+    ip6_hdr.dst_addr = DST_ADDR;
+    let mut ip6_dg: IP6Packet = IP6Packet {
+        header: ip6_hdr,
+        payload: ip_pyld,
+    };
+
+//    let ip6_sender: IP6SendStruct = IP6SendStruct::new(RF233_BUF, sixlowpan_tx, radio_mac,
+//This is all a mess right now. Try again with Pauls fixes.
+    
 
     let app_lowpan_frag_test = static_init!(
         LowpanTest<'static,
         VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
         LowpanTest::new(sixlowpan_tx,
                         radio_mac,
-                        VirtualMuxAlarm::new(mux_alarm))
+                        VirtualMuxAlarm::new(mux_alarm),
+                        ip6_dg,
+                        ip6_sender)
     );
 
     app_lowpan_frag_test.alarm.set_client(app_lowpan_frag_test);
 
-    lowpan_frag_test
+    
+
+    app_lowpan_frag_test
 }
 
 impl<'a, A: time::Alarm> LowpanTest<'a, A> {
     pub fn new(sixlowpan_tx: TxState<'a>,
                radio: &'a Mac<'a>,
-               alarm: A) -> LowpanTest<'a, A> {
+               alarm: A
+               ip6_packet: &'static mut IP6Packet<'a>
+               ip_sender: &'a IP6SendStruct<'a>) -> LowpanTest<'a, A> {
         LowpanTest {
             alarm: alarm,
             sixlowpan_tx: sixlowpan_tx,
             radio: radio,
             test_counter: Cell::new(0),
+            udp_sender = UDPSendStruct::new(ip6_packet, ip_sender),
         }
     }
 
@@ -165,10 +204,65 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
     fn send_next(&self) {
         //Insert code to send UDP PAYLOAD here.
         let src_port: u16 = 12345;
-        let dest_port: u16 = 54321;
-        let udp_len: u16 = PAYLOAD_LEN + 8;
+        let dst_port: u16 = 54321;
+        let udp_len: u16 = PAYLOAD_LEN as u16 + 8;
+
+        //Initial test: construct packet to send via sixlowpan TxState:
+
+    // Following code initializes an IP6Packet using the global UDP_DGRAM buffer as the payload
+        let mut udp_hdr: UDPHeader = UDPHeader {
+            src_port: 0,
+            dst_port: 0,
+            len: 0,
+            cksum: 0, 
+        };
+        udp_hdr.set_src_port(src_port);
+        udp_hdr.set_dst_port(dst_port);
+        udp_hdr.set_len(udp_len);
+        //checksum is calculated and set later
+
+        let mut ip6_hdr: IP6Header = IP6Header::new();
+        ip6_hdr.set_next_header(ip6_nh::UDP); 
+        ip6_hdr.set_payload_len(PAYLOAD_LEN as u16 + 8);
+        ip6_hdr.src_addr = SRC_ADDR;
+        ip6_hdr.dst_addr = DST_ADDR;
+
+        let tr_hdr: TransportHeader = TransportHeader::UDP(udp_hdr);
+        unsafe {
+            let ip_pyld: IPPayload = IPPayload {
+                header: tr_hdr,
+                payload: &mut UDP_PAYLOAD,
+            };
         
-        
+            let mut ip6_dg: IP6Packet = IP6Packet {
+                header: ip6_hdr,
+                payload: ip_pyld,
+            };
+
+            ip6_dg.set_transpo_cksum(); //calculates and sets UDP cksum
+            debug!("About to send a fragment");
+            let next_frame = self.sixlowpan_tx.next_fragment(&ip6_dg, &mut RF233_BUF, self.radio);
+ 
+            let result = match next_frame {
+            Ok((is_done, frame)) => {
+                if is_done {
+                    //self.tx_buf.replace(frame.into_buf());
+                    //self.send_completed(ReturnCode::SUCCESS);
+                    debug!("Done already??");
+                } else {
+                    self.radio.transmit(frame);
+                }
+//                (ReturnCode::SUCCESS, is_done)
+            },
+            Err((retcode, buf)) => {
+                debug!("Error on next fragment call");
+//                self.tx_buf.replace(buf);
+//                self.send_completed(ReturnCode::FAIL);
+//                (ReturnCode::FAIL, false)
+            },
+        };
+
+        }
         
     }
 }
