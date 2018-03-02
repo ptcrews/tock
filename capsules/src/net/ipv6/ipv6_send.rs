@@ -5,6 +5,7 @@ use net::udp::udp::{UDPHeader};
 use net::tcp::{TCPHeader};
 use net::sixlowpan::{TxState, SixlowpanTxClient};
 use net::ip::{IP6Packet, TransportHeader};
+use net::ip_utils;
 use kernel::ReturnCode;
 use kernel::common::take_cell::TakeCell;
 use core::cell::Cell;
@@ -66,9 +67,6 @@ impl<'a> IP6SendStruct<'a> {
         self.gateway.set(gateway);
     }
 
-    pub fn set_next_header(&self) {
-    }
-
     fn init_packet(&self,
                    dst_addr: IPAddr,
                    transport_header: TransportHeader,
@@ -78,6 +76,8 @@ impl<'a> IP6SendStruct<'a> {
             ip6_packet.header.src_addr = self.src_addr.get();
             ip6_packet.header.dst_addr = dst_addr;
             ip6_packet.payload.set_payload(transport_header, payload);
+            ip6_packet.set_transport_checksum();
+
         });
     }
 

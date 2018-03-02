@@ -115,7 +115,7 @@ impl<'a> IP6Packet<'a> {
         40 + transport_hdr_size
     }
 
-    pub fn set_transpo_cksum(&mut self){ //Looks at internal buffer assuming
+    pub fn set_transport_checksum(&mut self){ //Looks at internal buffer assuming
     // it contains a valid IP packet, checks the payload type. If the payload
     // type requires a cksum calculation, this function calculates the 
     // psuedoheader cksum and calls the appropriate transport packet function

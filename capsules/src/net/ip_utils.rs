@@ -219,10 +219,10 @@ impl IP6Header {
 
 
 pub fn compute_udp_checksum(ip6_header: &IP6Header,
-                        udp_header: &UDPHeader,
-                        udp_length: u16,
-                        payload: &[u8])
-                        -> u16 {
+                            udp_header: &UDPHeader,
+                            udp_length: u16,
+                            payload: &[u8])
+                            -> u16 {
 
     //This checksum is calculated according to some of the recommendations found in RFC 1071.
 
