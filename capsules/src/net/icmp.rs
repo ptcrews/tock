@@ -8,6 +8,7 @@ use net::stream::{decode_u16, decode_u8, decode_bytes};
 use net::stream::{encode_u16, encode_u8, encode_bytes};
 use net::stream::SResult;
 
+#[derive(Copy, Clone)]
 pub struct ICMPHeader {
     pub code: u8,
     pub cksum: u16,
@@ -19,26 +20,18 @@ pub enum ICMPHeaderOptions {
     Type3 { _unused: u16, next_mtu: u16 },
 }
 
-impl Default for ICMPHeader {
-    fn default() -> ICMPHeader {
+impl ICMPHeader {
+    pub fn new(hdr_type: u8) -> ICMPHeader {
+        let options = match hdr_type {
+            0 => Type0 { 0, 0 },
+            3 => Type3 { 0, 0 },
+        };
+        
         ICMPHeader {
             code: 0,
             cksum: 0,
-            options: Type0 { 0, 0 },
+            options: options,
         }
-    }
-}
-
-impl ICMPHeader {
-    pub fn new() -> ICMPHeader {
-        ICMPHeader::default()
-    }
-
-    pub fn set_type(&mut self, hdr_type: u8) {
-        match hdr_type {
-            0 => self.options = Type0 { 0, 0 },
-            3 => self.options = Type3 { 0, 0 }, 
-        };
     }
 
     pub fn set_code(&mut self, code: u8) {
@@ -89,7 +82,30 @@ impl ICMPHeader {
     }
 }
 
+pub trait ICMPSendClient {
+    fn send_done(&self, result: ReturnCode);
+}
+
 pub struct ICMPSendStruct<'a> {
     ip_send_struct: &'a IP6SendStruct<'a>,
     client: Cell<Option<&'a ICMPSendClient>>,
+}
+
+impl<'a> ICMPSendStruct<'a> {
+    pub fn new(ip_send_struct: &'a IP6SendStruct<'a>) -> ICMPSendStruct<'a> {
+        ICMPSendStruct {
+            ip_send_struct: ip_send_struct,
+            client: Cell::new(None),
+        }
+    }
+    
+    pub fn set_client(&self, client: &'a ICMPSendClient) {
+        self.client.set(Some(client));
+    }
+}
+
+impl<'a> IP6Client for ICMPSendStruct<'a> {
+    fn send_done(&self, result: ReturnCode) {
+        self.client.get().map(|client| client.send_done(result));
+    }
 }
