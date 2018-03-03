@@ -50,7 +50,7 @@ impl ICMPHeader {
         match options {
             ICMPHeaderOptions::Type0 { id, seqno } => 0,
             ICMPHeaderOptions::Type3 { _unused, next_mtu } => 3,
-        };
+        }
     }
 
     pub fn get_code(&self) -> u8 {
@@ -75,9 +75,38 @@ impl ICMPHeader {
     }
 
     pub fn decode(buf: &[u8]) -> SResult<ICMPHeader> {
-        // TODO: finish
-        let mut icmp_header = Self::new();
         let off = 0;
+        
+        let (off, hdr_type) = dec_try!(buf, off; decode_u8);
+        
+        let mut icmp_header = Self::new(hdr_type);
+        
+        let (off, code) = dec_try!(buf, off; decode_u8);
+        icmp_header.code = code; 
+        
+        let (off, cksum) = dec_try!(buf, off; decode_u16);
+        icmp_header.cksum = u16::from_be(cksum);
+       
+        match hdr_type {
+            0 => {
+                let (off, id) = dec_try!(buf, off; decode_u16);
+                let id = u16::from_be(id);
+                    
+                let (off, seqno) = dec_try!(buf, off; decode_u16);
+                let seqno = u16::from_be(seqno);
+
+                icmp_header.set_options(ICMPHeaderOptions::Type0 { id, seqno });
+            },
+            3 => {
+                let (off, _unused) = dec_try!(buf, off; decode_u16);
+                    
+                let (off, next_mtu) = dec_try!(buf, off; decode_u16);
+                let next_mtu = u16::from_be(next_mtu);
+
+                icmp_header.set_options(ICMPHeaderOptions::Type3 { 0, next_mtu });
+            },
+        }
+
         stream_done!(off, icmp_header);
     }
 }
