@@ -50,11 +50,15 @@ impl<'a> IPPayload<'a> {
         self.payload.copy_from_slice(&payload);
         match transport_header {
             TransportHeader::UDP(mut udp_header) => {
+                debug!("I am a UDP Packet");
                 let length = (payload.len() + udp_header.get_hdr_size()) as u16;
                 udp_header.set_len(length);
                 (ip6_nh::UDP, length)
             },
-            _ => (ip6_nh::NO_NEXT, payload.len() as u16),
+            _ => {
+                debug!("I am a failure!");
+                (ip6_nh::NO_NEXT, payload.len() as u16)
+            },
         }
     }
 
@@ -95,6 +99,14 @@ pub struct IP6Packet<'a> {
 // allocating/modifying the entire IP6Packet
 impl<'a> IP6Packet<'a> {
     // Sets fields to appropriate defaults
+
+    pub fn new(pyld: IPPayload<'a>) -> IP6Packet<'a>{
+        IP6Packet {
+            header: IP6Header::default(),
+            payload: pyld,
+        }
+    }
+
     pub fn reset(&mut self) {
         self.header = IP6Header::default();
     }
@@ -131,6 +143,7 @@ impl<'a> IP6Packet<'a> {
 
             },
             _ => {
+                unimplemented!();
                 debug!("Transport cksum setting not supported for this transport payload");
             }
         }
