@@ -131,6 +131,11 @@ impl<'a> ICMPSendStruct<'a> {
     pub fn set_client(&self, client: &'a ICMPSendClient) {
         self.client.set(Some(client));
     }
+
+    pub fn send(&self, dest: IPAddr, icmp_header: ICMPHeader, buf: &'a [u8]) -> ReturnCode {
+        let transport_header = TransportHeader::ICMP(icmp_header);
+        self.ip_send_struct.send_to(dest, transport_header, buf)
+    }
 }
 
 impl<'a> IP6Client for ICMPSendStruct<'a> {
