@@ -50,11 +50,15 @@ impl<'a> IPPayload<'a> {
         self.payload.copy_from_slice(&payload);
         match transport_header {
             TransportHeader::UDP(mut udp_header) => {
+                debug!("I am a UDP Packet");
                 let length = (payload.len() + udp_header.get_hdr_size()) as u16;
                 udp_header.set_len(length);
                 (ip6_nh::UDP, length)
             },
-            _ => (ip6_nh::NO_NEXT, payload.len() as u16),
+            _ => {
+                debug!("I am a failure!");
+                (ip6_nh::NO_NEXT, payload.len() as u16)
+            },
         }
     }
 

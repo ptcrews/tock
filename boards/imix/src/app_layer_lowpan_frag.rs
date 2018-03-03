@@ -126,6 +126,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     
 
     let ip6_sender = static_init!(IP6SendStruct<'static>, IP6SendStruct::new(ip6_dg, &mut RF233_BUF, sixlowpan_tx, radio_mac));
+    radio_mac.set_transmit_client(ip6_sender);
 
     let app_lowpan_frag_test = static_init!(
         LowpanTest<'static,
@@ -207,8 +208,8 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
 
     fn send_next(&self) {
         //Insert code to send UDP PAYLOAD here.
-        let dst_addr: IPAddr = IPAddr::new();
-        let src_DDR: IPAddr = IPAddr::new();
+        let mut dst_addr: IPAddr = IPAddr::new();
+        dst_addr.set_unicast_link_local();
         let src_port: u16 = 12321;
         let dst_port: u16 = 32123;
         
