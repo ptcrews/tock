@@ -3,10 +3,12 @@
 //! - Author: Conor McAvity <cmcavity@stanford.edu>
 
 use net::ip_utils::IPAddr;
-use kernel::ReturnCode;
-use net::stream::{decode_u16, decode_u8, decode_bytes};
-use net::stream::{encode_u16, encode_u8, encode_bytes};
+use net::ip::TransportHeader;
+use net::ipv6::ipv6_send::{IP6SendStruct, IP6Client};
+use net::stream::{decode_u16, decode_u8};
+use net::stream::{encode_u16, encode_u8};
 use net::stream::SResult;
+use kernel::ReturnCode;
 
 #[derive(Copy, Clone)]
 pub struct ICMPHeader {
