@@ -56,7 +56,7 @@ impl ICMPHeader {
     }
 
     pub fn get_type(&self) -> u8 {
-        match options {
+        match self.options {
             ICMPHeaderOptions::Type0 { id, seqno } => 0,
             ICMPHeaderOptions::Type3 { _unused, next_mtu } => 3,
         }
@@ -76,10 +76,22 @@ impl ICMPHeader {
 
     pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
         let mut off = offset;  
-        off = enc_consume!(buf, off; encode_u8, self.type_num);
+
+        off = enc_consume!(buf, off; encode_u8, self.get_type());
         off = enc_consume!(buf, off; encode_u8, self.code);
         off = enc_consume!(buf, off; encode_u16, self.cksum);
-        off = enc_consume!(buf, off; encode_u32, self.options);
+
+        match self.options {
+             ICMPHeaderOptions::Type0 { id, seqno } => {
+                off = enc_consume!(buf, off; encode_u16, id);
+                off = enc_consume!(buf, off; encode_u16, seqno);
+             },
+             ICMPHeaderOptions::Type3 { _unused, next_mtu } => {
+                off = enc_consume!(buf, off; encode_u16, 0);
+                off = enc_consume!(buf, off; encode_u16, next_mtu);
+             }
+        }
+        
         stream_done!(off, off);
     }
 
