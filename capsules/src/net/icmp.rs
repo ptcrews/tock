@@ -36,6 +36,13 @@ impl ICMPHeader {
         }
     }
 
+    pub fn set_type(&mut self, hdr_type: u8) {
+        match hdr_type {
+            0 => set_options(Type0 { 0, 0 }),
+            3 => set_options(Type3 { 0, 0 }),
+        }
+    }
+
     pub fn set_code(&mut self, code: u8) {
         self.code = code;
     }

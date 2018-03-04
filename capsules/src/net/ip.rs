@@ -21,7 +21,7 @@ use net::stream::SResult;
 // it difficult to recursively compress IP6 packets as required by 6lowpan
 pub enum TransportHeader {
     UDP(UDPHeader),
-    TCP(TCPHeader), \
+    TCP(TCPHeader),
     ICMP(ICMPHeader), 
     
     // NOTE: TCP,ICMP,RawIP traits not yet implemented
