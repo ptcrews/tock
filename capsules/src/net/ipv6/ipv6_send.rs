@@ -152,14 +152,14 @@ impl<'a> TxClient for IP6SendStruct<'a> {
                 //TODO: Remove this one link layer is fixed
                 let mut i = 0;
                 let mut array: [u8; 100] = [0x0; 100]; //used in introducing delay between frames
-                while(i < 10000000) {
+                while(i < 1000000) {
                     array[i % 100] = (i % 100) as u8;
                     i = i + 1;
-                    if (i % 1000000 == 0) {
-                        debug!("Delay, step {:?}", i / 1000000);
+                    if (i % 100000 == 0) {
+                        debug!("Delay, step {:?}", i / 100000);
                     }
                 }
-                
+        //TODO: Handle sending ACKs        
         //self.send_next(tx_buf);
         let ip6_packet = self.ip6_packet.take().unwrap();
         match self.sixlowpan.next_fragment(ip6_packet,
@@ -169,7 +169,8 @@ impl<'a> TxClient for IP6SendStruct<'a> {
                 //TODO: Fix ordering so that debug output does not indicate extra frame sent
                 debug!("Sent frame!");
                 if is_done {
-                    debug!("Sent packet!");
+                    self.tx_buf.replace(frame.into_buf());
+                    self.client.get().map(|client| client.send_done(result));
                 } else {
                     // TODO: Handle err (not just debug statement)
                     let (retcode, opt) = self.radio.transmit(frame);
@@ -185,6 +186,7 @@ impl<'a> TxClient for IP6SendStruct<'a> {
             },
             Err((retcode, buf)) => {
                 debug!("ERROR!: {:?}", retcode);
+                self.tx_buf.replace(buf);
             },
         }
         self.ip6_packet.replace(ip6_packet);
@@ -192,7 +194,7 @@ impl<'a> TxClient for IP6SendStruct<'a> {
 
     }
 }
-
+/*
 impl<'a> SixlowpanTxClient for IP6SendStruct<'a> {
     fn send_done(&self, buf: &'static mut [u8], _acked: bool, result: ReturnCode) {
         debug!("Send_done called!");
@@ -209,3 +211,4 @@ impl<'a> SixlowpanTxClient for IP6SendStruct<'a> {
         }
     }
 }
+*/
