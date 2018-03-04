@@ -152,11 +152,11 @@ impl<'a> TxClient for IP6SendStruct<'a> {
                 //TODO: Remove this one link layer is fixed
                 let mut i = 0;
                 let mut array: [u8; 100] = [0x0; 100]; //used in introducing delay between frames
-                while(i < 10000000) {
+                while(i < 1000000) {
                     array[i % 100] = (i % 100) as u8;
                     i = i + 1;
-                    if (i % 1000000 == 0) {
-                        debug!("Delay, step {:?}", i / 1000000);
+                    if (i % 100000 == 0) {
+                        debug!("Delay, step {:?}", i / 100000);
                     }
                 }
         //TODO: Handle sending ACKs        

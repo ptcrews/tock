@@ -54,7 +54,6 @@ pub const SRC_ADDR: IPAddr = IPAddr([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0
                                      0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f]);
 pub const DST_ADDR: IPAddr = IPAddr([0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29,
                                      0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f]);
-//TODO: No longer pass MAC addresses to 6lowpan code, so these values arent used rn
 pub const PAYLOAD_LEN: usize = 200;
 
 /* 6LoWPAN Constants */
@@ -204,7 +203,6 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
     fn run_test(&self, test_id: usize) {
         debug!("Running test {}:", test_id);
         match test_id {
-            // Change TF compression
             0 => self.ipv6_send_packet_test(),
             1 => self.ipv6_send_packet_test(),
             _ => {}
@@ -224,69 +222,11 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
     fn send_next(&self) {
         //Insert code to send UDP PAYLOAD here.
         let mut dst_addr: IPAddr = IPAddr::new();
-        dst_addr.set_unicast_link_local();
         let src_port: u16 = 12321;
         let dst_port: u16 = 32123;
         
-        unsafe {self.udp_sender.send_to(dst_addr, src_port, dst_port, &UDP_PAYLOAD)};
+        unsafe {self.udp_sender.send_to(DST_ADDR, src_port, dst_port, &UDP_PAYLOAD)};
 
-        //Initial test: construct packet to send via sixlowpan TxState:
-
-    // Following code initializes an IP6Packet using the global UDP_DGRAM buffer as the payload
-       /* let mut udp_hdr: UDPHeader = UDPHeader {
-            src_port: 0,
-            dst_port: 0,
-            len: 0,
-            cksum: 0, 
-        };
-        udp_hdr.set_src_port(src_port);
-        udp_hdr.set_dst_port(dst_port);
-        udp_hdr.set_len(udp_len);
-        //checksum is calculated and set later
-
-        let mut ip6_hdr: IP6Header = IP6Header::new();
-        ip6_hdr.set_next_header(ip6_nh::UDP); 
-        ip6_hdr.set_payload_len(PAYLOAD_LEN as u16 + 8);
-        ip6_hdr.src_addr = SRC_ADDR;
-        ip6_hdr.dst_addr = DST_ADDR;
-
-        let tr_hdr: TransportHeader = TransportHeader::UDP(udp_hdr);
-        unsafe {
-            let ip_pyld: IPPayload = IPPayload {
-                header: tr_hdr,
-                payload: &mut UDP_PAYLOAD,
-            };
-        
-            let mut ip6_dg: IP6Packet = IP6Packet {
-                header: ip6_hdr,
-                payload: ip_pyld,
-            };
-
-            ip6_dg.set_transpo_cksum(); //calculates and sets UDP cksum
-            debug!("About to send a fragment");
-            let next_frame = self.sixlowpan_tx.next_fragment(&ip6_dg, &mut RF233_BUF, self.radio);
- 
-            let result = match next_frame {
-                Ok((is_done, frame)) => {
-                    if is_done {
-                        //self.tx_buf.replace(frame.into_buf());
-                        //self.send_completed(ReturnCode::SUCCESS);
-                        debug!("Done already??");
-                    } else {
-                        self.radio.transmit(frame);
-                    }
-    //                (ReturnCode::SUCCESS, is_done)
-                },
-                Err((retcode, buf)) => {
-                    debug!("Error on next fragment call");
-    //                self.tx_buf.replace(buf);
-    //                self.send_completed(ReturnCode::FAIL);
-    //                (ReturnCode::FAIL, false)
-                },
-            };
-
-        } */ 
-        
     }
 }
 
