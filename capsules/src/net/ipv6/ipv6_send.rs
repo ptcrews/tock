@@ -159,7 +159,7 @@ impl<'a> TxClient for IP6SendStruct<'a> {
                         debug!("Delay, step {:?}", i / 1000000);
                     }
                 }
-                
+        //TODO: Handle sending ACKs        
         //self.send_next(tx_buf);
         let ip6_packet = self.ip6_packet.take().unwrap();
         match self.sixlowpan.next_fragment(ip6_packet,
@@ -169,7 +169,8 @@ impl<'a> TxClient for IP6SendStruct<'a> {
                 //TODO: Fix ordering so that debug output does not indicate extra frame sent
                 debug!("Sent frame!");
                 if is_done {
-                    debug!("Sent packet!");
+                    self.tx_buf.replace(frame.into_buf());
+                    self.client.get().map(|client| client.send_done(result));
                 } else {
                     // TODO: Handle err (not just debug statement)
                     let (retcode, opt) = self.radio.transmit(frame);
@@ -185,6 +186,7 @@ impl<'a> TxClient for IP6SendStruct<'a> {
             },
             Err((retcode, buf)) => {
                 debug!("ERROR!: {:?}", retcode);
+                self.tx_buf.replace(buf);
             },
         }
         self.ip6_packet.replace(ip6_packet);
@@ -192,7 +194,7 @@ impl<'a> TxClient for IP6SendStruct<'a> {
 
     }
 }
-
+/*
 impl<'a> SixlowpanTxClient for IP6SendStruct<'a> {
     fn send_done(&self, buf: &'static mut [u8], _acked: bool, result: ReturnCode) {
         debug!("Send_done called!");
@@ -209,3 +211,4 @@ impl<'a> SixlowpanTxClient for IP6SendStruct<'a> {
         }
     }
 }
+*/

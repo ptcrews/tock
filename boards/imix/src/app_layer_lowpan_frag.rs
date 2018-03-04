@@ -34,7 +34,7 @@ use capsules::net::ieee802154::MacAddress;
 use capsules::net::ip_utils::{IP6Header, IPAddr, ip6_nh};
 use capsules::net::ip::{IP6Packet, TransportHeader, IPPayload};
 use capsules::net::udp::udp::{UDPHeader};
-use capsules::net::udp::udp_send::{UDPSendStruct};
+use capsules::net::udp::udp_send::{UDPSendStruct, UDPSendClient};
 use capsules::net::sixlowpan::{Sixlowpan, SixlowpanState, TxState, SixlowpanTxClient};
 use capsules::net::sixlowpan_compression;
 use capsules::net::sixlowpan_compression::Context;
@@ -137,12 +137,27 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
                         VirtualMuxAlarm::new(mux_alarm),
                         ip6_sender)
     );
-
+    ip6_sender.set_client(&app_lowpan_frag_test.udp_sender); //TODO: Shouldn't this happen automatically
+                                                            // when a new udp_sender is created instead?
+    app_lowpan_frag_test.udp_sender.set_client(app_lowpan_frag_test);
     app_lowpan_frag_test.alarm.set_client(app_lowpan_frag_test);
 
     
 
     app_lowpan_frag_test
+}
+
+impl<'a, A: time::Alarm> capsules::net::udp::udp_send::UDPSendClient for LowpanTest<'a, A> {
+    fn send_done(&self, result: ReturnCode) {
+        match result {
+            ReturnCode::SUCCESS => {
+                debug!("Packet Sent!");
+                self.schedule_next();
+
+            },
+            _ => debug!("Failed to send UDP Packet!"),
+        }
+    }
 }
 
 impl<'a, A: time::Alarm> LowpanTest<'a, A> {
