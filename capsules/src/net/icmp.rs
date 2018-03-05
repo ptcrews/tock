@@ -2,6 +2,7 @@
 //!
 //! - Author: Conor McAvity <cmcavity@stanford.edu>
 
+use core::cell::Cell;
 use net::ip_utils::IPAddr;
 use net::ip::TransportHeader;
 use net::ipv6::ipv6_send::{IP6SendStruct, IP6Client};
@@ -17,16 +18,18 @@ pub struct ICMPHeader {
     pub options: ICMPHeaderOptions,
 }
 
+#[derive(Copy, Clone)]
 pub enum ICMPHeaderOptions {
     Type0 { id: u16, seqno: u16 },
-    Type3 { _unused: u16, next_mtu: u16 },
+    Type3 { unused: u16, next_mtu: u16 },
 }
 
 impl ICMPHeader {
     pub fn new(hdr_type: u8) -> ICMPHeader {
         let options = match hdr_type {
-            0 => Type0 { 0, 0 },
-            3 => Type3 { 0, 0 },
+            0 => ICMPHeaderOptions::Type0 { id: 0, seqno: 0 },
+            3 => ICMPHeaderOptions::Type3 { unused: 0, next_mtu: 0 },
+            _ => ICMPHeaderOptions::Type0 { id: 0, seqno: 0 },
         };
         
         ICMPHeader {
@@ -38,8 +41,9 @@ impl ICMPHeader {
 
     pub fn set_type(&mut self, hdr_type: u8) {
         match hdr_type {
-            0 => set_options(Type0 { 0, 0 }),
-            3 => set_options(Type3 { 0, 0 }),
+            0 => self.set_options(ICMPHeaderOptions::Type0 { id: 0, seqno: 0 }),
+            3 => self.set_options(ICMPHeaderOptions::Type3 { unused: 0, next_mtu: 0 }),
+            _ => (),
         }
     }
 
@@ -58,7 +62,7 @@ impl ICMPHeader {
     pub fn get_type(&self) -> u8 {
         match self.options {
             ICMPHeaderOptions::Type0 { id, seqno } => 0,
-            ICMPHeaderOptions::Type3 { _unused, next_mtu } => 3,
+            ICMPHeaderOptions::Type3 { unused, next_mtu } => 3,
         }
     }
 
@@ -86,8 +90,8 @@ impl ICMPHeader {
                 off = enc_consume!(buf, off; encode_u16, id);
                 off = enc_consume!(buf, off; encode_u16, seqno);
              },
-             ICMPHeaderOptions::Type3 { _unused, next_mtu } => {
-                off = enc_consume!(buf, off; encode_u16, 0);
+             ICMPHeaderOptions::Type3 { unused, next_mtu } => {
+                off = enc_consume!(buf, off; encode_u16, unused);
                 off = enc_consume!(buf, off; encode_u16, next_mtu);
              }
         }
@@ -119,13 +123,15 @@ impl ICMPHeader {
                 icmp_header.set_options(ICMPHeaderOptions::Type0 { id, seqno });
             },
             3 => {
-                let (off, _unused) = dec_try!(buf, off; decode_u16);
+                let (off, unused) = dec_try!(buf, off; decode_u16);
+                let unused = u16::from_be(unused);
                     
                 let (off, next_mtu) = dec_try!(buf, off; decode_u16);
                 let next_mtu = u16::from_be(next_mtu);
 
-                icmp_header.set_options(ICMPHeaderOptions::Type3 { 0, next_mtu });
+                icmp_header.set_options(ICMPHeaderOptions::Type3 { unused: unused, next_mtu: next_mtu });
             },
+            _ => (),
         }
 
         stream_done!(off, icmp_header);

@@ -13,3 +13,4 @@ pub mod ip;
 pub mod ipv6;
 pub mod udp;
 pub mod tcp;
+pub mod icmp;
