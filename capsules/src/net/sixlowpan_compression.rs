@@ -4,8 +4,8 @@
 use core::mem;
 use core::result::Result;
 use net::ieee802154::MacAddress;
-use net::ipv6::ipv6::IP6Packet;
-use net::ipv6::ip_utils::{IP6Header, IPAddr, ip6_nh};
+use net::ipv6::ipv6::{IP6Packet, IP6Header};
+use net::ipv6::ip_utils::{IPAddr, ip6_nh};
 use net::udp::udp::UDPHeader;
 use net::util;
 use net::util::{slice_to_u16, u16_to_slice};

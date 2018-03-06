@@ -1,10 +1,10 @@
-use net::ipv6::ip_utils::{IPAddr, IP6Header, compute_udp_checksum, ip6_nh};
+use net::ipv6::ip_utils::{IPAddr, compute_udp_checksum, ip6_nh};
 use ieee802154::mac::{Frame, Mac, TxClient};
 use net::ieee802154::MacAddress;
 use net::udp::udp::{UDPHeader};
 use net::tcp::{TCPHeader};
 use net::sixlowpan::{TxState, SixlowpanTxClient};
-use net::ipv6::ipv6::{IP6Packet, TransportHeader};
+use net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader};
 use net::ipv6::ip_utils;
 use kernel::ReturnCode;
 use kernel::common::take_cell::TakeCell;
@@ -16,7 +16,7 @@ use net::stream::SResult;
 
 // TODO: Make not constants
 const SRC_MAC_ADDR: MacAddress = MacAddress::Short(0xf00f);
-const DST_MAC_ADDR: MacAddress = MacAddress::Short(0xf00f);
+const DST_MAC_ADDR: MacAddress = MacAddress::Short(0xf00e);
 
 pub trait IP6Send {
     fn send_to(&self, dest: IPAddr, ip6_packet: IP6Packet); //Convenience fn, sets dest addr, sends
@@ -43,9 +43,7 @@ impl<'a> IP6SendStruct<'a> {
     pub fn new(ip6_packet: &'static mut IP6Packet<'static>,
                tx_buf: &'static mut [u8],
                sixlowpan: TxState<'a>,
-               radio: &'a Mac<'a>//, //Edit by Hudson bc of circular construction
-               //client: &'a IP6Client
-                                    ) -> IP6SendStruct<'a> {
+               radio: &'a Mac<'a>) -> IP6SendStruct<'a> {
         IP6SendStruct {
             ip6_packet: TakeCell::new(ip6_packet),
             src_addr: Cell::new(IPAddr::new()),
@@ -159,8 +157,9 @@ impl<'a> TxClient for IP6SendStruct<'a> {
                         debug!("Delay, step {:?}", i / 100000);
                     }
                 }
-        //TODO: Handle sending ACKs        
+        //TODO: Handle sending link layer ACKs        
         //self.send_next(tx_buf);
+        //TODO: fix unwrap
         let ip6_packet = self.ip6_packet.take().unwrap();
         match self.sixlowpan.next_fragment(ip6_packet,
                                               tx_buf,
@@ -190,25 +189,5 @@ impl<'a> TxClient for IP6SendStruct<'a> {
             },
         }
         self.ip6_packet.replace(ip6_packet);
-
-
     }
 }
-/*
-impl<'a> SixlowpanTxClient for IP6SendStruct<'a> {
-    fn send_done(&self, buf: &'static mut [u8], _acked: bool, result: ReturnCode) {
-        debug!("Send_done called!");
-        self.tx_buf.replace(buf);
-        if result != ReturnCode::SUCCESS {
-            debug!("RetCode not success");
-            self.send_completed(result);
-        }
-
-        let (result, completed) = self.send_next_fragment();
-        if completed || result != ReturnCode::SUCCESS {
-            debug!("Either not success or completed!");
-            self.send_completed(result);
-        }
-    }
-}
-*/

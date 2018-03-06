@@ -1,5 +1,5 @@
-use net::ipv6::ip_utils::{IPAddr, IP6Header, ip6_nh};
-use net::ipv6::ipv6::{IPPayload, TransportHeader, IP6Packet};
+use net::ipv6::ip_utils::{IPAddr, ip6_nh};
+use net::ipv6::ipv6::{IPPayload, IP6Header, TransportHeader, IP6Packet};
 use net::ipv6::ipv6_send::{IP6SendStruct, IP6Client};
 use net::udp::udp::UDPHeader;
 use ieee802154::mac::Frame;

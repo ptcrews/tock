@@ -2,8 +2,8 @@
    layer in the Tock Networking stack. This networking stack is explained more
    in depth in the Thread_Stack_Design.txt document. */
 
-use net::ipv6::ip_utils::{IPAddr, IP6Header, ip6_nh};
-use net::ipv6::ipv6::{IPPayload, TransportHeader, IP6Packet};
+use net::ipv6::ip_utils::{IPAddr,  ip6_nh};
+use net::ipv6::ipv6::{IPPayload, IP6Header, TransportHeader, IP6Packet};
 use net::ipv6::ipv6_send::{IP6SendStruct, IP6Client};
 use ieee802154::mac::Frame;
 use net::stream::{decode_u16, decode_u8, decode_bytes};
