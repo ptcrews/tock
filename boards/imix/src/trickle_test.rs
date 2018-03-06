@@ -23,7 +23,7 @@ const MAGIC_TRICKLE_NUMBER: u8 = 0xf1;
 const K: usize = 1;
 const I_MIN: usize = 1;
 const I_MAX: usize = 8; // Number of doublings of I_MIN
-const INITIAL_VALUE: u8 = 0x13;
+const INITIAL_VALUE: u8 = 0x15;
 
 const DST_PAN_ADDR: PanID = 0xABCD;
 const SRC_PAN_ADDR: PanID = 0xABCD;
@@ -111,7 +111,16 @@ impl<'a> TrickleTest<'a> {
     }
 
     fn is_packet_consistent(&self, buf: &[u8]) -> bool {
-        self.value.get() == buf[1]
+        if self.value.get() == buf[1] {
+            true
+        } else {
+            debug!("Inconsistent transmission");
+            if self.value.get() < buf[1] {
+                debug!("Updating to: {}", buf[1]);
+                self.value.set(buf[1]);
+            }
+            false
+        }
     }
 }
 
