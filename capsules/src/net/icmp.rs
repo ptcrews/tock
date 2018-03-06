@@ -24,12 +24,17 @@ pub enum ICMPHeaderOptions {
     Type3 { unused: u16, next_mtu: u16 },
 }
 
+#[derive(Copy, Clone)]
+pub enum ICMPType {
+    Type0,
+    Type3,
+}
+
 impl ICMPHeader {
-    pub fn new(hdr_type: u8) -> ICMPHeader {
-        let options = match hdr_type {
-            0 => ICMPHeaderOptions::Type0 { id: 0, seqno: 0 },
-            3 => ICMPHeaderOptions::Type3 { unused: 0, next_mtu: 0 },
-            _ => ICMPHeaderOptions::Type0 { id: 0, seqno: 0 },
+    pub fn new(icmp_type: ICMPType) -> ICMPHeader {
+        let options = match icmp_type {
+            ICMPType::Type0 => ICMPHeaderOptions::Type0 { id: 0, seqno: 0 },
+            ICMPType::Type3 => ICMPHeaderOptions::Type3 { unused: 0, next_mtu: 0 },
         };
         
         ICMPHeader {
@@ -39,11 +44,18 @@ impl ICMPHeader {
         }
     }
 
-    pub fn set_type(&mut self, hdr_type: u8) {
-        match hdr_type {
-            0 => self.set_options(ICMPHeaderOptions::Type0 { id: 0, seqno: 0 }),
-            3 => self.set_options(ICMPHeaderOptions::Type3 { unused: 0, next_mtu: 0 }),
-            _ => (),
+    pub fn int_to_type(num: u8) -> Option<ICMPType> {
+        match num {
+            0 => Some(ICMPType::Type0),
+            3 => Some(ICMPType::Type3),
+            _ => None,
+        }
+    }
+
+    pub fn set_type(&mut self, icmp_type: ICMPType) {
+        match icmp_type {
+            ICMPType::Type0 => self.set_options(ICMPHeaderOptions::Type0 { id: 0, seqno: 0 }),
+            ICMPType::Type3 => self.set_options(ICMPHeaderOptions::Type3 { unused: 0, next_mtu: 0 }),
         }
     }
 
@@ -59,10 +71,17 @@ impl ICMPHeader {
         self.options = options;
     }
 
-    pub fn get_type(&self) -> u8 {
+    pub fn get_type(&self) -> ICMPType {
         match self.options {
-            ICMPHeaderOptions::Type0 { id, seqno } => 0,
-            ICMPHeaderOptions::Type3 { unused, next_mtu } => 3,
+            ICMPHeaderOptions::Type0 { id, seqno } => ICMPType::Type0,
+            ICMPHeaderOptions::Type3 { unused, next_mtu } => ICMPType::Type3,
+        }
+    }
+
+    pub fn get_type_as_int(&self) -> u8 {
+        match self.get_type() {
+            ICMPType::Type0 => 0,
+            ICMPType::Type3 => 3,
         }
     }
 
@@ -81,7 +100,7 @@ impl ICMPHeader {
     pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
         let mut off = offset;  
 
-        off = enc_consume!(buf, off; encode_u8, self.get_type());
+        off = enc_consume!(buf, off; encode_u8, self.get_type_as_int());
         off = enc_consume!(buf, off; encode_u8, self.code);
         off = enc_consume!(buf, off; encode_u16, self.cksum);
 
@@ -102,18 +121,27 @@ impl ICMPHeader {
     pub fn decode(buf: &[u8]) -> SResult<ICMPHeader> {
         let off = 0;
         
-        let (off, hdr_type) = dec_try!(buf, off; decode_u8);
-        
-        let mut icmp_header = Self::new(hdr_type);
+        let (off, icmp_type) = dec_try!(buf, off; decode_u8);
+       
+        let type_option = ICMPHeader::int_to_type(icmp_type);
+       
+        // placeholder value
+        let mut icmp_type = ICMPType::Type0;
+
+        match type_option {
+            Some(type_val) => icmp_type = type_val,
+            None => return SResult::Error(()),
+        }
+
+        let mut icmp_header = Self::new(icmp_type);
         
         let (off, code) = dec_try!(buf, off; decode_u8);
         icmp_header.code = code; 
-        
         let (off, cksum) = dec_try!(buf, off; decode_u16);
         icmp_header.cksum = u16::from_be(cksum);
        
-        match hdr_type {
-            0 => {
+        match icmp_type {
+            ICMPType::Type0 => {
                 let (off, id) = dec_try!(buf, off; decode_u16);
                 let id = u16::from_be(id);
                     
@@ -122,7 +150,7 @@ impl ICMPHeader {
 
                 icmp_header.set_options(ICMPHeaderOptions::Type0 { id, seqno });
             },
-            3 => {
+            ICMPType::Type3 => {
                 let (off, unused) = dec_try!(buf, off; decode_u16);
                 let unused = u16::from_be(unused);
                     
@@ -131,7 +159,6 @@ impl ICMPHeader {
 
                 icmp_header.set_options(ICMPHeaderOptions::Type3 { unused: unused, next_mtu: next_mtu });
             },
-            _ => (),
         }
 
         stream_done!(off, icmp_header);
