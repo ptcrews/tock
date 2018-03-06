@@ -44,14 +44,6 @@ impl ICMPHeader {
         }
     }
 
-    pub fn int_to_type(num: u8) -> Option<ICMPType> {
-        match num {
-            0 => Some(ICMPType::Type0),
-            3 => Some(ICMPType::Type3),
-            _ => None,
-        }
-    }
-
     pub fn set_type(&mut self, icmp_type: ICMPType) {
         match icmp_type {
             ICMPType::Type0 => self.set_options(ICMPHeaderOptions::Type0 { id: 0, seqno: 0 }),
@@ -121,16 +113,15 @@ impl ICMPHeader {
     pub fn decode(buf: &[u8]) -> SResult<ICMPHeader> {
         let off = 0;
         
-        let (off, icmp_type) = dec_try!(buf, off; decode_u8);
-       
-        let type_option = ICMPHeader::int_to_type(icmp_type);
-       
+        let (off, type_num) = dec_try!(buf, off; decode_u8);
+        
         // placeholder value
         let mut icmp_type = ICMPType::Type0;
 
-        match type_option {
-            Some(type_val) => icmp_type = type_val,
-            None => return SResult::Error(()),
+        match type_num {
+            0 => icmp_type = ICMPType::Type0,
+            3 => icmp_type = ICMPType::Type3,
+            _ => return SResult::Error(()),
         }
 
         let mut icmp_header = Self::new(icmp_type);
@@ -144,19 +135,15 @@ impl ICMPHeader {
             ICMPType::Type0 => {
                 let (off, id) = dec_try!(buf, off; decode_u16);
                 let id = u16::from_be(id);
-                    
                 let (off, seqno) = dec_try!(buf, off; decode_u16);
                 let seqno = u16::from_be(seqno);
-
                 icmp_header.set_options(ICMPHeaderOptions::Type0 { id, seqno });
             },
             ICMPType::Type3 => {
                 let (off, unused) = dec_try!(buf, off; decode_u16);
                 let unused = u16::from_be(unused);
-                    
                 let (off, next_mtu) = dec_try!(buf, off; decode_u16);
                 let next_mtu = u16::from_be(next_mtu);
-
                 icmp_header.set_options(ICMPHeaderOptions::Type3 { unused: unused, next_mtu: next_mtu });
             },
         }
