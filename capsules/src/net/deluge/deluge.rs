@@ -168,20 +168,20 @@ pub struct DelugeData<'a, A: time::Alarm + 'a> {
     last_page_req_time: Cell<usize>,
     data_packet_recv_time: Cell<usize>,
 
-    program_state: &'a DelugeProgramState,
+    program_state: &'a DelugeProgramState<'a>,
     state: Cell<DelugeState>,
 
     // Other
-    deluge_transmit_layer: &'a DelugeTransmit,
+    deluge_transmit_layer: &'a DelugeTransmit<'a>,
     trickle: &'a Trickle<'a>,
-    alarm: &'a A,
+    alarm: A,
 }
 
 impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
-    pub fn new(program_state: &'a DelugeProgramState,
-               transmit_layer: &'a DelugeTransmit,
+    pub fn new(program_state: &'a DelugeProgramState<'a>,
+               transmit_layer: &'a DelugeTransmit<'a>,
                trickle: &'a Trickle<'a>,
-               alarm: &'a A) -> DelugeData<'a, A> {
+               alarm: A) -> DelugeData<'a, A> {
         DelugeData{
             received_old_v: Cell::new(false),
             obj_update_count: Cell::new(0),

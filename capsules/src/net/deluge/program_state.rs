@@ -3,19 +3,20 @@ use kernel::common::take_cell::TakeCell;
 
 pub trait ProgramStateClient {
     fn get_next_page(&self);
-    fn get_page_num(&self, page_num: usize) -> &mut [u8];
+    fn get_page(&self, page_num: usize) -> &mut [u8];
     fn page_completed(&self, completed_page: &mut [u8]);
 }
 
-pub trait DelugeProgramState {
+pub trait DelugeProgramState<'a> {
     fn receive_packet(&self, version: usize, page_num: usize, packet_num: usize, payload: &[u8]) -> bool;
     fn current_page_number(&self) -> usize;
     fn current_version_number(&self) -> usize;
     fn current_packet_number(&self) -> usize;
     fn get_requested_packet(&self, version: usize, page_num: usize, packet_num: usize, buf: &mut [u8]) -> bool;
+    fn set_client(&self, client: &'a ProgramStateClient);
 }
 
-const PAGE_SIZE: usize = 512;
+pub const PAGE_SIZE: usize = 512;
 pub const PACKET_SIZE: usize = 64;
 //const BIT_VECTOR_SIZE: usize = (PAGE_SIZE/PACKET_SIZE)/8;
 
@@ -35,7 +36,7 @@ pub struct ProgramState<'a> {
     rx_page_num: Cell<usize>,       // Also largest page num ready for transfer
     rx_page: TakeCell<'static, [u8; PAGE_SIZE]>,  // Page
 
-    client: &'a ProgramStateClient,
+    client: Cell<Option<&'a ProgramStateClient>>,
 
 }
 
@@ -44,8 +45,7 @@ impl<'a> ProgramState<'a> {
     pub fn new(unique_id: usize,
                page_len: usize,
                tx_page: &'static mut [u8; PAGE_SIZE],
-               rx_page: &'static mut [u8; PAGE_SIZE],
-               client: &'a ProgramStateClient) -> ProgramState<'a> {
+               rx_page: &'static mut [u8; PAGE_SIZE]) -> ProgramState<'a> {
         ProgramState {
             unique_id: unique_id,
             version: Cell::new(0),
@@ -59,12 +59,12 @@ impl<'a> ProgramState<'a> {
             rx_page_num: Cell::new(0),
             rx_page: TakeCell::new(rx_page),
 
-            client: client,
+            client: Cell::new(None),
         }
     }
 }
 
-impl<'a> DelugeProgramState for ProgramState<'a> {
+impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
     fn receive_packet(&self, version: usize, page_num: usize, packet_num: usize, payload: &[u8]) -> bool {
         // If we receive a data packet with a greater version than us and it is
         // the first page, reset our reception state and start receiving the
@@ -118,6 +118,7 @@ impl<'a> DelugeProgramState for ProgramState<'a> {
         }
         if page_num != self.tx_page_num.get() {
             // TODO: Load page
+            //client.get_page(page_num);
         }
         // Check for specific length
         let offset = packet_num * PACKET_SIZE;
@@ -126,5 +127,9 @@ impl<'a> DelugeProgramState for ProgramState<'a> {
         }
         self.tx_page.map(|tx_page| buf.copy_from_slice(&tx_page[offset..offset+PACKET_SIZE]));
         true
+    }
+
+    fn set_client(&self, client: &'a ProgramStateClient) {
+        self.client.set(Some(client));
     }
 }
