@@ -464,12 +464,12 @@ pub unsafe fn reset_handler() {
             capsules::usbc_client::Client<'static, sam4l::usbc::Usbc<'static>>>,
         capsules::usb_user::UsbSyscallDriver::new(
             usb_client, kernel::Grant::create()));
-/*
-    let lowpan_frag_test = lowpan_frag_dummy::initialize_all(radio_mac as &'static Mac,
+
+/*    let lowpan_frag_test = lowpan_frag_dummy::initialize_all(radio_mac as &'static Mac,
                                                           mux_alarm as &'static
                                                              MuxAlarm<'static,
                                                                  sam4l::ast::Ast>);
-    radio_mac.set_transmit_client(lowpan_frag_test); */ //Uncomment for 6lowpan frag test
+    radio_mac.set_transmit_client(lowpan_frag_test);*/  //Uncomment for 6lowpan frag test
 
     let app_lowpan_frag_test = app_layer_lowpan_frag::initialize_all(radio_mac as &'static Mac,
                                                           mux_alarm as &'static

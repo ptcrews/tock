@@ -1,11 +1,11 @@
-use net::ip_utils::{IPAddr, IP6Header, compute_udp_checksum, ip6_nh};
+use net::ipv6::ip_utils::{IPAddr, IP6Header, compute_udp_checksum, ip6_nh};
 use ieee802154::mac::{Frame, Mac, TxClient};
 use net::ieee802154::MacAddress;
 use net::udp::udp::{UDPHeader};
 use net::tcp::{TCPHeader};
 use net::sixlowpan::{TxState, SixlowpanTxClient};
-use net::ip::{IP6Packet, TransportHeader};
-use net::ip_utils;
+use net::ipv6::ipv6::{IP6Packet, TransportHeader};
+use net::ipv6::ip_utils;
 use kernel::ReturnCode;
 use kernel::common::take_cell::TakeCell;
 use core::cell::Cell;
