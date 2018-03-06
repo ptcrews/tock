@@ -30,7 +30,8 @@ impl<'a> ICMPSendStruct<'a> {
         self.client.set(Some(client));
     }
 
-    pub fn send(&self, dest: IPAddr, icmp_header: ICMPHeader, buf: &'a [u8]) -> ReturnCode {
+    pub fn send(&self, dest: IPAddr, icmp_header: ICMPHeader, buf: &'a [u8]) 
+            -> ReturnCode {
         let transport_header = TransportHeader::ICMP(icmp_header);
         self.ip_send_struct.send_to(dest, transport_header, buf)
     }

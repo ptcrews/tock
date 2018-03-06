@@ -29,7 +29,8 @@ impl ICMPHeader {
     pub fn new(icmp_type: ICMPType) -> ICMPHeader {
         let options = match icmp_type {
             ICMPType::Type0 => ICMPHeaderOptions::Type0 { id: 0, seqno: 0 },
-            ICMPType::Type3 => ICMPHeaderOptions::Type3 { unused: 0, next_mtu: 0 },
+            ICMPType::Type3 => ICMPHeaderOptions::Type3 { unused: 0, 
+                next_mtu: 0 },
         };
         
         ICMPHeader {
@@ -41,8 +42,10 @@ impl ICMPHeader {
 
     pub fn set_type(&mut self, icmp_type: ICMPType) {
         match icmp_type {
-            ICMPType::Type0 => self.set_options(ICMPHeaderOptions::Type0 { id: 0, seqno: 0 }),
-            ICMPType::Type3 => self.set_options(ICMPHeaderOptions::Type3 { unused: 0, next_mtu: 0 }),
+            ICMPType::Type0 => self.set_options(ICMPHeaderOptions::Type0 { 
+                id: 0, seqno: 0 }),
+            ICMPType::Type3 => self.set_options(ICMPHeaderOptions::Type3 { 
+                unused: 0, next_mtu: 0 }),
         }
     }
 
@@ -122,9 +125,9 @@ impl ICMPHeader {
         let mut icmp_header = Self::new(icmp_type);
         
         let (off, code) = dec_try!(buf, off; decode_u8);
-        icmp_header.code = code; 
+        icmp_header.set_code(code); 
         let (off, cksum) = dec_try!(buf, off; decode_u16);
-        icmp_header.cksum = u16::from_be(cksum);
+        icmp_header.set_cksum(u16::from_be(cksum));
        
         match icmp_type {
             ICMPType::Type0 => {
@@ -132,14 +135,16 @@ impl ICMPHeader {
                 let id = u16::from_be(id);
                 let (off, seqno) = dec_try!(buf, off; decode_u16);
                 let seqno = u16::from_be(seqno);
-                icmp_header.set_options(ICMPHeaderOptions::Type0 { id, seqno });
+                icmp_header.set_options(ICMPHeaderOptions::Type0 { id, 
+                    seqno });
             },
             ICMPType::Type3 => {
                 let (off, unused) = dec_try!(buf, off; decode_u16);
                 let unused = u16::from_be(unused);
                 let (off, next_mtu) = dec_try!(buf, off; decode_u16);
                 let next_mtu = u16::from_be(next_mtu);
-                icmp_header.set_options(ICMPHeaderOptions::Type3 { unused: unused, next_mtu: next_mtu });
+                icmp_header.set_options(ICMPHeaderOptions::Type3 { unused, 
+                    next_mtu });
             },
         }
 
