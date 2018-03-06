@@ -198,6 +198,10 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
         }
     }
 
+    pub fn init(&self) {
+        self.trickle.initialize();
+    }
+
     fn transition_state(&self, new_state: DelugeState) {
         self.state.set(new_state);
         // TODO: Do anything here?

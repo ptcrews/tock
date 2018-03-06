@@ -37,10 +37,17 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
                              mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
         -> &'static TrickleTest<'static> {
 
+    let trickle_alarm = static_init!(
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        VirtualMuxAlarm::new(mux_alarm)
+    );
+
     let trickle_data = static_init!(
         TrickleData<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
-        TrickleData::new(&sam4l::trng::TRNG, VirtualMuxAlarm::new(mux_alarm))
+        TrickleData::new(&sam4l::trng::TRNG, trickle_alarm)
     );
+    sam4l::trng::TRNG.set_client(trickle_data);
+    trickle_alarm.set_client(trickle_data);
 
     let trickle_test = static_init!(
         TrickleTest<'static>,
@@ -48,6 +55,8 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     );
 
     trickle_data.set_client(trickle_test);
+    radio_mac.set_receive_client(trickle_test);
+    radio_mac.set_transmit_client(trickle_test);
     trickle_test
 }
 
@@ -67,6 +76,10 @@ impl<'a> TrickleTest<'a> {
     }
 
     fn transmit_packet(&self) -> ReturnCode {
+        if self.tx_buf.is_none() {
+            return ReturnCode::ENOMEM;
+        }
+        debug!("Transmit packet!");
         let buf: [u8; 2] = [MAGIC_TRICKLE_NUMBER, self.value.get()];
         match self.radio.prepare_data_frame(
             self.tx_buf.take().unwrap(),
@@ -114,8 +127,11 @@ impl<'a> TrickleClient for TrickleTest<'a> {
 
 impl<'a> RxClient for TrickleTest<'a> {
     fn receive<'b>(&self, buf: &'b [u8], header: Header<'b>, data_offset: usize, data_len: usize) {
-        if self.is_packet_valid(buf) {
-            self.trickle.received_transmission(self.is_packet_consistent(buf));
+        let buffer = &buf[data_offset..];
+        debug!("Received packet!");
+        if self.is_packet_valid(buffer) {
+            debug!("Received valid packet!");
+            self.trickle.received_transmission(self.is_packet_consistent(buffer));
         }
     }
 }

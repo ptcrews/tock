@@ -49,11 +49,11 @@ pub struct TrickleData<'a, A: time::Alarm + 'a> {
 
     client: Cell<Option<&'a TrickleClient>>,
     rng: &'a RNG,
-    clock: A,
+    clock: &'a A,
 }
 
 impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
-    pub fn new(rng: &'a RNG, clock: A) -> TrickleData<'a, A> {
+    pub fn new(rng: &'a RNG, clock: &'a A) -> TrickleData<'a, A> {
         let mut i_max_val = I_MIN;
         for _ in 0..I_MAX {
             i_max_val *= 2;
@@ -109,6 +109,7 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
         // TODO: Cancel pending alarms
         // TODO: Consider issue with overflow w/u32
         let tics = self.clock.now().wrapping_add((time as u32) * A::Frequency::frequency());
+        debug!("Timer info: {}", time);
         self.clock.set_alarm(tics);
     }
 }
@@ -133,6 +134,7 @@ impl<'a, A: time::Alarm + 'a> Trickle<'a> for TrickleData<'a, A> {
     fn initialize(&self) {
         self.i_cur.set(self.i_min.get());
         self.start_next_interval();
+        debug!("In initialize");
     }
 
     fn received_transmission(&self, is_consistent: bool) {
@@ -156,6 +158,7 @@ impl<'a, A: time::Alarm + 'a> Trickle<'a> for TrickleData<'a, A> {
 impl<'a, A: time::Alarm + 'a> time::Client for TrickleData<'a, A> {
     fn fired(&self) {
         // This happens after the timer expires
+        debug!("Trickle timer fired");
         if self.t_fired.get() {
             self.start_next_interval();
         } else {
@@ -167,8 +170,10 @@ impl<'a, A: time::Alarm + 'a> time::Client for TrickleData<'a, A> {
 impl<'a, A: time::Alarm + 'a> rng::Client for TrickleData<'a, A> {
     // TODO: Is u32 enough randomness?
     fn randomness_available(&self, randomness: &mut Iterator<Item = u32>) -> rng::Continue {
+        debug!("Randomness callback");
         match randomness.next() {
             Some(random) => {
+                debug!("Enough randomness");
                 // This should select a random time in the second half of the interval
                 let interval_offset = (random as usize % (self.i_cur.get()/2)) + self.i_cur.get()/2;
 

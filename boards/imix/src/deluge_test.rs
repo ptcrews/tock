@@ -35,10 +35,17 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 
     // Allocate DelugeData + appropriate structs
 
+    let trickle_alarm = static_init!(
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        VirtualMuxAlarm::new(mux_alarm)
+    );
+
     let trickle_data = static_init!(
         TrickleData<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
-        TrickleData::new(&sam4l::trng::TRNG, VirtualMuxAlarm::new(mux_alarm))
+        TrickleData::new(&sam4l::trng::TRNG, trickle_alarm)
     );
+    sam4l::trng::TRNG.set_client(trickle_data);
+    trickle_alarm.set_client(trickle_data);
 
     let transmit_layer = static_init!(
         DelugeTransmitLayer<'static>,
@@ -54,6 +61,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         DelugeData<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
         DelugeData::new(program_state, transmit_layer, trickle_data, VirtualMuxAlarm::new(mux_alarm))
     );
+    deluge_data.init();
     transmit_layer.set_tx_client(deluge_data);
     transmit_layer.set_rx_client(deluge_data);
     //program_state.set_client(deluge_data);
@@ -70,6 +78,10 @@ impl<'a> DelugeTest<'a> {
         DelugeTest {
             dummy_data: Cell::new(None),
         }
+    }
+
+    pub fn start(&self) {
+        //self.deluge_data.init();
     }
 }
 
