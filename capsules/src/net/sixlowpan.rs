@@ -237,7 +237,7 @@ use net::ieee802154::{PanID, MacAddress, SecurityLevel, KeyId, Header};
 use net::sixlowpan_compression;
 use net::sixlowpan_compression::{ContextStore, is_lowpan};
 use net::util::{slice_to_u16, u16_to_slice};
-use net::ip::IP6Packet;
+use net::ipv6::ipv6::IP6Packet;
 
 // Reassembly timeout in seconds
 const FRAG_TIMEOUT: u32 = 60;

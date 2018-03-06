@@ -2,7 +2,7 @@
    of the networking stack. For a full description of the networking stack on
    tock, see the Thread_Stack_Design.txt document */
 
-use net::ip_utils::{IPAddr, IP6Header, compute_udp_checksum, ip6_nh};
+use net::ipv6::ip_utils::{IPAddr, IP6Header, compute_udp_checksum, ip6_nh};
 use ieee802154::mac::{Frame, Mac};
 use net::ieee802154::MacAddress;
 use net::udp::udp::{UDPHeader};
