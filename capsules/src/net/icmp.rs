@@ -3,8 +3,8 @@
 //! - Author: Conor McAvity <cmcavity@stanford.edu>
 
 use core::cell::Cell;
-use net::ip_utils::IPAddr;
-use net::ip::TransportHeader;
+use net::ipv6::ipv6::TransportHeader;
+use net::ipv6::ip_utils::IPAddr;
 use net::ipv6::ipv6_send::{IP6SendStruct, IP6Client};
 use net::stream::{decode_u16, decode_u8};
 use net::stream::{encode_u16, encode_u8};
