@@ -64,12 +64,15 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     deluge_data.init();
     transmit_layer.set_tx_client(deluge_data);
     transmit_layer.set_rx_client(deluge_data);
-    //program_state.set_client(deluge_data);
+    radio_mac.set_receive_client(transmit_layer);
+    radio_mac.set_transmit_client(transmit_layer);
+    trickle_data.set_client(deluge_data);
 
-    static_init!(
+    let deluge_test = static_init!(
         DelugeTest<'static>,
         DelugeTest::new()
-    )
+    );
+    program_state.set_client(deluge_test);
 
 }
 
