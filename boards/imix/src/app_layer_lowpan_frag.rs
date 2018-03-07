@@ -31,8 +31,8 @@ use capsules;
 extern crate sam4l;
 use capsules::ieee802154::mac::{Mac, TxClient};
 use capsules::net::ieee802154::MacAddress;
-use capsules::net::ipv6::ip_utils::{IP6Header, IPAddr, ip6_nh};
-use capsules::net::ipv6::ipv6::{IP6Packet, TransportHeader, IPPayload};
+use capsules::net::ipv6::ip_utils::{IPAddr, ip6_nh};
+use capsules::net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader, IPPayload};
 use capsules::net::udp::udp::{UDPHeader};
 use capsules::net::udp::udp_send::{UDPSendStruct, UDPSendClient};
 use capsules::net::sixlowpan::{Sixlowpan, SixlowpanState, TxState, SixlowpanTxClient};
@@ -40,7 +40,7 @@ use capsules::net::sixlowpan_compression;
 use capsules::net::sixlowpan_compression::Context;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use core::cell::Cell;
-use capsules::net::ipv6::ipv6_send::{IP6SendStruct};
+use capsules::net::ipv6::ipv6_send::{IP6SendStruct, IP6Sender};
 
 use core::mem;
 use core::ptr;
@@ -70,18 +70,18 @@ pub static mut RF233_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_S
 
 //Use a global variable option, initialize as None, then actually initialize in initialize all
 
-pub struct LowpanTest<'a, A: time::Alarm + 'a> {
+pub struct LowpanTest<'a, A: time::Alarm + 'a, T: IP6Sender<'a> + 'a> {
     alarm: A,
     //sixlowpan_tx: TxState<'a>,
     //radio: &'a Mac<'a>,
     test_counter: Cell<usize>,
-    udp_sender: UDPSendStruct<'a>
+    udp_sender: UDPSendStruct<'a, T>
 }
 //TODO: Initialize UDP sender/send_done client in initialize all
 pub unsafe fn initialize_all(radio_mac: &'static Mac,
                       mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
         -> &'static LowpanTest<'static,
-        capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {
+        capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>, IP6SendStruct<'static>> {
 
     let sixlowpan =
         static_init!(
@@ -129,7 +129,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 
     let app_lowpan_frag_test = static_init!(
         LowpanTest<'static,
-        VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>, IP6SendStruct<'static>>,
         LowpanTest::new(
                         //sixlowpan_tx,
                         //radio_mac,
@@ -146,7 +146,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     app_lowpan_frag_test
 }
 
-impl<'a, A: time::Alarm> capsules::net::udp::udp_send::UDPSendClient for LowpanTest<'a, A> {
+impl<'a, A: time::Alarm, T: IP6Sender<'a>> capsules::net::udp::udp_send::UDPSendClient for LowpanTest<'a, A, T> {
     fn send_done(&self, result: ReturnCode) {
         match result {
             ReturnCode::SUCCESS => {
@@ -159,13 +159,13 @@ impl<'a, A: time::Alarm> capsules::net::udp::udp_send::UDPSendClient for LowpanT
     }
 }
 
-impl<'a, A: time::Alarm> LowpanTest<'a, A> {
+impl<'a, A: time::Alarm, T: IP6Sender<'a>> LowpanTest<'a, A, T> {
     pub fn new(
                //sixlowpan_tx: TxState<'a>,
                //radio: &'a Mac<'a>,
                alarm: A,
                //ip6_packet: &'static mut IP6Packet<'a>
-               ip_sender: &'a IP6SendStruct<'a>) -> LowpanTest<'a, A> {
+               ip_sender: &'a T) -> LowpanTest<'a, A, T> {
         LowpanTest {
             alarm: alarm,
             //sixlowpan_tx: sixlowpan_tx,
@@ -230,7 +230,7 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
     }
 }
 
-impl<'a, A: time::Alarm> time::Client for LowpanTest<'a, A, > {
+impl<'a, A: time::Alarm, T: IP6Sender<'a>> time::Client for LowpanTest<'a, A, T> {
     fn fired(&self) {
         self.run_test_and_increment();
     }

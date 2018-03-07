@@ -18,15 +18,24 @@ use net::stream::SResult;
 const SRC_MAC_ADDR: MacAddress = MacAddress::Short(0xf00f);
 const DST_MAC_ADDR: MacAddress = MacAddress::Short(0xf00e);
 
-pub trait IP6Send {
-    fn send_to(&self, dest: IPAddr, ip6_packet: IP6Packet); //Convenience fn, sets dest addr, sends
-    fn send(&self, ip6_packet: IP6Packet); //Length can be determined from IP6Packet
-    fn send_done(&self, ip6_packet: IP6Packet, result: ReturnCode);
-}
-
 pub trait IP6Client {
     fn send_done(&self, result: ReturnCode);
 }
+//TODO: Should we enforce that anything that implements IP6Sender
+// IP6Client as well?
+pub trait IP6Sender<'a> {
+    fn set_client(&self, client: &'a IP6Client);
+
+    fn set_addr(&self, src_addr: IPAddr);
+
+    fn set_gateway(&self, gateway: MacAddress);
+
+    fn set_header(&mut self, ip6_header: IP6Header);
+
+    fn send_to(&self, dst: IPAddr, transport_header: TransportHeader, payload: &[u8])
+        -> ReturnCode;
+}
+
 
 pub struct IP6SendStruct<'a> {
     ip6_packet: TakeCell<'static, IP6Packet<'static>>,   // We want this to be a TakeCell,
@@ -39,7 +48,42 @@ pub struct IP6SendStruct<'a> {
     client: Cell<Option<&'a IP6Client>>,
 }
 
-impl<'a> IP6SendStruct<'a> {
+impl<'a> IP6Sender<'a> for IP6SendStruct<'a> { //Public functions for this IP6Sender
+
+    fn set_client(&self, client: &'a IP6Client) {
+        self.client.set(Some(client));
+    }
+
+    fn set_addr(&self, src_addr: IPAddr) {
+        self.src_addr.set(src_addr);
+    }
+
+    fn set_gateway(&self, gateway: MacAddress) {
+        self.gateway.set(gateway);
+    }
+
+    fn set_header(&mut self, ip6_header: IP6Header) {
+        self.ip6_packet.map(|mut ip6_packet| ip6_packet.header = ip6_header);
+    }
+
+    fn send_to(&self, dst: IPAddr, transport_header: TransportHeader, payload: &[u8])
+        -> ReturnCode {
+        // TODO: Check return code
+        self.sixlowpan.init(SRC_MAC_ADDR, DST_MAC_ADDR, None);
+        self.init_packet(dst, transport_header, payload);
+        let (result, completed) = self.send_next_fragment();
+        if result != ReturnCode::SUCCESS {
+            result
+        } else {
+            if completed {
+                self.send_completed(result);
+            }
+            ReturnCode::SUCCESS
+        }
+    }
+}
+
+impl<'a> IP6SendStruct<'a> { //Private Functions for this sender
     pub fn new(ip6_packet: &'static mut IP6Packet<'static>,
                tx_buf: &'static mut [u8],
                sixlowpan: TxState<'a>,
@@ -51,24 +95,8 @@ impl<'a> IP6SendStruct<'a> {
             tx_buf: TakeCell::new(tx_buf),
             sixlowpan: sixlowpan,
             radio: radio,
-//            client: Cell::new(Some(client)),
             client: Cell::new(None), 
         }
-    }
-
-    pub fn init(&self) {
-    }
-
-    pub fn set_client(&self, client: &'a IP6Client) {
-        self.client.set(Some(client));
-    }
-
-    pub fn set_addr(&self, src_addr: IPAddr) {
-        self.src_addr.set(src_addr);
-    }
-
-    pub fn set_gateway(&self, gateway: MacAddress) {
-        self.gateway.set(gateway);
     }
 
     fn init_packet(&self,
@@ -87,27 +115,7 @@ impl<'a> IP6SendStruct<'a> {
         debug!("within map: {}", ip6_packet.header.get_next_header());
         self.ip6_packet.replace(ip6_packet);
     }
-
-    pub fn set_header(&mut self, ip6_header: IP6Header) {
-        self.ip6_packet.map(|mut ip6_packet| ip6_packet.header = ip6_header);
-    }
-
-    pub fn send_to(&self, dst: IPAddr, transport_header: TransportHeader, payload: &[u8])
-        -> ReturnCode {
-        // TODO: Check return code
-        self.sixlowpan.init(SRC_MAC_ADDR, DST_MAC_ADDR, None);
-        self.init_packet(dst, transport_header, payload);
-        let (result, completed) = self.send_next_fragment();
-        if result != ReturnCode::SUCCESS {
-            result
-        } else {
-            if completed {
-                self.send_completed(result);
-            }
-            ReturnCode::SUCCESS
-        }
-    }
-
+    
     fn send_next_fragment(&self) -> (ReturnCode, bool) {
         // TODO: Fix unwrap
         let tx_buf = self.tx_buf.take().unwrap();
