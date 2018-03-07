@@ -119,7 +119,7 @@
 // single, global object which sits between the Mac and IP layers. It receives
 // and transmits frames through the Mac layer, while reassembling or
 // fragmenting IPv6 packets via the IP layer. As a result, the `Sixlowpan`
-// struct maintains the single, global state relevent for this layer, including
+// struct maintains the single, global state relevant for this layer, including
 // a reference to the radio, the context store (for (de)compressing 6LoWPAN-
 // compressed fragments), a clock, and the upper-layer client callback.
 // Additionally, this object maintains references to a single TxState, and
