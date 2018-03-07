@@ -174,14 +174,14 @@ pub struct DelugeData<'a, A: time::Alarm + 'a> {
     // Other
     deluge_transmit_layer: &'a DelugeTransmit<'a>,
     trickle: &'a Trickle<'a>,
-    alarm: A,
+    alarm: &'a A,
 }
 
 impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
     pub fn new(program_state: &'a DelugeProgramState<'a>,
                transmit_layer: &'a DelugeTransmit<'a>,
                trickle: &'a Trickle<'a>,
-               alarm: A) -> DelugeData<'a, A> {
+               alarm: &'a A) -> DelugeData<'a, A> {
         DelugeData{
             received_old_v: Cell::new(false),
             obj_update_count: Cell::new(0),
@@ -223,10 +223,13 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
         // TODO: Multiplex based on application ID
         match packet.payload_type {
             DelugePacketType::MaintainSummary { version, page_num } => {
+                debug!("mt state MaintainSummary received");
                 // Inconsistent summary
                 if version != self.program_state.current_version_number() as u16 {
+                    debug!("cvn diff");
                     self.trickle.received_transmission(false);
                 } else if page_num > self.program_state.current_page_number() as u16 {
+                    debug!("pn diff");
 
                     // Get the current interval, then notify Trickle that
                     // we received an inconsitent transmission
@@ -238,6 +241,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                         //TODO self.transition_to_rx();
                     }
                 } else {
+                    debug!("valid txn");
                     // Transmission only consistent if v=v', y=y'
                     self.trickle.received_transmission(true);
                 }
@@ -247,6 +251,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
             // independently track the # of received object profiles versus
             // # of received summaries
             DelugePacketType::MaintainObjectProfile{ version, age_vector_size } => {
+                debug!("mt state MaintainObjectProfile received");
                 if version < self.program_state.current_version_number() as u16 {
                     self.received_old_v.set(true);
                     self.trickle.received_transmission(false);
@@ -255,9 +260,11 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                 }
             },
             DelugePacketType::RequestForData { version, page_num, packet_num } => {
+                debug!("mt state RequestForData received");
                 // TODO: Do nothing?
             },
             DelugePacketType::DataPacket { version, page_num, packet_num } => {
+                debug!("mt state DataPacket received");
                 if version < self.program_state.current_version_number() as u16 {
                     // Received inconsistent transmission
                     self.trickle.received_transmission(false);
@@ -335,6 +342,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                                          payload: &[u8]) {
         // TODO: Check for errors vs completion
         // TODO: Check CRC
+        debug!("Received data packet");
         if self.program_state.receive_packet(version as usize,
                                              page_num as usize,
                                              packet_num as usize,
@@ -346,6 +354,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
     }
 
     fn transmit_packet(&self, deluge_packet: &DelugePacket) {
+        debug!("DelugeData: Transmit packet!");
         let mut send_buf: [u8; program_state::PACKET_SIZE + MAX_HEADER_SIZE] 
             = [0; program_state::PACKET_SIZE + MAX_HEADER_SIZE];
         // TODO: Check results
@@ -356,6 +365,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
 
 impl<'a, A: time::Alarm + 'a> time::Client for DelugeData<'a, A> {
     fn fired(&self) {
+        debug!("DelugeData: Timer fired");
         // Do nothing if not in the receive state
         if self.state.get() == DelugeState::Receive {
             self.rx_state_reset_timer();
@@ -376,6 +386,7 @@ impl<'a, A: time::Alarm + 'a> TrickleClient for DelugeData<'a, A> {
     fn transmit(&self) {
         // If we are not in the Maintenance state, we don't want to transmit
         // via Trickle
+        debug!("DelugeData: Transmit callback from trickle");
         if self.state.get() != DelugeState::Maintenance {
             return;
         }
@@ -399,6 +410,7 @@ impl<'a, A: time::Alarm + 'a> TrickleClient for DelugeData<'a, A> {
     }
 
     fn new_interval(&self) {
+        debug!("DelugeData: New trickle interval");
         self.received_old_v.set(false);
         self.obj_update_count.set(0);
     }
@@ -411,12 +423,15 @@ impl<'a, A: time::Alarm + 'a> DelugeRxClient for DelugeData<'a, A> {
         let (_, packet) = DelugePacket::decode(buf).done().unwrap();
         match self.state.get() {
             DelugeState::Maintenance => {
+                debug!("Received in mt state");
                 self.mt_state_received_packet(&packet);
             },
             DelugeState::Receive => {
+                debug!("Received in rx state");
                 self.rx_state_received_packet(&packet);
             },
             DelugeState::Transmit => {
+                debug!("Received in tx state");
                 self.tx_state_received_packet(&packet);
             },
         }
@@ -424,7 +439,7 @@ impl<'a, A: time::Alarm + 'a> DelugeRxClient for DelugeData<'a, A> {
 }
 
 impl<'a, A: time::Alarm + 'a> DelugeTxClient for DelugeData<'a, A> {
-    fn transmit_done(&self, buf: &'static mut [u8], result: ReturnCode) {
+    fn transmit_done(&self, result: ReturnCode) {
         // Only care about the callback if we need to keep broadcasting. This
         // only occurs if we are in the Transmit state
         if self.state.get() == DelugeState::Transmit {

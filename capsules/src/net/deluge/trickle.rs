@@ -12,9 +12,9 @@ use kernel::hil::rng::RNG;
 use kernel::hil::time::Frequency;
 
 // TODO: Replace default constants
-const I_MIN: usize = 10000; // In ms, minimum interval size
+const I_MIN: usize = 1; // In seconds, minimum interval size
 const I_MAX: usize = 7;     // Doublings of interval size
-const K: usize = 4;         // Redundancy constant
+const K: usize = 1;         // Redundancy constant
 
 // We expect the TrickleClient to maintain the received data packet, as we
 // never need to look at it. Also, we expect the TrickleClient to parse
@@ -65,7 +65,7 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
             i_min: Cell::new(I_MIN),
             k: Cell::new(K),
 
-            i_cur: Cell::new(0),
+            i_cur: Cell::new(I_MIN),
             t: Cell::new(0),
             c: Cell::new(0),
             t_fired: Cell::new(false),
@@ -106,6 +106,7 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
 
     // Time is in ms
     fn set_timer(&self, time: usize) {
+        debug!("Set timer: {}, {}", time, self.i_cur.get());
         // TODO: Cancel pending alarms
         // TODO: Consider issue with overflow w/u32
         let tics = self.clock.now().wrapping_add((time as u32) * A::Frequency::frequency());
@@ -132,6 +133,7 @@ impl<'a, A: time::Alarm + 'a> Trickle<'a> for TrickleData<'a, A> {
 
     fn initialize(&self) {
         self.i_cur.set(self.i_min.get());
+        debug!("init: {}", self.i_cur.get());
         self.start_next_interval();
     }
 
@@ -167,6 +169,7 @@ impl<'a, A: time::Alarm + 'a> time::Client for TrickleData<'a, A> {
 impl<'a, A: time::Alarm + 'a> rng::Client for TrickleData<'a, A> {
     // TODO: Is u32 enough randomness?
     fn randomness_available(&self, randomness: &mut Iterator<Item = u32>) -> rng::Continue {
+        debug!("Randomness callback!");
         match randomness.next() {
             Some(random) => {
                 // This should select a random time in the second half of the interval

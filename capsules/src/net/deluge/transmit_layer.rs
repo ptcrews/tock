@@ -18,7 +18,7 @@ pub trait DelugeTransmit<'a> {
 }
 
 pub trait DelugeTxClient{
-    fn transmit_done(&self, buffer: &'static mut [u8], result: ReturnCode);
+    fn transmit_done(&self, result: ReturnCode);
 }
 
 pub trait DelugeRxClient {
@@ -39,26 +39,33 @@ const DST_PAN_ADDR: PanID = 0xABCD;
 
 impl<'a> DelugeTransmit<'a> for DelugeTransmitLayer<'a> {
     fn transmit_packet(&self, buffer: &[u8]) -> ReturnCode {
-        match self.radio.prepare_data_frame(
-            self.tx_buffer.take().unwrap(),
-            DST_PAN_ADDR,
-            DST_MAC_ADDR,
-            self.src_pan.get(),
-            self.src_addr.get(),
-            None
-            ) {
-            Err(frame) => {
-                self.tx_buffer.replace(frame);
+        match self.tx_buffer.take() {
+            Some(tx_buf) => {
+                match self.radio.prepare_data_frame(
+                    tx_buf,
+                    DST_PAN_ADDR,
+                    DST_MAC_ADDR,
+                    self.src_pan.get(),
+                    self.src_addr.get(),
+                    None
+                    ) {
+                    Err(frame) => {
+                        self.tx_buffer.replace(frame);
+                        ReturnCode::FAIL
+                    },
+                    Ok(mut frame) => {
+                        frame.append_payload(buffer);
+                        let (result, buf) = self.radio.transmit(frame);
+                        buf.map(|buf| {
+                            self.tx_buffer.replace(buf);
+                            result
+                        }).unwrap_or(ReturnCode::SUCCESS)
+                    }
+                }
+            },
+            None => {
                 ReturnCode::FAIL
             },
-            Ok(mut frame) => {
-                frame.append_payload(buffer);
-                let (result, buf) = self.radio.transmit(frame);
-                buf.map(|buf| {
-                    self.tx_buffer.replace(buf);
-                    result
-                }).unwrap_or(ReturnCode::SUCCESS)
-            }
         }
     }
 
@@ -73,7 +80,8 @@ impl<'a> DelugeTransmit<'a> for DelugeTransmitLayer<'a> {
 
 impl<'a> TxClient for DelugeTransmitLayer<'a> {
     fn send_done(&self, tx_buf: &'static mut [u8], _acked: bool, result: ReturnCode) {
-        self.tx_client.get().map(move |tx_client| tx_client.transmit_done(tx_buf, result));
+        self.tx_buffer.replace(tx_buf);
+        self.tx_client.get().map(move |tx_client| tx_client.transmit_done(result));
     }
 }
 

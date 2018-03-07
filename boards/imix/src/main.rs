@@ -528,7 +528,7 @@ pub unsafe fn reset_handler() {
         capsules::usb_user::UsbSyscallDriver::new(usb_client, kernel::Grant::create())
     );
 
-    let trickle_test_struct = trickle_test::initialize_all(radio_mac, mux_alarm);
+    let deluge_test = deluge_test::initialize_all(radio_mac, mux_alarm);
 
     let imix = Imix {
         console: console,
@@ -579,6 +579,6 @@ pub unsafe fn reset_handler() {
         &mut PROCESSES,
         FAULT_RESPONSE,
     );
-    trickle_test_struct.start();
+    deluge_test.start();
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }

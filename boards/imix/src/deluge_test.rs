@@ -15,10 +15,11 @@ use kernel::common::take_cell::TakeCell;
 use kernel::returncode::ReturnCode;
 use capsules::net::ieee802154::{Header, PanID, MacAddress};
 use kernel::hil::radio;
+use kernel::hil::time;
 use core::cell::Cell;
 
-pub struct DelugeTest<'a> {
-    dummy_data: Cell<Option<&'a u8>>,
+pub struct DelugeTest<'a, A: time::Alarm + 'a> {
+    deluge_data: &'a DelugeData<'a, A>,
 }
 
 static mut FIRST_PAGE: [u8; program_state::PAGE_SIZE] = [0 as u8; program_state::PAGE_SIZE];
@@ -31,7 +32,7 @@ const SRC_MAC_ADDR: MacAddress = MacAddress::Short(0xabcd);
 
 pub unsafe fn initialize_all(radio_mac: &'static Mac,
                              mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
-        -> &'static DelugeTest<'static> {
+        -> &'static DelugeTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {
 
     // Allocate DelugeData + appropriate structs
 
@@ -57,11 +58,16 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         ProgramState::new(0, FIRST_PAGE.len(), &mut TX_PAGE, &mut RX_PAGE)
     );
 
+    let deluge_alarm = static_init!(
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        VirtualMuxAlarm::new(mux_alarm)
+    );
+
     let deluge_data = static_init!(
         DelugeData<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
-        DelugeData::new(program_state, transmit_layer, trickle_data, VirtualMuxAlarm::new(mux_alarm))
+        DelugeData::new(program_state, transmit_layer, trickle_data, deluge_alarm)
     );
-    deluge_data.init();
+    deluge_alarm.set_client(deluge_data);
     transmit_layer.set_tx_client(deluge_data);
     transmit_layer.set_rx_client(deluge_data);
     radio_mac.set_receive_client(transmit_layer);
@@ -69,26 +75,26 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     trickle_data.set_client(deluge_data);
 
     let deluge_test = static_init!(
-        DelugeTest<'static>,
-        DelugeTest::new()
+        DelugeTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+        DelugeTest::new(deluge_data)
     );
     program_state.set_client(deluge_test);
-
+    deluge_test
 }
 
-impl<'a> DelugeTest<'a> {
-    pub fn new() -> DelugeTest<'a> {
+impl<'a, A: time::Alarm + 'a> DelugeTest<'a, A> {
+    pub fn new(deluge_data: &'a DelugeData<'a, A>) -> DelugeTest<'a, A> {
         DelugeTest {
-            dummy_data: Cell::new(None),
+            deluge_data: deluge_data,
         }
     }
 
     pub fn start(&self) {
-        //self.deluge_data.init();
+        self.deluge_data.init();
     }
 }
 
-impl<'a> ProgramStateClient for DelugeTest<'a> {
+impl<'a, A: time::Alarm + 'a> ProgramStateClient for DelugeTest<'a, A> {
     fn get_next_page(&self) {
     }
 
