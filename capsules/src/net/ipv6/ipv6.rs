@@ -7,7 +7,7 @@ use ieee802154::mac::{Frame, Mac};
 use net::ieee802154::MacAddress;
 use net::udp::udp::{UDPHeader};
 use net::tcp::{TCPHeader};
-use net::icmp::icmp::ICMPHeader;
+use net::icmpv6::icmpv6::{ICMP6Header};
 use net::sixlowpan::{TxState, SixlowpanTxClient};
 use kernel::ReturnCode;
 use kernel::common::take_cell::TakeCell;
@@ -175,7 +175,7 @@ impl IP6Header {
 pub enum TransportHeader {
     UDP(UDPHeader),
     TCP(TCPHeader),
-    ICMP(ICMPHeader),
+    ICMP(ICMP6Header),
     
     // NOTE: TCP,ICMP,RawIP traits not yet implemented
     // , but follow logically from UDPPacket. 
