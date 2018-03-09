@@ -110,33 +110,33 @@ impl<'a> IP6SendStruct<'a> { //Private Functions for this sender
     // Returns EBUSY if the tx_buf is not there
     fn send_next_fragment(&self) -> ReturnCode {
         // TODO: Fix unwrap
-        match self.tx_buf.take() {
-            Some(tx_buf) => {
-                let ip6_packet = self.ip6_packet.take().unwrap();
-                debug!("Next Header is: {}", ip6_packet.header.get_next_header());
-                let next_frame = self.sixlowpan.next_fragment(ip6_packet, tx_buf, self.radio);
-                self.ip6_packet.replace(ip6_packet);
+        self.ip6_packet.map(move |ip6_packet| {
+            match self.tx_buf.take() {
+                Some(tx_buf) => {
+                    debug!("Next Header is: {}", ip6_packet.header.get_next_header());
+                    let next_frame = self.sixlowpan.next_fragment(ip6_packet, tx_buf, self.radio);
 
-                match next_frame {
-                    Ok((is_done, frame)) => {
-                        if is_done {
-                            self.tx_buf.replace(frame.into_buf());
-                            self.send_completed(ReturnCode::SUCCESS);
-                        } else {
-                            self.radio.transmit(frame);
-                        }
-                    },
-                    Err((retcode, buf)) => {
-                        self.tx_buf.replace(buf);
-                        self.send_completed(ReturnCode::FAIL);
-                    },
-                }
-                ReturnCode::SUCCESS
-            },
-            None => {
-                ReturnCode::EBUSY
-            },
-        }
+                    match next_frame {
+                        Ok((is_done, frame)) => {
+                            if is_done {
+                                self.tx_buf.replace(frame.into_buf());
+                                self.send_completed(ReturnCode::SUCCESS);
+                            } else {
+                                self.radio.transmit(frame);
+                            }
+                        },
+                        Err((retcode, buf)) => {
+                            self.tx_buf.replace(buf);
+                            self.send_completed(ReturnCode::FAIL);
+                        },
+                    }
+                    ReturnCode::SUCCESS
+                },
+                None => {
+                    ReturnCode::EBUSY
+                },
+            }
+        }).unwrap_or(ReturnCode::ENOMEM)
     }
 
     fn send_completed(&self, result: ReturnCode) {
