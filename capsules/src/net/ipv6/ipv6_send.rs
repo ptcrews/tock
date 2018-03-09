@@ -66,20 +66,15 @@ impl<'a> IP6Sender<'a> for IP6SendStruct<'a> { //Public functions for this IP6Se
         self.ip6_packet.map(|mut ip6_packet| ip6_packet.header = ip6_header);
     }
 
+    // NOTE that if there is an error during sending, it will be delivered via
+    // the callback
     fn send_to(&self, dst: IPAddr, transport_header: TransportHeader, payload: &[u8])
         -> ReturnCode {
         // TODO: Check return code
         self.sixlowpan.init(SRC_MAC_ADDR, DST_MAC_ADDR, None);
         self.init_packet(dst, transport_header, payload);
-        let (result, completed) = self.send_next_fragment();
-        if result != ReturnCode::SUCCESS {
-            result
-        } else {
-            if completed {
-                self.send_completed(result);
-            }
-            ReturnCode::SUCCESS
-        }
+        self.send_next_fragment();
+        ReturnCode::SUCCESS
     }
 }
 
@@ -111,12 +106,9 @@ impl<'a> IP6SendStruct<'a> { //Private Functions for this sender
             ip6_packet.set_transport_checksum();
             debug!("within map: {}", ip6_packet.header.get_next_header());
         });
-        let ip6_packet = self.ip6_packet.take().unwrap();
-        debug!("within map: {}", ip6_packet.header.get_next_header());
-        self.ip6_packet.replace(ip6_packet);
     }
-    
-    fn send_next_fragment(&self) -> (ReturnCode, bool) {
+
+    fn send_next_fragment(&self) {
         // TODO: Fix unwrap
         let tx_buf = self.tx_buf.take().unwrap();
         let ip6_packet = self.ip6_packet.take().unwrap();
@@ -124,7 +116,7 @@ impl<'a> IP6SendStruct<'a> { //Private Functions for this sender
         let next_frame = self.sixlowpan.next_fragment(ip6_packet, tx_buf, self.radio);
         self.ip6_packet.replace(ip6_packet);
 
-        let result = match next_frame {
+        match next_frame {
             Ok((is_done, frame)) => {
                 if is_done {
                     self.tx_buf.replace(frame.into_buf());
@@ -132,15 +124,12 @@ impl<'a> IP6SendStruct<'a> { //Private Functions for this sender
                 } else {
                     self.radio.transmit(frame);
                 }
-                (ReturnCode::SUCCESS, is_done)
             },
             Err((retcode, buf)) => {
                 self.tx_buf.replace(buf);
                 self.send_completed(ReturnCode::FAIL);
-                (ReturnCode::FAIL, false)
             },
-        };
-        result
+        }
     }
 
     fn send_completed(&self, result: ReturnCode) {
@@ -168,10 +157,9 @@ impl<'a> TxClient for IP6SendStruct<'a> {
         //TODO: Handle sending link layer ACKs        
         //self.send_next(tx_buf);
         //TODO: fix unwrap
-        let ip6_packet = self.ip6_packet.take().unwrap();
-        match self.sixlowpan.next_fragment(ip6_packet,
-                                              tx_buf,
-                                              self.radio) {
+        self.send_next_fragment();
+        /*
+        match next_frame {
             Ok((is_done, frame)) => {
                 //TODO: Fix ordering so that debug output does not indicate extra frame sent
                 debug!("Sent frame!");
@@ -194,6 +182,6 @@ impl<'a> TxClient for IP6SendStruct<'a> {
                 self.tx_buf.replace(buf);
             },
         }
-        self.ip6_packet.replace(ip6_packet);
+        */
     }
 }
