@@ -155,19 +155,15 @@ pub fn compute_icmp_checksum(ipv6_header: &IP6Header,
    
     // add options
     match icmp_header.get_options() {
-        ICMP6HeaderOptions::Type1 { unused } => {
+        ICMP6HeaderOptions::Type1 { unused } |
+            ICMP6HeaderOptions::Type3 { unused } => 
+        {
             sum += unused >> 16;    // upper 16 bits 
             sum += unused & 0xffff; // lower 16 bits
         }
-        ICMP6HeaderOptions::Type3 { unused } => {
-            sum += unused >> 16;     
-            sum += unused & 0xffff;
-        }
-        ICMP6HeaderOptions::Type128 { id, seqno } => {
-            sum += id as u32;
-            sum += seqno as u32;
-        }
-        ICMP6HeaderOptions::Type129 { id, seqno } => {
+        ICMP6HeaderOptions::Type128 { id, seqno } |
+            ICMP6HeaderOptions::Type129 { id, seqno } => 
+        {
             sum += id as u32;
             sum += seqno as u32;
         }

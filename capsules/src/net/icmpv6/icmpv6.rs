@@ -110,20 +110,17 @@ impl ICMP6Header {
         off = enc_consume!(buf, off; encode_u16, self.cksum);
 
         match self.options {
-             ICMP6HeaderOptions::Type1 { unused } => {
+            ICMP6HeaderOptions::Type1 { unused } |
+                ICMP6HeaderOptions::Type3 { unused } => 
+            {
                 off = enc_consume!(buf, off; encode_u32, unused);
-             },
-             ICMP6HeaderOptions::Type3 { unused } => {
-                off = enc_consume!(buf, off; encode_u32, unused);
-             },
-             ICMP6HeaderOptions::Type128 { id, seqno } => {
+            },
+            ICMP6HeaderOptions::Type128 { id, seqno } |
+                ICMP6HeaderOptions::Type129 { id, seqno } => 
+            {
                 off = enc_consume!(buf, off; encode_u16, id);
                 off = enc_consume!(buf, off; encode_u16, seqno);
-             },
-             ICMP6HeaderOptions::Type129 { id, seqno } => {
-                off = enc_consume!(buf, off; encode_u16, id);
-                off = enc_consume!(buf, off; encode_u16, seqno);
-             },
+            },
         }
         
         stream_done!(off, off);
