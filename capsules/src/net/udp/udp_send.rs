@@ -36,7 +36,7 @@ pub struct UDPSendStruct<'a, T: IP6Sender<'a> + 'a> {
 //Below is a proposed UDP trait. I tried using it with app_layer_lowpan_frag and 
 //gave up after an hour of trying to get it to compile. I am also still not sure this is
 //quite what we want.
-pub trait UDPSender<'a>: IP6Client {
+pub trait UDPSender<'a> {
     fn set_client(&self, client: &'a UDPSendClient);
 
     fn send_to(&self, dest: IPAddr, dst_port: u16, src_port: u16, buf: &'a [u8]) -> ReturnCode;
