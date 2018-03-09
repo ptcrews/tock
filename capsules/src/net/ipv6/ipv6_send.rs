@@ -167,3 +167,45 @@ impl<'a> TxClient for IP6SendStruct<'a> {
         self.send_next_fragment();
     }
 }
+
+
+//The below code describes the struct that stores bound address/port combinations
+
+/*
+
+pub enum TransportType {
+    UDP,
+    TCP,
+    ICMP,
+    Raw,
+}
+
+pub struct PortBinding {
+    pub address: IP6Addr,
+    pub subnet: usize, //If 128, IP6Addr represents a single address. 
+                       //If 120, IP6Addr represents 2^8 addresses, etc.
+    pub transport_type: TransportType,
+    pub port: u16, //Could put the port inside transport type. This would require matching on transport
+                    //type to get the port/set the port, but maybe that is good? TODO - Answer this
+    //pub next: &'a PortBinding, //How to do this?
+//    receive_client: SixLowRcvClient,
+}
+
+impl PortBinding {
+    pub fn new(address: IP6Addr, subnet: usize, transport_type: TransportType, port: u16) -> PortBinding {
+        PortBinding {
+            address: address,
+            subnet: subnet,
+            transport_type: transport_type,
+            port: port,
+            //next: &'a PortBining,
+            //client: ,
+        }
+    }
+}
+
+pub struct bound_ports_list {
+    pub head: &'a PortBinding,
+}
+
+*/
