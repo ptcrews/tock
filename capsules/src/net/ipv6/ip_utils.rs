@@ -2,6 +2,7 @@ use net::stream::{decode_u16, decode_u8, decode_bytes};
 use net::stream::{encode_u16, encode_u8, encode_bytes};
 use net::stream::SResult;
 use net::udp::udp::{UDPHeader};
+use net::icmpv6::icmpv6::{ICMP6Header, ICMP6HeaderOptions};
 use net::ipv6::ipv6::{IP6Header};
 use net::util::{slice_to_u16};
 
@@ -70,7 +71,6 @@ impl IPAddr {
     }
 }
 
-
 pub fn compute_udp_checksum(ip6_header: &IP6Header,
                             udp_header: &UDPHeader,
                             udp_length: u16,
@@ -137,3 +137,91 @@ pub fn compute_udp_checksum(ip6_header: &IP6Header,
 
 }
 
+pub fn compute_icmp_checksum(ipv6_header: &IP6Header,
+                            icmp_header: &ICMP6Header,
+                            payload: &[u8],
+                            payload_len: u16)
+                            -> u16 {
+
+    let mut sum: u32 = 0;
+
+    // add ipv6 pseudo-header
+    sum += compute_ipv6_ph_sum(ipv6_header);
+    
+    // add type and code
+    let msb = (icmp_header.get_type_as_int() as u32) << 8;
+    let lsb = icmp_header.get_code() as u32;
+    sum += (msb + lsb);
+   
+    // add options
+    match icmp_header.get_options() {
+        ICMP6HeaderOptions::Type1 { unused } => {
+            sum += unused >> 16;    // upper 16 bits 
+            sum += unused & 0xffff; // lower 16 bits
+        }
+        ICMP6HeaderOptions::Type3 { unused } => {
+            sum += unused >> 16;     
+            sum += unused & 0xffff;
+        }
+        ICMP6HeaderOptions::Type128 { id, seqno } => {
+            sum += id as u32;
+            sum += seqno as u32;
+        }
+        ICMP6HeaderOptions::Type129 { id, seqno } => {
+            sum += id as u32;
+            sum += seqno as u32;
+        }
+    }
+
+    // add icmp payload
+    sum += compute_sum(payload, payload_len);
+
+    // carry overflow
+    while sum > 0xffff {
+        let sum_upper = sum >> 16;
+        let sum_lower = sum & 0xffff;
+        sum += (sum_upper + sum_lower);
+    }
+
+    sum = !sum;
+    sum = sum & 0xffff;
+    
+    sum as u16
+}
+
+pub fn compute_ipv6_ph_sum(ip6_header: &IP6Header) -> u32 {
+    let mut sum: u32 = 0;
+    
+    // sum over src/dest addresses    
+    let mut i = 0;
+    while i < 16 { 
+        let msb_src = (ip6_header.src_addr.0[i] as u32) << 8;
+        let lsb_src = ip6_header.src_addr.0[i+1] as u32;
+        sum += (msb_src + lsb_src);
+
+        let msb_dst = (ip6_header.dst_addr.0[i] as u32) << 8;
+        let lsb_dst = ip6_header.dst_addr.0[i+1] as u32;
+        sum += (msb_dst + lsb_dst);
+        
+        i += 2;
+    }
+
+    sum += ip6_header.payload_len as u32;
+    sum += ip6_header.next_header as u32;
+
+    sum
+}
+
+pub fn compute_sum(buf: &[u8], len: u16) -> u32 {
+    let mut sum: u32 = 0;
+
+    let mut i: usize = 0;
+    while i < (len as usize) {
+        let msb = (buf[i] as u32) << 8;
+        let lsb = buf[i + 1] as u32;
+        sum += (msb + lsb);
+        i += 2;
+    }
+
+    sum
+}

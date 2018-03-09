@@ -23,10 +23,10 @@ pub enum ICMP6HeaderOptions {
 
 #[derive(Copy, Clone)]
 pub enum ICMP6Type {
-    Type1,
-    Type3,
-    Type128,
-    Type129,
+    Type1,      // Destination Unreachable
+    Type3,      // Time Exceeded
+    Type128,    // Echo Request
+    Type129,    // Echo Reply
 }
 
 impl ICMP6Header {
