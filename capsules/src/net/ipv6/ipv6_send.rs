@@ -184,11 +184,9 @@ impl<'a> TxClient for IP6SendStruct<'a> {
                     debug!("Retcode from radio transmit is: {:?}", retcode);
                     match retcode {
                         ReturnCode::SUCCESS => {
-                            
                         },
                         _ => debug!("Error in radio transmit") 
                     }
-                    
                 }
             },
             Err((retcode, buf)) => {

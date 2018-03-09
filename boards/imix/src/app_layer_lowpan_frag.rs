@@ -34,7 +34,7 @@ use capsules::net::ieee802154::MacAddress;
 use capsules::net::ipv6::ip_utils::{IPAddr, ip6_nh};
 use capsules::net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader, IPPayload};
 use capsules::net::udp::udp::{UDPHeader};
-use capsules::net::udp::udp_send::{UDPSendStruct, UDPSendClient};
+use capsules::net::udp::udp_send::{UDPSendStruct, UDPSender, UDPSendClient};
 use capsules::net::sixlowpan::{Sixlowpan, SixlowpanState, TxState, SixlowpanTxClient};
 use capsules::net::sixlowpan_compression;
 use capsules::net::sixlowpan_compression::Context;
@@ -70,18 +70,18 @@ pub static mut RF233_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_S
 
 //Use a global variable option, initialize as None, then actually initialize in initialize all
 
-pub struct LowpanTest<'a, A: time::Alarm + 'a, T: IP6Sender<'a> + 'a> {
+pub struct LowpanTest<'a, A: time::Alarm + 'a> {
     alarm: A,
     //sixlowpan_tx: TxState<'a>,
     //radio: &'a Mac<'a>,
     test_counter: Cell<usize>,
-    udp_sender: UDPSendStruct<'a, T>
+    udp_sender: &'a UDPSender<'a>,
 }
 //TODO: Initialize UDP sender/send_done client in initialize all
 pub unsafe fn initialize_all(radio_mac: &'static Mac,
                       mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
         -> &'static LowpanTest<'static,
-        capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>, IP6SendStruct<'static>> {
+        capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {
 
     let sixlowpan =
         static_init!(
@@ -122,31 +122,32 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     };
 
     let ip6_dg = static_init!(IP6Packet<'static>, IP6Packet::new(ip_pyld));
-    
 
     let ip6_sender = static_init!(IP6SendStruct<'static>, IP6SendStruct::new(ip6_dg, &mut RF233_BUF, sixlowpan_tx, radio_mac));
     radio_mac.set_transmit_client(ip6_sender);
 
+    let udp_send_struct = static_init!(
+        UDPSendStruct<'static, IP6SendStruct<'static>>,
+        UDPSendStruct::new(ip6_sender)
+    );
+
     let app_lowpan_frag_test = static_init!(
         LowpanTest<'static,
-        VirtualMuxAlarm<'static, sam4l::ast::Ast>, IP6SendStruct<'static>>,
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
         LowpanTest::new(
                         //sixlowpan_tx,
                         //radio_mac,
                         VirtualMuxAlarm::new(mux_alarm),
-                        ip6_sender)
+                        udp_send_struct)
     );
-    ip6_sender.set_client(&app_lowpan_frag_test.udp_sender); //TODO: Shouldn't this happen automatically
-                                                            // when a new udp_sender is created instead?
-    app_lowpan_frag_test.udp_sender.set_client(app_lowpan_frag_test);
+    ip6_sender.set_client(udp_send_struct);
     app_lowpan_frag_test.alarm.set_client(app_lowpan_frag_test);
 
-    
 
     app_lowpan_frag_test
 }
 
-impl<'a, A: time::Alarm, T: IP6Sender<'a>> capsules::net::udp::udp_send::UDPSendClient for LowpanTest<'a, A, T> {
+impl<'a, A: time::Alarm> capsules::net::udp::udp_send::UDPSendClient for LowpanTest<'a, A> {
     fn send_done(&self, result: ReturnCode) {
         match result {
             ReturnCode::SUCCESS => {
@@ -159,19 +160,19 @@ impl<'a, A: time::Alarm, T: IP6Sender<'a>> capsules::net::udp::udp_send::UDPSend
     }
 }
 
-impl<'a, A: time::Alarm, T: IP6Sender<'a>> LowpanTest<'a, A, T> {
+impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
     pub fn new(
                //sixlowpan_tx: TxState<'a>,
                //radio: &'a Mac<'a>,
                alarm: A,
                //ip6_packet: &'static mut IP6Packet<'a>
-               ip_sender: &'a T) -> LowpanTest<'a, A, T> {
+               udp_sender: &'a UDPSender<'a>) -> LowpanTest<'a, A> {
         LowpanTest {
             alarm: alarm,
             //sixlowpan_tx: sixlowpan_tx,
             //radio: radio,
             test_counter: Cell::new(0),
-            udp_sender: UDPSendStruct::new(ip_sender),
+            udp_sender: udp_sender,
         }
     }
 
@@ -224,13 +225,13 @@ impl<'a, A: time::Alarm, T: IP6Sender<'a>> LowpanTest<'a, A, T> {
         let mut dst_addr: IPAddr = IPAddr::new();
         let src_port: u16 = 12321;
         let dst_port: u16 = 32123;
-        
+
         unsafe {self.udp_sender.send_to(DST_ADDR, src_port, dst_port, &UDP_PAYLOAD)};
 
     }
 }
 
-impl<'a, A: time::Alarm, T: IP6Sender<'a>> time::Client for LowpanTest<'a, A, T> {
+impl<'a, A: time::Alarm> time::Client for LowpanTest<'a, A> {
     fn fired(&self) {
         self.run_test_and_increment();
     }

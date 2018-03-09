@@ -33,10 +33,10 @@ pub struct UDPSendStruct<'a, T: IP6Sender<'a> + 'a> {
     client: Cell<Option<&'a UDPSendClient>>,
 }
 
-/* //Below is a proposed UDP trait. I tried using it with app_layer_lowpan_frag and 
+//Below is a proposed UDP trait. I tried using it with app_layer_lowpan_frag and 
 //gave up after an hour of trying to get it to compile. I am also still not sure this is
 //quite what we want.
-pub trait UDPSender<'a, T: IP6Sender<'a> + 'a> {
+pub trait UDPSender<'a>: IP6Client {
     fn set_client(&self, client: &'a UDPSendClient);
 
     fn send_to(&self, dest: IPAddr, dst_port: u16, src_port: u16, buf: &'a [u8]) -> ReturnCode;
@@ -45,7 +45,7 @@ pub trait UDPSender<'a, T: IP6Sender<'a> + 'a> {
 }
 
 
-impl<'a, T: IP6Sender<'a>> UDPSender<'a, T> for UDPSendStruct<'a, T> {
+impl<'a, T: IP6Sender<'a>> UDPSender<'a> for UDPSendStruct<'a, T> {
 
     fn set_client(&self, client: &'a UDPSendClient) {
         self.client.set(Some(client));
@@ -66,15 +66,16 @@ impl<'a, T: IP6Sender<'a>> UDPSender<'a, T> for UDPSendStruct<'a, T> {
     }
 }
 
-impl<'a, t: ip6sender<'a>> udpsendstruct<'a, t> {
-    pub fn new(ip_send_struct: &'a t) -> udpsendstruct<'a, t> {
-        udpsendstruct {
+impl<'a, T: IP6Sender<'a>> UDPSendStruct<'a, T> {
+    pub fn new(ip_send_struct: &'a T) -> UDPSendStruct<'a, T> {
+        UDPSendStruct {
             ip_send_struct: ip_send_struct,
-            client: cell::new(none),
+            client: Cell::new(None),
         }
     }
-} */
+}
 
+/*
 impl<'a, T: IP6Sender<'a>> UDPSendStruct<'a, T> {
     pub fn new(ip_send_struct: &'a T) -> UDPSendStruct<'a, T> {
         UDPSendStruct {
@@ -100,6 +101,7 @@ impl<'a, T: IP6Sender<'a>> UDPSendStruct<'a, T> {
         self.ip_send_struct.send_to(dest, transport_header, buf)
     }
 } 
+*/
 
 impl<'a, T: IP6Sender<'a>> IP6Client for UDPSendStruct<'a, T> {
     fn send_done(&self, result: ReturnCode) {
