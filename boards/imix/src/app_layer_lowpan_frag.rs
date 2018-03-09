@@ -141,6 +141,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
                         udp_send_struct)
     );
     ip6_sender.set_client(udp_send_struct);
+    udp_send_struct.set_client(app_lowpan_frag_test);
     app_lowpan_frag_test.alarm.set_client(app_lowpan_frag_test);
 
 

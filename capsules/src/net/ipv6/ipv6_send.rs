@@ -73,8 +73,7 @@ impl<'a> IP6Sender<'a> for IP6SendStruct<'a> { //Public functions for this IP6Se
         // TODO: Check return code
         self.sixlowpan.init(SRC_MAC_ADDR, DST_MAC_ADDR, None);
         self.init_packet(dst, transport_header, payload);
-        self.send_next_fragment();
-        ReturnCode::SUCCESS
+        self.send_next_fragment()
     }
 }
 
@@ -108,32 +107,39 @@ impl<'a> IP6SendStruct<'a> { //Private Functions for this sender
         });
     }
 
-    fn send_next_fragment(&self) {
+    // Returns EBUSY if the tx_buf is not there
+    fn send_next_fragment(&self) -> ReturnCode {
         // TODO: Fix unwrap
-        let tx_buf = self.tx_buf.take().unwrap();
-        let ip6_packet = self.ip6_packet.take().unwrap();
-        debug!("Next Header is: {}", ip6_packet.header.get_next_header());
-        let next_frame = self.sixlowpan.next_fragment(ip6_packet, tx_buf, self.radio);
-        self.ip6_packet.replace(ip6_packet);
+        match self.tx_buf.take() {
+            Some(tx_buf) => {
+                let ip6_packet = self.ip6_packet.take().unwrap();
+                debug!("Next Header is: {}", ip6_packet.header.get_next_header());
+                let next_frame = self.sixlowpan.next_fragment(ip6_packet, tx_buf, self.radio);
+                self.ip6_packet.replace(ip6_packet);
 
-        match next_frame {
-            Ok((is_done, frame)) => {
-                if is_done {
-                    self.tx_buf.replace(frame.into_buf());
-                    self.send_completed(ReturnCode::SUCCESS);
-                } else {
-                    self.radio.transmit(frame);
+                match next_frame {
+                    Ok((is_done, frame)) => {
+                        if is_done {
+                            self.tx_buf.replace(frame.into_buf());
+                            self.send_completed(ReturnCode::SUCCESS);
+                        } else {
+                            self.radio.transmit(frame);
+                        }
+                    },
+                    Err((retcode, buf)) => {
+                        self.tx_buf.replace(buf);
+                        self.send_completed(ReturnCode::FAIL);
+                    },
                 }
+                ReturnCode::SUCCESS
             },
-            Err((retcode, buf)) => {
-                self.tx_buf.replace(buf);
-                self.send_completed(ReturnCode::FAIL);
+            None => {
+                ReturnCode::EBUSY
             },
         }
     }
 
     fn send_completed(&self, result: ReturnCode) {
-        // TODO: Fix unwrap
         self.client.get().map(move |client| client.send_done(result));
     }
 }
@@ -142,47 +148,22 @@ impl<'a> TxClient for IP6SendStruct<'a> {
     fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         self.tx_buf.replace(tx_buf);
         debug!("sendDone return code is: {:?}", result);
-                 //The below code introduces a delay between frames to prevent 
-                 // a race condition on the receiver
-                 //it is sorta complicated bc I was having some trouble with dead code eliminationa
-                //TODO: Remove this one link layer is fixed
-                let mut i = 0;
-                let mut array: [u8; 100] = [0x0; 100]; //used in introducing delay between frames
-                while(i < 1000000) {
-                    array[i % 100] = (i % 100) as u8;
-                    i = i + 1;
-                    if (i % 100000 == 0) {
-                        debug!("Delay, step {:?}", i / 100000);
-                    }
-                }
+        //The below code introduces a delay between frames to prevent 
+        // a race condition on the receiver
+        //it is sorta complicated bc I was having some trouble with dead code eliminationa
+        //TODO: Remove this one link layer is fixed
+        let mut i = 0;
+        let mut array: [u8; 100] = [0x0; 100]; //used in introducing delay between frames
+        while(i < 1000000) {
+            array[i % 100] = (i % 100) as u8;
+            i = i + 1;
+            if (i % 100000 == 0) {
+                debug!("Delay, step {:?}", i / 100000);
+            }
+        }
         //TODO: Handle sending link layer ACKs        
         //self.send_next(tx_buf);
-        //TODO: fix unwrap
+        // TODO: Check return value
         self.send_next_fragment();
-        /*
-        match next_frame {
-            Ok((is_done, frame)) => {
-                //TODO: Fix ordering so that debug output does not indicate extra frame sent
-                debug!("Sent frame!");
-                if is_done {
-                    self.tx_buf.replace(frame.into_buf());
-                    self.client.get().map(|client| client.send_done(result));
-                } else {
-                    // TODO: Handle err (not just debug statement)
-                    let (retcode, opt) = self.radio.transmit(frame);
-                    debug!("Retcode from radio transmit is: {:?}", retcode);
-                    match retcode {
-                        ReturnCode::SUCCESS => {
-                        },
-                        _ => debug!("Error in radio transmit") 
-                    }
-                }
-            },
-            Err((retcode, buf)) => {
-                debug!("ERROR!: {:?}", retcode);
-                self.tx_buf.replace(buf);
-            },
-        }
-        */
     }
 }
