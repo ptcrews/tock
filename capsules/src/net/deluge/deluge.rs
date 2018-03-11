@@ -112,6 +112,22 @@ impl<'a> DelugePacket<'a> {
                     age_vector_size: age_vec_sz };
                 stream_done!(off, result);
             },
+            REQUEST_FOR_DATA => {
+                let (off, version) = dec_try!(buf, off; decode_u16);
+                let (off, page_num) = dec_try!(buf, off; decode_u16);
+                let (off, packet_num) = dec_try!(buf, off; decode_u16);
+                let result = DelugePacketType::RequestForData { version: version,
+                    page_num: page_num, packet_num: packet_num };
+                stream_done!(off, result);
+            },
+            DATA_PACKET => {
+                let (off, version) = dec_try!(buf, off; decode_u16);
+                let (off, page_num) = dec_try!(buf, off; decode_u16);
+                let (off, packet_num) = dec_try!(buf, off; decode_u16);
+                let result = DelugePacketType::DataPacket { version: version,
+                    page_num: page_num, packet_num: packet_num };
+                stream_done!(off, result);
+            },
             _ => {
                 stream_err!(());
             }
@@ -211,6 +227,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
             DelugeState::Transmit => {
             },
             DelugeState::Receive => {
+                self.rx_state_reset_timer();
             },
         }
     }
@@ -227,8 +244,14 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                 // Inconsistent summary
                 if version != self.program_state.current_version_number() as u16 {
                     debug!("cvn diff");
+                    if version < self.program_state.current_version_number() as u16 {
+                        //self.received_old_v.set(true);
+                    }
+                    if version > self.program_state.current_version_number() as u16 {
+                        self.program_state.received_new_version(version as usize);
+                    }
                     self.trickle.received_transmission(false);
-                } else if page_num > self.program_state.current_page_number() as u16 {
+                } else if page_num != self.program_state.current_page_number() as u16 {
                     debug!("pn diff");
 
                     // Get the current interval, then notify Trickle that
@@ -236,10 +259,18 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                     let cur_interval = self.trickle.get_current_interval();
                     self.trickle.received_transmission(false);
 
+                    if page_num > self.program_state.current_page_number() as u16 {
+                        debug!("Transition state to RX!");
+                        self.transition_state(DelugeState::Receive);
+                    }
+                    // TODO: handle this correctly
+                    /*
                     if (self.last_page_req_time.get() > cur_interval * 2)
                         && (self.data_packet_recv_time.get() > cur_interval) {
-                        //TODO self.transition_to_rx();
+                        debug!("Transition state to RX!");
+                        self.transition_state(DelugeState::Receive);
                     }
+                    */
                 } else {
                     debug!("valid txn");
                     // Transmission only consistent if v=v', y=y'
@@ -255,13 +286,19 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                 if version < self.program_state.current_version_number() as u16 {
                     self.received_old_v.set(true);
                     self.trickle.received_transmission(false);
+                } else if version > self.program_state.current_version_number() as u16 {
+                    self.program_state.received_new_version(version as usize);
                 } else {
                     self.trickle.received_transmission(true);
                 }
             },
             DelugePacketType::RequestForData { version, page_num, packet_num } => {
                 debug!("mt state RequestForData received");
-                // TODO: Do nothing?
+                // TODO: Handle edge case where packet_num > current_page num
+                if page_num <= self.program_state.current_page_number() as u16 {
+                    self.transition_state(DelugeState::Transmit);
+                    self.tx_state_received_packet(packet);
+                }
             },
             DelugePacketType::DataPacket { version, page_num, packet_num } => {
                 debug!("mt state DataPacket received");
@@ -290,6 +327,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                 self.rx_state_reset_timer();
             },
             DelugePacketType::DataPacket { version, page_num, packet_num } => {
+                debug!("RxState: DataPacket!!");
                 // Reset timer
                 self.rx_state_reset_timer();
                 self.any_state_receive_data_packet(version, page_num, packet_num, packet.buffer);
@@ -299,19 +337,23 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
 
     fn rx_state_reset_timer(&self) {
         // TODO
+        debug!("RxState: reset timer!");
         let time = 5;
         let tics = self.alarm.now().wrapping_add((time as u32) * A::Frequency::frequency());
         self.alarm.set_alarm(tics);
     }
 
     fn tx_state_received_packet<'b>(&self, packet: &'b DelugePacket) {
+        debug!("TxState received packet");
         match packet.payload_type {
             DelugePacketType::RequestForData { version, page_num, packet_num } => {
+                debug!("TxState: RFD");
                 self.tx_state_received_request(version, page_num, packet_num);
                 //let bit_vector = packet.
                 //self.program_state.
             },
             DelugePacketType::DataPacket { version, page_num, packet_num } => {
+                debug!("TxState: DataPacket");
                 self.any_state_receive_data_packet(version, page_num, packet_num, packet.buffer);
             },
             _ => {
@@ -322,6 +364,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
 
     fn tx_state_received_request(&self, version: u16, page_num: u16, packet_num: u16) {
         let mut packet_buf: [u8; program_state::PACKET_SIZE] = [0; program_state::PACKET_SIZE];
+        debug!("Tx received request");
         if self.program_state.get_requested_packet(version as usize,
                                                    page_num as usize,
                                                    packet_num as usize,
@@ -331,6 +374,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                                                              packet_num };
             let mut deluge_packet = DelugePacket::new(&packet_buf);
             deluge_packet.payload_type = payload_type;
+            debug!("Tx sending update");
             self.transmit_packet(&deluge_packet);
         }
     }
@@ -368,12 +412,13 @@ impl<'a, A: time::Alarm + 'a> time::Client for DelugeData<'a, A> {
         debug!("DelugeData: Timer fired");
         // Do nothing if not in the receive state
         if self.state.get() == DelugeState::Receive {
+            debug!("Rx transmit");
             self.rx_state_reset_timer();
             let payload_type = DelugePacketType::RequestForData {
                 version: self.program_state.current_version_number() as u16,
                 // TODO: This will cause problems if we want the *next* page
-                page_num: self.program_state.current_page_number() as u16,
-                packet_num: self.program_state.current_packet_number() as u16,
+                page_num: self.program_state.current_page_number() as u16 + 1,
+                packet_num: self.program_state.current_packet_number() as u16 + 1,
             };
             let mut deluge_packet = DelugePacket::new(&[]);
             deluge_packet.payload_type = payload_type;
@@ -393,12 +438,14 @@ impl<'a, A: time::Alarm + 'a> TrickleClient for DelugeData<'a, A> {
         let payload_type = if self.received_old_v.get() {
             // Transmit object profile
             // TODO: Fix the age vector to be correct
+            debug!("Sending object profile");
             DelugePacketType::MaintainObjectProfile { 
                 version: self.program_state.current_version_number() as u16,
                 age_vector_size: 0 as u16 
             }
         } else {
             // Transmit object summary
+            debug!("Sending summary: {}", self.program_state.current_page_number());
             DelugePacketType::MaintainSummary {
                 version: self.program_state.current_version_number() as u16,
                 page_num: self.program_state.current_page_number() as u16,
@@ -410,7 +457,6 @@ impl<'a, A: time::Alarm + 'a> TrickleClient for DelugeData<'a, A> {
     }
 
     fn new_interval(&self) {
-        debug!("DelugeData: New trickle interval");
         self.received_old_v.set(false);
         self.obj_update_count.set(0);
     }

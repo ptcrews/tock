@@ -8,6 +8,7 @@ pub trait ProgramStateClient {
 }
 
 pub trait DelugeProgramState<'a> {
+    fn received_new_version(&self, version: usize);
     fn receive_packet(&self, version: usize, page_num: usize, packet_num: usize, payload: &[u8]) -> bool;
     fn current_page_number(&self) -> usize;
     fn current_version_number(&self) -> usize;
@@ -48,15 +49,15 @@ impl<'a> ProgramState<'a> {
                rx_page: &'static mut [u8; PAGE_SIZE]) -> ProgramState<'a> {
         ProgramState {
             unique_id: unique_id,
-            version: Cell::new(0),
+            version: Cell::new(1),
 
             tx_requested_packet: Cell::new(false),
             tx_requested_packet_num: Cell::new(0),
-            tx_page_num: Cell::new(0),
+            tx_page_num: Cell::new(1),
             tx_page: TakeCell::new(tx_page),
 
             rx_largest_packet: Cell::new(0),
-            rx_page_num: Cell::new(0),
+            rx_page_num: Cell::new(1),
             rx_page: TakeCell::new(rx_page),
 
             client: Cell::new(None),
@@ -65,19 +66,27 @@ impl<'a> ProgramState<'a> {
 }
 
 impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
-    fn receive_packet(&self, version: usize, page_num: usize, packet_num: usize, payload: &[u8]) -> bool {
+    fn received_new_version(&self, version: usize) {
         // If we receive a data packet with a greater version than us and it is
         // the first page, reset our reception state and start receiving the
         // updated information
-        if version > self.version.get() && page_num == 0 {
+        if version > self.version.get() {
             self.version.set(version);
             // Reset TX state
             self.tx_requested_packet.set(false);
             self.tx_requested_packet_num.set(0);
-            self.tx_page_num.set(0);
+            self.tx_page_num.set(1);
             // Reset RX state
             self.rx_largest_packet.set(0);
-            self.rx_page_num.set(0);
+            self.rx_page_num.set(1);
+        }
+    }
+
+    fn receive_packet(&self, version: usize, page_num: usize, packet_num: usize, payload: &[u8]) -> bool {
+        debug!("ProgramState: receive_packet: {}, {}, {}", version, page_num, packet_num);
+        if version > self.version.get() {
+            debug!("ProgramState: new version");
+            self.received_new_version(version);
         }
         let offset = packet_num * PACKET_SIZE;
         if offset + payload.len() > PAGE_SIZE {
@@ -106,10 +115,12 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
     }
 
     fn current_packet_number(&self) -> usize {
+        debug!("Current packet number: {}", self.rx_largest_packet.get());
         self.rx_largest_packet.get()
     }
 
     fn get_requested_packet(&self, version: usize, page_num: usize, packet_num: usize, buf: &mut [u8]) -> bool {
+        debug!("Get requested packet: {}", packet_num);
         if version != self.version.get() {
             return false;
         }
