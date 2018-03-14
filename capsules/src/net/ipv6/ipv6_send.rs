@@ -147,7 +147,7 @@ impl<'a> IP6SendStruct<'a> { //Private Functions for this sender
 impl<'a> TxClient for IP6SendStruct<'a> {
     fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         self.tx_buf.replace(tx_buf);
-        debug!("sendDone return code is: {:?}", result);
+        debug!("sendDone return code is: {:?}, acked: {}", result, acked);
         //The below code introduces a delay between frames to prevent 
         // a race condition on the receiver
         //it is sorta complicated bc I was having some trouble with dead code eliminationa
