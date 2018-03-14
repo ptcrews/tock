@@ -1,10 +1,15 @@
 use core::cell::Cell;
 use kernel::common::take_cell::TakeCell;
+use net::deluge::flash_layer::DelugeFlashTrait;
+
+pub trait DelugeFlashState {
+    fn get_page(&self, page_num: usize);
+    fn page_completed(&self, page_num: usize, completed_page: &[u8]);
+}
 
 pub trait ProgramStateClient {
-    fn get_next_page(&self);
-    fn get_page(&self, page_num: usize) -> &mut [u8];
-    fn page_completed(&self, completed_page: &mut [u8]);
+    fn packet_request_complete(&self, buffer: &[u8]);
+    fn page_write_complete(&self);
 }
 
 pub trait DelugeProgramState<'a> {
@@ -13,13 +18,22 @@ pub trait DelugeProgramState<'a> {
     fn current_page_number(&self) -> usize;
     fn current_version_number(&self) -> usize;
     fn current_packet_number(&self) -> usize;
-    fn get_requested_packet(&self, version: usize, page_num: usize, packet_num: usize, buf: &mut [u8]) -> bool;
+    fn get_requested_packet(&self, page_num: usize, packet_num: usize, buf: &mut [u8]) -> bool;
+    fn set_flash_client(&self, flash_driver: &'a DelugeFlashState);
     fn set_client(&self, client: &'a ProgramStateClient);
 }
 
 pub const PAGE_SIZE: usize = 512;
 pub const PACKET_SIZE: usize = 64;
 //const BIT_VECTOR_SIZE: usize = (PAGE_SIZE/PACKET_SIZE)/8;
+
+pub enum ReturnType {
+    ERROR,
+    OUTDATED,
+    INVALID_PACKET,
+    BUSY,
+
+}
 
 // TODO: Support odd-sized last pages
 pub struct ProgramState<'a> {
@@ -37,6 +51,7 @@ pub struct ProgramState<'a> {
     rx_page_num: Cell<usize>,       // Also largest page num ready for transfer
     rx_page: TakeCell<'static, [u8; PAGE_SIZE]>,  // Page
 
+    flash_driver: Cell<Option<&'a DelugeFlashState>>,
     client: Cell<Option<&'a ProgramStateClient>>,
 
 }
@@ -53,15 +68,41 @@ impl<'a> ProgramState<'a> {
 
             tx_requested_packet: Cell::new(false),
             tx_requested_packet_num: Cell::new(0),
-            tx_page_num: Cell::new(1),
+            tx_page_num: Cell::new(0),
             tx_page: TakeCell::new(tx_page),
 
             rx_largest_packet: Cell::new(0),
-            rx_page_num: Cell::new(1),
+            rx_page_num: Cell::new(0),
             rx_page: TakeCell::new(rx_page),
 
+            flash_driver: Cell::new(None),
             client: Cell::new(None),
         }
+    }
+
+    fn page_completed(&self) {
+        let rx_page = self.rx_page.take().unwrap();
+        self.flash_driver.get().map(|flash_driver| {
+            // TODO: Might be busy
+            flash_driver.page_completed(self.rx_page_num.get(), rx_page);
+            self.rx_page_num.set(self.rx_page_num.get() + 1);
+            self.rx_largest_packet.set(0);
+            /*
+            if client.get_page(self.rx_page_num.get() + 1, rx_page) {
+            }
+            */
+        });
+        self.rx_page.replace(rx_page);
+    }
+}
+
+impl<'a> DelugeFlashTrait for ProgramState<'a> {
+    fn read_complete(&self, buffer: &[u8]) {
+        self.client.map(|client| client.packet_request_complete(buffer));
+    }
+
+    fn write_complete(&self) {
+        self.client.map(|client| client.packet_receive_complete());
     }
 }
 
@@ -75,13 +116,14 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
             // Reset TX state
             self.tx_requested_packet.set(false);
             self.tx_requested_packet_num.set(0);
-            self.tx_page_num.set(1);
+            self.tx_page_num.set(0);
             // Reset RX state
             self.rx_largest_packet.set(0);
-            self.rx_page_num.set(1);
+            self.rx_page_num.set(0);
         }
     }
 
+    // TODO: Currently only supports sequential reception
     fn receive_packet(&self, version: usize, page_num: usize, packet_num: usize, payload: &[u8]) -> bool {
         debug!("ProgramState: receive_packet: {}, {}, {}", version, page_num, packet_num);
         if version > self.version.get() {
@@ -91,6 +133,7 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         let offset = packet_num * PACKET_SIZE;
         if offset + payload.len() > PAGE_SIZE {
             // TODO: Error
+            // Packet too large
             return false;
         }
         if self.rx_page_num.get() != page_num {
@@ -103,6 +146,11 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         }
         self.rx_largest_packet.set(packet_num);
         self.rx_page.map(|page| page[offset..].copy_from_slice(payload));
+
+        // TODO: Mark complete
+        if packet_num * PACKET_SIZE == PAGE_SIZE {
+            self.page_completed();
+        }
         true
     }
 
@@ -119,28 +167,32 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         self.rx_largest_packet.get()
     }
 
-    fn get_requested_packet(&self, version: usize, page_num: usize, packet_num: usize, buf: &mut [u8]) -> bool {
+    fn get_requested_packet(&self, page_num: usize, packet_num: usize, buf: &mut [u8]) -> bool {
         debug!("Get requested packet: {}", packet_num);
-        if version != self.version.get() {
+        // If we haven't received the latest page
+        if page_num > self.rx_page_num.get() {
             return false;
         }
-        if page_num > self.rx_largest_packet.get() {
-            return false;
-        }
-        if page_num != self.tx_page_num.get() {
-            // TODO: Load page
-            //client.get_page(page_num);
-        }
-        // Check for specific length
+
+        // TODO: Check for specific length
         let offset = packet_num * PACKET_SIZE;
         if offset + PACKET_SIZE > PAGE_SIZE {
             return false;
+        }
+
+        // If the page is a different page than the one we currently have
+        if page_num != self.tx_page_num.get() {
+            // TODO: Will panic
+            let tx_page = self.tx_page.take().unwrap();
+            //self.client.get().map(|client| client.get_page(page_num, tx_page)).unwrap();
+            self.tx_page.replace(tx_page);
+            self.tx_page_num.set(page_num);
         }
         self.tx_page.map(|tx_page| buf.copy_from_slice(&tx_page[offset..offset+PACKET_SIZE]));
         true
     }
 
-    fn set_client(&self, client: &'a ProgramStateClient) {
-        self.client.set(Some(client));
+    fn set_flash_client(&self, flash_driver: &'a DelugeFlashState) {
+        self.flash_driver.set(Some(flash_driver));
     }
 }

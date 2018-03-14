@@ -91,17 +91,19 @@ impl<'a, A: time::Alarm + 'a> DelugeTest<'a, A> {
 
     pub fn start(&self) {
         self.deluge_data.init();
+        /*
+        if is_sender {
+        }
+        */
     }
 }
 
 impl<'a, A: time::Alarm + 'a> ProgramStateClient for DelugeTest<'a, A> {
-    fn get_next_page(&self) {
-    }
 
-    fn get_page(&self, page_num: usize) -> &mut [u8] {
+    fn get_page(&self, page_num: usize) -> bool {
         unimplemented!();
     }
 
-    fn page_completed(&self, completed_page: &mut [u8]) {
+    fn page_completed(&self, page_num: usize, completed_page: &[u8]) {
     }
 }

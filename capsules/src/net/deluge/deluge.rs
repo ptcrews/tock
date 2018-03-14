@@ -175,6 +175,11 @@ enum DelugeState {
     Maintenance,
     Transmit,
     Receive,
+    // These two states encode the fact that
+    // we may be waiting for the flash to respond
+    // for a transmit or receive call
+    RxPageWait,
+    TxPageWait,
 }
 
 pub struct DelugeData<'a, A: time::Alarm + 'a> {
@@ -228,6 +233,10 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
             },
             DelugeState::Receive => {
                 self.rx_state_reset_timer();
+            },
+            DelugeState::RxPageWait => {
+            },
+            DelugeState::TxPageWait => {
             },
         }
     }
@@ -341,6 +350,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
         let time = 5;
         let tics = self.alarm.now().wrapping_add((time as u32) * A::Frequency::frequency());
         self.alarm.set_alarm(tics);
+        // TODO: Send request if in rxstate
     }
 
     fn tx_state_received_packet<'b>(&self, packet: &'b DelugePacket) {
@@ -348,7 +358,10 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
         match packet.payload_type {
             DelugePacketType::RequestForData { version, page_num, packet_num } => {
                 debug!("TxState: RFD");
-                self.tx_state_received_request(version, page_num, packet_num);
+                if version == self.program_state.current_version_number() &&
+                        page_num <= self.program_state.get_current_page_number() {
+                    self.tx_state_received_request(page_num, packet_num);
+                }
                 //let bit_vector = packet.
                 //self.program_state.
             },
@@ -362,39 +375,27 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
         }
     }
 
-    fn tx_state_received_request(&self, version: u16, page_num: u16, packet_num: u16) {
-        let mut packet_buf: [u8; program_state::PACKET_SIZE] = [0; program_state::PACKET_SIZE];
+    fn tx_state_received_request(&self, page_num: u16, packet_num: u16) {
         debug!("Tx received request");
-        if self.program_state.get_requested_packet(version as usize,
-                                                   page_num as usize,
-                                                   packet_num as usize,
-                                                   &mut packet_buf) {
-            let payload_type = DelugePacketType::DataPacket { version,
-                                                             page_num,
-                                                             packet_num };
-            let mut deluge_packet = DelugePacket::new(&packet_buf);
-            deluge_packet.payload_type = payload_type;
-            debug!("Tx sending update");
-            self.transmit_packet(&deluge_packet);
-        }
+        // This issues an asynchronous callback
+        self.program_state.get_requested_packet(page_num as usize,
+                                                packet_num as usize,
+                                                &mut packet_buf);
     }
 
-    fn any_state_receive_data_packet<'b>(&self,
-                                         version: u16,
-                                         page_num: u16,
-                                         packet_num: u16,
-                                         payload: &[u8]) {
+    // TODO: remove version number here
+    fn any_state_receive_data_packet(&self,
+                                     version: u16,
+                                     page_num: u16,
+                                     packet_num: u16,
+                                     payload: &[u8]) {
         // TODO: Check for errors vs completion
         // TODO: Check CRC
         debug!("Received data packet");
-        if self.program_state.receive_packet(version as usize,
-                                             page_num as usize,
-                                             packet_num as usize,
-                                             payload) &&
-            self.state.get() == DelugeState::Receive {
-            // If we completed a page and are in the receive state, transition to maintain
-            self.transition_state(DelugeState::Maintenance);
-        }
+        self.program_state.receive_packet(version as usize,
+                                          page_num as usize,
+                                          packet_num as usize,
+                                          payload);
     }
 
     fn transmit_packet(&self, deluge_packet: &DelugePacket) {
@@ -404,6 +405,28 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
         // TODO: Check results
         let _encode_result = deluge_packet.encode(&mut send_buf);
         let _result = self.deluge_transmit_layer.transmit_packet(&send_buf);
+    }
+}
+
+impl<'a, A: time::Alarm + 'a> ProgramStateClient for DelugeData<'a, A> {
+    // Read a page for transmit
+    // Need page number, packet number
+    fn page_read_complete(&self, buffer: &[u8]) {
+        let mut packet_buf: [u8; program_state::PACKET_SIZE] = [0; program_state::PACKET_SIZE];
+        let payload_type = DelugePacketType::DataPacket { self.program_state.current_version_number(),
+                                                          page_num,
+                                                          packet_num };
+        let mut deluge_packet = DelugePacket::new(&packet_buf);
+        deluge_packet.payload_type = payload_type;
+        self.transmit_packet(&deluge_packet);
+    }
+
+    // Must have received a packet
+    fn page_write_complete(&self, page_completed: bool) {
+        if page_completed && self.state.get() == DelugeState::Receive {
+            // If we completed a page and are in the receive state, transition to mt
+            self.transition_state(DelugeState::Maintenance);
+        }
     }
 }
 
@@ -465,7 +488,6 @@ impl<'a, A: time::Alarm + 'a> TrickleClient for DelugeData<'a, A> {
 impl<'a, A: time::Alarm + 'a> DelugeRxClient for DelugeData<'a, A> {
     fn receive(&self, buf: &[u8]) {
         // TODO: Remove unwrap
-        // TODO: Fix the way buffers are handled - simply doesn't make sense
         let (_, packet) = DelugePacket::decode(buf).done().unwrap();
         match self.state.get() {
             DelugeState::Maintenance => {
