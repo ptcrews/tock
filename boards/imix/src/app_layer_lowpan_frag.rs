@@ -35,6 +35,8 @@ use capsules::net::ipv6::ip_utils::{IPAddr, ip6_nh};
 use capsules::net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader, IPPayload};
 use capsules::net::udp::udp::{UDPHeader};
 use capsules::net::udp::udp_send::{UDPSendStruct, UDPSender, UDPSendClient};
+use capsules::net::icmpv6::icmpv6::{ICMP6Header, ICMP6HeaderOptions, ICMP6Type};
+use capsules::net::icmpv6::icmpv6_send::{ICMP6SendStruct, ICMP6Sender, ICMP6SendClient};
 use capsules::net::sixlowpan::{Sixlowpan, SixlowpanState, TxState, SixlowpanTxClient};
 use capsules::net::sixlowpan_compression;
 use capsules::net::sixlowpan_compression::Context;
@@ -76,6 +78,7 @@ pub struct LowpanTest<'a, A: time::Alarm + 'a> {
     //radio: &'a Mac<'a>,
     test_counter: Cell<usize>,
     udp_sender: &'a UDPSender<'a>,
+    icmp_sender: &'a ICMP6Sender<'a>,
 }
 //TODO: Initialize UDP sender/send_done client in initialize all
 pub unsafe fn initialize_all(radio_mac: &'static Mac,
@@ -237,5 +240,3 @@ impl<'a, A: time::Alarm> time::Client for LowpanTest<'a, A> {
         self.run_test_and_increment();
     }
 }
-
-
