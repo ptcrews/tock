@@ -20,12 +20,12 @@ pub trait ICMP6Sender<'a> {
 }
 
 pub struct ICMP6SendStruct<'a, T: IP6Sender<'a> + 'a> {
-    ip_send_struct: T,
+    ip_send_struct: &'a T,
     client: Cell<Option<&'a ICMP6SendClient>>,
 }
 
 impl<'a, T: IP6Sender<'a>> ICMP6SendStruct<'a, T> {
-    pub fn new(ip_send_struct: T) -> ICMP6SendStruct<'a, T> {
+    pub fn new(ip_send_struct: &'a T) -> ICMP6SendStruct<'a, T> {
         ICMP6SendStruct {
             ip_send_struct: ip_send_struct,
             client: Cell::new(None),

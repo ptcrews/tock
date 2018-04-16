@@ -80,6 +80,7 @@ pub struct LowpanTest<'a, A: time::Alarm + 'a> {
     udp_sender: &'a UDPSender<'a>,
     icmp_sender: &'a ICMP6Sender<'a>,
 }
+
 //TODO: Initialize UDP sender/send_done client in initialize all
 pub unsafe fn initialize_all(radio_mac: &'static Mac,
                       mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
@@ -99,6 +100,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 
     let sixlowpan_state = sixlowpan as &SixlowpanState;
     let sixlowpan_tx = capsules::net::sixlowpan::TxState::new(sixlowpan_state); 
+    
     // Following code initializes an IP6Packet using the global UDP_DGRAM buffer as the payload
     let mut udp_hdr: UDPHeader = UDPHeader {
         src_port: 0,
@@ -106,12 +108,14 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         len: 0,
         cksum: 0, 
     };
+    
+    //checksum is calculated and set later
     udp_hdr.set_src_port(12345);
     udp_hdr.set_dst_port(54321);
     udp_hdr.set_len(PAYLOAD_LEN as u16 + 8);
-    //checksum is calculated and set later
 
     let mut ip6_hdr: IP6Header = IP6Header::new();
+    
     ip6_hdr.set_next_header(ip6_nh::UDP); 
     ip6_hdr.set_payload_len(PAYLOAD_LEN as u16 + 8);
     ip6_hdr.src_addr = SRC_ADDR;
@@ -133,6 +137,11 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         UDPSendStruct<'static, IP6SendStruct<'static>>,
         UDPSendStruct::new(ip6_sender)
     );
+    
+    let icmp_send_struct = static_init!(
+        ICMP6SendStruct<'static, IP6SendStruct<'static>>,
+        ICMP6SendStruct::new(ip6_sender)
+    );
 
     let app_lowpan_frag_test = static_init!(
         LowpanTest<'static,
@@ -141,12 +150,14 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
                         //sixlowpan_tx,
                         //radio_mac,
                         VirtualMuxAlarm::new(mux_alarm),
-                        udp_send_struct)
+                        udp_send_struct,
+                        icmp_send_struct)
     );
+    
     ip6_sender.set_client(udp_send_struct);
     udp_send_struct.set_client(app_lowpan_frag_test);
+    icmp_send_struct.set_client(app_lowpan_frag_test);
     app_lowpan_frag_test.alarm.set_client(app_lowpan_frag_test);
-
 
     app_lowpan_frag_test
 }
@@ -155,11 +166,24 @@ impl<'a, A: time::Alarm> capsules::net::udp::udp_send::UDPSendClient for LowpanT
     fn send_done(&self, result: ReturnCode) {
         match result {
             ReturnCode::SUCCESS => {
-                debug!("Packet Sent!");
+                debug!("UDP Packet Sent!");
                 self.schedule_next();
 
             },
-            _ => debug!("Failed to send UDP Packet!"),
+            _ => debug!("Failed to send ICMP Packet!"),
+        }
+    }
+}
+
+impl<'a, A: time::Alarm> capsules::net::icmpv6::icmpv6_send::ICMP6SendClient for LowpanTest<'a, A> {
+    fn send_done(&self, result: ReturnCode) {
+        match result {
+            ReturnCode::SUCCESS => {
+                debug!("ICMP Echo Request Packet Sent!");
+                self.schedule_next();
+
+            },
+            _ => debug!("Failed to send ICMP Packet!"),
         }
     }
 }
@@ -170,16 +194,17 @@ impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
                //radio: &'a Mac<'a>,
                alarm: A,
                //ip6_packet: &'static mut IP6Packet<'a>
-               udp_sender: &'a UDPSender<'a>) -> LowpanTest<'a, A> {
+               udp_sender: &'a UDPSender<'a>,
+               icmp_sender: &'a ICMP6Sender<'a>) -> LowpanTest<'a, A> {
         LowpanTest {
             alarm: alarm,
             //sixlowpan_tx: sixlowpan_tx,
             //radio: radio,
             test_counter: Cell::new(0),
             udp_sender: udp_sender,
+            icmp_sender: icmp_sender,
         }
     }
-
 
     pub fn start(&self) {
         //self.run_test_and_increment();
