@@ -102,6 +102,10 @@ impl ICMP6Header {
         self.options
     }
 
+    pub fn get_hdr_size(&self) -> usize {
+        return 8;
+    }
+
     pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
         let mut off = offset;  
 

@@ -32,6 +32,8 @@ mod spi_dummy;
 mod lowpan_frag_dummy;
 #[allow(dead_code)]
 mod app_layer_lowpan_frag;
+#[allow(dead_code)]
+mod app_layer_icmp_lowpan_frag;
 
 #[allow(dead_code)]
 mod power;

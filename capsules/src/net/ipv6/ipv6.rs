@@ -210,6 +210,11 @@ impl<'a> IPPayload<'a> {
                 udp_header.set_len(length);
                 (ip6_nh::UDP, length)
             },
+            TransportHeader::ICMP(mut icmp_header) => {
+                debug!("I am an ICMP Packet");
+                let length = (payload.len() + icmp_header.get_hdr_size()) as u16;
+                (ip6_nh::ICMP, length)
+            },
             _ => {
                 debug!("I am a failure!");
                 (ip6_nh::NO_NEXT, payload.len() as u16)
