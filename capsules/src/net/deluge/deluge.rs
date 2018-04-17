@@ -17,7 +17,7 @@ use net::stream::SResult;
 
 use net::deluge::trickle::{Trickle, TrickleClient};
 use net::deluge::transmit_layer::{DelugeTransmit, DelugeRxClient, DelugeTxClient};
-use net::deluge::program_state::DelugeProgramState;
+use net::deluge::program_state::{DelugeProgramState, ProgramStateClient};
 use net::deluge::program_state;
 
 #[derive(Copy, Clone)]
@@ -362,8 +362,6 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                         page_num <= self.program_state.get_current_page_number() {
                     self.tx_state_received_request(page_num, packet_num);
                 }
-                //let bit_vector = packet.
-                //self.program_state.
             },
             DelugePacketType::DataPacket { version, page_num, packet_num } => {
                 debug!("TxState: DataPacket");
@@ -378,9 +376,10 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
     fn tx_state_received_request(&self, page_num: u16, packet_num: u16) {
         debug!("Tx received request");
         // This issues an asynchronous callback
-        self.program_state.get_requested_packet(page_num as usize,
-                                                packet_num as usize,
-                                                &mut packet_buf);
+        if self.program_state.get_requested_packet(page_num as usize,
+                                                packet_num as usize) {
+            self.transition_state(DelugeState::TxPageWait);
+        }
     }
 
     // TODO: remove version number here
@@ -389,13 +388,16 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                                      page_num: u16,
                                      packet_num: u16,
                                      payload: &[u8]) {
-        // TODO: Check for errors vs completion
         // TODO: Check CRC
         debug!("Received data packet");
-        self.program_state.receive_packet(version as usize,
-                                          page_num as usize,
-                                          packet_num as usize,
-                                          payload);
+        // NOTE: If we receive an invalid packet here, we just drop it
+        // and don't return an error - this should probably be changed
+        if self.program_state.receive_packet(version as usize,
+                                             page_num as usize,
+                                             packet_num as usize,
+                                             payload) {
+            self.transmit_state(DelugeState::RxPageWait);
+        }
     }
 
     fn transmit_packet(&self, deluge_packet: &DelugePacket) {
@@ -411,18 +413,18 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
 impl<'a, A: time::Alarm + 'a> ProgramStateClient for DelugeData<'a, A> {
     // Read a page for transmit
     // Need page number, packet number
-    fn page_read_complete(&self, buffer: &[u8]) {
+    fn program_state_read_complete(&self, buffer: &[u8]) {
         let mut packet_buf: [u8; program_state::PACKET_SIZE] = [0; program_state::PACKET_SIZE];
-        let payload_type = DelugePacketType::DataPacket { self.program_state.current_version_number(),
-                                                          page_num,
-                                                          packet_num };
+        let payload_type = DelugePacketType::DataPacket { version: self.program_state.current_version_number(),
+                                                          page_num: page_num,
+                                                          packet_num: packet_num };
         let mut deluge_packet = DelugePacket::new(&packet_buf);
         deluge_packet.payload_type = payload_type;
         self.transmit_packet(&deluge_packet);
     }
 
     // Must have received a packet
-    fn page_write_complete(&self, page_completed: bool) {
+    fn program_state_write_complete(&self, page_completed: bool) {
         if page_completed && self.state.get() == DelugeState::Receive {
             // If we completed a page and are in the receive state, transition to mt
             self.transition_state(DelugeState::Maintenance);

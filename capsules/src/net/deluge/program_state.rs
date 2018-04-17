@@ -1,15 +1,16 @@
 use core::cell::Cell;
+use kernel::returncode::ReturnCode;
 use kernel::common::take_cell::TakeCell;
 use net::deluge::flash_layer::DelugeFlashTrait;
 
 pub trait DelugeFlashState {
-    fn get_page(&self, page_num: usize);
-    fn page_completed(&self, page_num: usize, completed_page: &[u8]);
+    fn get_page(&self, page_num: usize) -> ReturnCode;
+    fn page_completed(&self, page_num: usize, completed_page: &[u8]) -> ReturnCode;
 }
 
 pub trait ProgramStateClient {
-    fn packet_request_complete(&self, buffer: &[u8]);
-    fn page_write_complete(&self);
+    fn program_state_read_complete(&self, page_numbuffer: &[u8]);
+    fn program_state_write_complete(&self, page_num: usize, packet_num: usize);
 }
 
 pub trait DelugeProgramState<'a> {
@@ -18,7 +19,7 @@ pub trait DelugeProgramState<'a> {
     fn current_page_number(&self) -> usize;
     fn current_version_number(&self) -> usize;
     fn current_packet_number(&self) -> usize;
-    fn get_requested_packet(&self, page_num: usize, packet_num: usize, buf: &mut [u8]) -> bool;
+    fn get_requested_packet(&self, page_num: usize, packet_num: usize) -> bool;
     fn set_flash_client(&self, flash_driver: &'a DelugeFlashState);
     fn set_client(&self, client: &'a ProgramStateClient);
 }
@@ -27,12 +28,11 @@ pub const PAGE_SIZE: usize = 512;
 pub const PACKET_SIZE: usize = 64;
 //const BIT_VECTOR_SIZE: usize = (PAGE_SIZE/PACKET_SIZE)/8;
 
-pub enum ReturnType {
+pub enum ProgramStateReturnType {
     ERROR,
     OUTDATED,
     INVALID_PACKET,
     BUSY,
-
 }
 
 // TODO: Support odd-sized last pages
@@ -59,7 +59,6 @@ pub struct ProgramState<'a> {
 impl<'a> ProgramState<'a> {
     // We load the first page on initialization
     pub fn new(unique_id: usize,
-               page_len: usize,
                tx_page: &'static mut [u8; PAGE_SIZE],
                rx_page: &'static mut [u8; PAGE_SIZE]) -> ProgramState<'a> {
         ProgramState {
@@ -80,17 +79,13 @@ impl<'a> ProgramState<'a> {
         }
     }
 
-    fn page_completed(&self) {
+    fn page_completed(&self) -> ReturnCode {
         let rx_page = self.rx_page.take().unwrap();
         self.flash_driver.get().map(|flash_driver| {
             // TODO: Might be busy
             flash_driver.page_completed(self.rx_page_num.get(), rx_page);
             self.rx_page_num.set(self.rx_page_num.get() + 1);
             self.rx_largest_packet.set(0);
-            /*
-            if client.get_page(self.rx_page_num.get() + 1, rx_page) {
-            }
-            */
         });
         self.rx_page.replace(rx_page);
     }
@@ -98,11 +93,11 @@ impl<'a> ProgramState<'a> {
 
 impl<'a> DelugeFlashTrait for ProgramState<'a> {
     fn read_complete(&self, buffer: &[u8]) {
-        self.client.map(|client| client.packet_request_complete(buffer));
+        self.client.map(|client| client.program_state_read_complete(buffer));
     }
 
     fn write_complete(&self) {
-        self.client.map(|client| client.packet_receive_complete());
+        self.client.map(|client| client.program_state_write_complete());
     }
 }
 
@@ -150,8 +145,9 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         // TODO: Mark complete
         if packet_num * PACKET_SIZE == PAGE_SIZE {
             self.page_completed();
+            return true;
         }
-        true
+        false
     }
 
     fn current_page_number(&self) -> usize {
@@ -187,6 +183,7 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
             //self.client.get().map(|client| client.get_page(page_num, tx_page)).unwrap();
             self.tx_page.replace(tx_page);
             self.tx_page_num.set(page_num);
+            return true;
         }
         self.tx_page.map(|tx_page| buf.copy_from_slice(&tx_page[offset..offset+PACKET_SIZE]));
         true
