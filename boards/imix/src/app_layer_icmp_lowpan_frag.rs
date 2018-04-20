@@ -64,7 +64,7 @@ static mut RX_STATE_BUF: [u8; 1280] = [0x0; 1280];
 pub const TEST_DELAY_MS: u32 = 10000;
 pub const TEST_LOOP: bool = false;
 
-static mut ICMP_PAYLOAD: [u8; 200] = [0; 200];
+static mut ICMP_PAYLOAD: [u8; 10] = [0; 10];
 
 pub static mut RF233_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_SIZE];
 

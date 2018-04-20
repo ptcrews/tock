@@ -247,7 +247,7 @@ impl<'a> IPPayload<'a> {
             },
             TransportHeader::ICMP(icmp_header) => {
                 // TODO
-                return 200;
+                return 10;
             },
             _ => {
                 unimplemented!();
@@ -289,7 +289,8 @@ impl<'a> IP6Packet<'a> {
     pub fn get_total_hdr_size(&self) -> usize {
         let transport_hdr_size = match self.payload.header {
             TransportHeader::UDP(udp_hdr) => udp_hdr.get_hdr_size(),
-            _ => 0, 
+            TransportHeader::ICMP(icmp_header) => icmp_header.get_hdr_size(),
+            _ => unimplemented!(), 
         };
         40 + transport_hdr_size
     }
@@ -310,7 +311,7 @@ impl<'a> IP6Packet<'a> {
             },
             TransportHeader::ICMP(ref mut icmp_header) => {
 
-                let cksum = compute_icmp_checksum(&self.header, &icmp_header, 200, // TODO
+                let cksum = compute_icmp_checksum(&self.header, &icmp_header, 10, // TODO
                 self.payload.payload);
 
                 icmp_header.set_cksum(cksum);
