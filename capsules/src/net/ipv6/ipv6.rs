@@ -2,7 +2,7 @@
    of the networking stack. For a full description of the networking stack on
    tock, see the Thread_Stack_Design.txt document */
 
-use net::ipv6::ip_utils::{IPAddr, compute_udp_checksum, ip6_nh};
+use net::ipv6::ip_utils::{IPAddr, compute_udp_checksum, compute_icmp_checksum, ip6_nh};
 use ieee802154::mac::{Frame, Mac};
 use net::ieee802154::MacAddress;
 use net::udp::udp::{UDPHeader};
@@ -227,6 +227,9 @@ impl<'a> IPPayload<'a> {
             TransportHeader::UDP(udp_header) => {
                 udp_header.encode(buf, offset).done().unwrap()
             },
+            TransportHeader::ICMP(icmp_header) => {
+                icmp_header.encode(buf, offset).done().unwrap()
+            },
             _ => {
                 unimplemented!();
                 stream_done!(offset, offset);
@@ -241,6 +244,10 @@ impl<'a> IPPayload<'a> {
         match self.header {
             TransportHeader::UDP(udp_header) => {
                 udp_header.get_len() as usize - udp_header.get_hdr_size()
+            },
+            TransportHeader::ICMP(icmp_header) => {
+                // TODO
+                return 200;
             },
             _ => {
                 unimplemented!();
@@ -300,7 +307,13 @@ impl<'a> IP6Packet<'a> {
                 self.payload.payload);
 
                 udp_header.set_cksum(cksum);
+            },
+            TransportHeader::ICMP(ref mut icmp_header) => {
 
+                let cksum = compute_icmp_checksum(&self.header, &icmp_header, 200, // TODO
+                self.payload.payload);
+
+                icmp_header.set_cksum(cksum);
             },
             _ => {
                 unimplemented!();

@@ -139,8 +139,8 @@ pub fn compute_udp_checksum(ip6_header: &IP6Header,
 
 pub fn compute_icmp_checksum(ipv6_header: &IP6Header,
                             icmp_header: &ICMP6Header,
-                            payload: &[u8],
-                            payload_len: u16)
+                            payload_len: u16,
+                            payload: &[u8])
                             -> u16 {
 
     let mut sum: u32 = 0;
