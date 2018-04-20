@@ -473,7 +473,12 @@ pub unsafe fn reset_handler() {
                                                                  sam4l::ast::Ast>);
     radio_mac.set_transmit_client(lowpan_frag_test);*/  //Uncomment for 6lowpan frag test
 
-    let app_lowpan_frag_test = app_layer_lowpan_frag::initialize_all(radio_mac as &'static Mac,
+/*    let app_lowpan_frag_test = app_layer_lowpan_frag::initialize_all(radio_mac as &'static Mac,
+                                                          mux_alarm as &'static
+                                                             MuxAlarm<'static,
+                                                                 sam4l::ast::Ast>);*/
+    
+    let app_lowpan_icmp_frag_test = app_layer_icmp_lowpan_frag::initialize_all(radio_mac as &'static Mac,
                                                           mux_alarm as &'static
                                                              MuxAlarm<'static,
                                                                  sam4l::ast::Ast>);
@@ -531,6 +536,7 @@ pub unsafe fn reset_handler() {
                                     FAULT_RESPONSE);
 
 //    lowpan_frag_test.start();
-    app_lowpan_frag_test.start();
+//    app_lowpan_frag_test.start();
+    app_lowpan_icmp_frag_test.start();
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }
