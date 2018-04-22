@@ -11,6 +11,7 @@ pub struct ICMP6Header {
     pub code: u8,
     pub cksum: u16,
     pub options: ICMP6HeaderOptions,
+    pub len: u16,  // Not ICMP field, here for convenience
 }
 
 #[derive(Copy, Clone)]
@@ -44,6 +45,7 @@ impl ICMP6Header {
             code: 0,
             cksum: 0,
             options: options,
+            len: 0,
         }
     }
 
@@ -70,6 +72,10 @@ impl ICMP6Header {
 
     pub fn set_options(&mut self, options: ICMP6HeaderOptions) {
         self.options = options;
+    }
+
+    pub fn set_len(&mut self, len: u16) {
+        self.len = len;
     }
 
     pub fn get_type(&self) -> ICMP6Type {
@@ -102,6 +108,10 @@ impl ICMP6Header {
         self.options
     }
 
+    pub fn get_len(&self) -> u16 {
+        return self.len;
+    }
+    
     pub fn get_hdr_size(&self) -> usize {
         return 8;
     }

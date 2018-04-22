@@ -139,7 +139,6 @@ pub fn compute_udp_checksum(ip6_header: &IP6Header,
 
 pub fn compute_icmp_checksum(ipv6_header: &IP6Header,
                             icmp_header: &ICMP6Header,
-                            payload_len: u16,
                             payload: &[u8])
                             -> u16 {
 
@@ -170,6 +169,7 @@ pub fn compute_icmp_checksum(ipv6_header: &IP6Header,
     }
 
     // add icmp payload
+    let payload_len = icmp_header.get_len() - icmp_header.get_hdr_size() as u16;
     sum += compute_sum(payload, payload_len);
 
     // carry overflow

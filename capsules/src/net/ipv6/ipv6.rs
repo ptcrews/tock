@@ -213,6 +213,7 @@ impl<'a> IPPayload<'a> {
             TransportHeader::ICMP(mut icmp_header) => {
                 debug!("I am an ICMP Packet");
                 let length = (payload.len() + icmp_header.get_hdr_size()) as u16;
+                icmp_header.set_len(length);
                 (ip6_nh::ICMP, length)
             },
             _ => {
@@ -246,8 +247,7 @@ impl<'a> IPPayload<'a> {
                 udp_header.get_len() as usize - udp_header.get_hdr_size()
             },
             TransportHeader::ICMP(icmp_header) => {
-                // TODO
-                return 10;
+                icmp_header.get_len() as usize - icmp_header.get_hdr_size()
             },
             _ => {
                 unimplemented!();
@@ -304,15 +304,15 @@ impl<'a> IP6Packet<'a> {
         match self.payload.header {
             TransportHeader::UDP(ref mut udp_header) => {
 
-                let cksum = compute_udp_checksum(&self.header, &udp_header, udp_header.get_len(),
-                self.payload.payload);
+                let cksum = compute_udp_checksum(&self.header, &udp_header, udp_header.get_len(), 
+                                                 self.payload.payload);
 
                 udp_header.set_cksum(cksum);
             },
             TransportHeader::ICMP(ref mut icmp_header) => {
 
-                let cksum = compute_icmp_checksum(&self.header, &icmp_header, 10, // TODO
-                self.payload.payload);
+                let cksum = compute_icmp_checksum(&self.header, &icmp_header, 
+                                                  self.payload.payload);
 
                 icmp_header.set_cksum(cksum);
             },
