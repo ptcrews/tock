@@ -35,9 +35,9 @@ use capsules::net::ipv6::ip_utils::{IPAddr, ip6_nh};
 use capsules::net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader, IPPayload};
 use capsules::net::udp::udp::{UDPHeader};
 use capsules::net::udp::udp_send::{UDPSendStruct, UDPSender, UDPSendClient};
-use capsules::net::sixlowpan::{Sixlowpan, SixlowpanState, TxState, SixlowpanTxClient};
-use capsules::net::sixlowpan_compression;
-use capsules::net::sixlowpan_compression::Context;
+use capsules::net::sixlowpan::sixlowpan_state::{Sixlowpan, SixlowpanState, TxState, SixlowpanTxClient};
+use capsules::net::sixlowpan::sixlowpan_compression;
+use capsules::net::sixlowpan::sixlowpan_compression::Context;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use core::cell::Cell;
 use capsules::net::ipv6::ipv6_send::{IP6SendStruct, IP6Sender};
@@ -85,8 +85,8 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 
     let sixlowpan =
         static_init!(
-            capsules::net::sixlowpan::Sixlowpan<'static, sam4l::ast::Ast<'static>, capsules::net::sixlowpan_compression::Context>,
-            capsules::net::sixlowpan::Sixlowpan::new(capsules::net::sixlowpan_compression::Context {
+            Sixlowpan<'static, sam4l::ast::Ast<'static>, sixlowpan_compression::Context>,
+            Sixlowpan::new(sixlowpan_compression::Context {
                                                      prefix: DEFAULT_CTX_PREFIX,
                                                      prefix_len: DEFAULT_CTX_PREFIX_LEN,
                                                      id: 0,
@@ -95,7 +95,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
                                                  &sam4l::ast::AST));
 
     let sixlowpan_state = sixlowpan as &SixlowpanState;
-    let sixlowpan_tx = capsules::net::sixlowpan::TxState::new(sixlowpan_state); 
+    let sixlowpan_tx = TxState::new(sixlowpan_state); 
     // Following code initializes an IP6Packet using the global UDP_DGRAM buffer as the payload
     let mut udp_hdr: UDPHeader = UDPHeader {
         src_port: 0,

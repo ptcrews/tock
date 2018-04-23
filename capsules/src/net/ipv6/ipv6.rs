@@ -8,7 +8,7 @@ use net::ieee802154::MacAddress;
 use net::udp::udp::{UDPHeader};
 use net::tcp::{TCPHeader};
 use net::icmpv6::icmpv6::{ICMP6Header};
-use net::sixlowpan::{TxState, SixlowpanTxClient};
+use net::sixlowpan::sixlowpan_state::{TxState, SixlowpanTxClient};
 use kernel::ReturnCode;
 use kernel::common::take_cell::TakeCell;
 use core::cell::Cell;
