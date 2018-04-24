@@ -603,23 +603,23 @@ pub unsafe fn reset_handler() {
     );
     hil::nonvolatile_storage::NonvolatileStorage::set_client(nv_to_page, nonvolatile_storage);
 
-/*    let lowpan_frag_test = lowpan_frag_dummy::initialize_all(radio_mac as &'static Mac,
+    /*    let lowpan_frag_test = lowpan_frag_dummy::initialize_all(radio_mac as &'static Mac,
                                                           mux_alarm as &'static
                                                              MuxAlarm<'static,
                                                                  sam4l::ast::Ast>);
-    radio_mac.set_transmit_client(lowpan_frag_test);*/  //Uncomment for 6lowpan frag test
+    radio_mac.set_transmit_client(lowpan_frag_test);*/
+ //Uncomment for 6lowpan frag test
 
-/*    let app_lowpan_frag_test = app_layer_lowpan_frag::initialize_all(radio_mac as &'static Mac,
+    /*    let app_lowpan_frag_test = app_layer_lowpan_frag::initialize_all(radio_mac as &'static Mac,
                                                           mux_alarm as &'static
                                                              MuxAlarm<'static,
                                                                  sam4l::ast::Ast>);*/
-    
-    let app_lowpan_icmp_frag_test = app_layer_icmp_lowpan_frag::initialize_all(radio_mac as &'static MacDevice,
-                                                          mux_alarm as &'static
-                                                             MuxAlarm<'static,
-                                                                 sam4l::ast::Ast>);
+
+    let app_lowpan_icmp_frag_test = app_layer_icmp_lowpan_frag::initialize_all(
+        radio_mac as &'static MacDevice,
+        mux_alarm as &'static MuxAlarm<'static, sam4l::ast::Ast>,
+    );
     //radio_mac.set_transmit_client(app_lowpan_frag_test);
-    
 
     let imix = Imix {
         console: console,
@@ -653,8 +653,6 @@ pub unsafe fn reset_handler() {
     }
     sam4l::gpio::PB[07].set();
 
-
-
     imix.nrf51822.initialize();
 
     // These two lines need to be below the creation of the chip for
@@ -673,8 +671,8 @@ pub unsafe fn reset_handler() {
         &mut PROCESSES,
         FAULT_RESPONSE,
     );
-//    lowpan_frag_test.start();
-//    app_lowpan_frag_test.start();
+    //    lowpan_frag_test.start();
+    //    app_lowpan_frag_test.start();
     app_lowpan_icmp_frag_test.start();
 
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);

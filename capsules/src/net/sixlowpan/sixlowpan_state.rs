@@ -234,11 +234,11 @@ use kernel::hil::radio;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
 use net::frag_utils::Bitmap;
-use net::ieee802154::{PanID, MacAddress, SecurityLevel, KeyId, Header};
-use net::sixlowpan::sixlowpan_compression;
-use net::sixlowpan::sixlowpan_compression::{ContextStore, is_lowpan};
-use net::util::{slice_to_u16, u16_to_slice};
+use net::ieee802154::{Header, KeyId, MacAddress, PanID, SecurityLevel};
 use net::ipv6::ipv6::IP6Packet;
+use net::sixlowpan::sixlowpan_compression;
+use net::sixlowpan::sixlowpan_compression::{is_lowpan, ContextStore};
+use net::util::{slice_to_u16, u16_to_slice};
 
 // Reassembly timeout in seconds
 const FRAG_TIMEOUT: u32 = 60;
@@ -313,7 +313,6 @@ pub trait SixlowpanState<'a> {
 /// per-fragmentation state, and some global state.
 pub struct TxState<'a> {
     // State for the current transmission
-
     src_pan: Cell<PanID>,
     dst_pan: Cell<PanID>,
     src_mac_addr: Cell<MacAddress>,
@@ -355,10 +354,12 @@ impl<'a> TxState<'a> {
         }
     }
 
-    pub fn init(&self,
-                src_mac_addr: MacAddress,
-                dst_mac_addr: MacAddress,
-                security: Option<(SecurityLevel, KeyId)>) -> ReturnCode {
+    pub fn init(
+        &self,
+        src_mac_addr: MacAddress,
+        dst_mac_addr: MacAddress,
+        security: Option<(SecurityLevel, KeyId)>,
+    ) -> ReturnCode {
         if self.busy.get() {
             ReturnCode::EBUSY
         } else {
@@ -371,19 +372,22 @@ impl<'a> TxState<'a> {
     }
 
     // Assumes we have already called init
-    pub fn next_fragment<'b>(&self,
-                         ip6_packet: &'b IP6Packet<'b>,
-                         frag_buf: &'static mut [u8],
-                         radio: &MacDevice)
-                         -> Result<(bool, Frame), (ReturnCode, &'static mut [u8])> {
-
+    pub fn next_fragment<'b>(
+        &self,
+        ip6_packet: &'b IP6Packet<'b>,
+        frag_buf: &'static mut [u8],
+        radio: &MacDevice,
+    ) -> Result<(bool, Frame), (ReturnCode, &'static mut [u8])> {
         // This consumes frag_buf
-        let frame = radio.prepare_data_frame(frag_buf,
-                                             self.dst_pan.get(),
-                                             self.dst_mac_addr.get(),
-                                             self.src_pan.get(),
-                                             self.src_mac_addr.get(),
-                                             self.security.get())
+        let frame = radio
+            .prepare_data_frame(
+                frag_buf,
+                self.dst_pan.get(),
+                self.dst_mac_addr.get(),
+                self.src_pan.get(),
+                self.src_mac_addr.get(),
+                self.security.get(),
+            )
             .map_err(|frame| (ReturnCode::FAIL, frame))?;
 
         // If this is the first fragment
@@ -412,32 +416,35 @@ impl<'a> TxState<'a> {
 
     // Frag_buf needs to be >= 802.15.4 MTU
     // The radio takes frag_buf, consumes it, returns Frame or Error
-    fn start_transmit<'b>(&self,
-                          ip6_packet: &'b IP6Packet<'b>,
-                          frame: Frame,
-                          ctx_store: &ContextStore)
-                      -> Result<Frame, (ReturnCode, &'static mut [u8])> {
+    fn start_transmit<'b>(
+        &self,
+        ip6_packet: &'b IP6Packet<'b>,
+        frame: Frame,
+        ctx_store: &ContextStore,
+    ) -> Result<Frame, (ReturnCode, &'static mut [u8])> {
         self.busy.set(true);
         self.dgram_size.set(ip6_packet.get_total_len());
         self.dgram_tag.set(self.sixlowpan.next_dgram_tag());
         self.prepare_first_fragment(ip6_packet, frame, ctx_store)
     }
 
-    fn prepare_first_fragment<'b>(&self,
-                                  ip6_packet: &'b IP6Packet<'b>,
-                                  mut frame: Frame,
-                                  ctx_store: &ContextStore)
-                                  -> Result<Frame, (ReturnCode, &'static mut [u8])> {
-
+    fn prepare_first_fragment<'b>(
+        &self,
+        ip6_packet: &'b IP6Packet<'b>,
+        mut frame: Frame,
+        ctx_store: &ContextStore,
+    ) -> Result<Frame, (ReturnCode, &'static mut [u8])> {
         // Here, we assume that the compressed headers fit in the first MTU
         // fragment. This is consistent with RFC 6282.
         let mut lowpan_packet = [0 as u8; radio::MAX_FRAME_SIZE as usize];
         let (consumed, written) = {
-            match sixlowpan_compression::compress(ctx_store,
-                                                  ip6_packet,
-                                                  self.src_mac_addr.get(),
-                                                  self.dst_mac_addr.get(),
-                                                  &mut lowpan_packet) {
+            match sixlowpan_compression::compress(
+                ctx_store,
+                ip6_packet,
+                self.src_mac_addr.get(),
+                self.dst_mac_addr.get(),
+                &mut lowpan_packet,
+            ) {
                 Err(_) => return Err((ReturnCode::FAIL, frame.into_buf())),
                 Ok(result) => result,
             }
@@ -472,21 +479,19 @@ impl<'a> TxState<'a> {
             remaining_payload
         };
         // TODO: Check success
-        let (payload_len, consumed) = self.write_additional_headers(ip6_packet,
-                                                                    &mut frame,
-                                                                    consumed,
-                                                                    payload_len);
+        let (payload_len, consumed) =
+            self.write_additional_headers(ip6_packet, &mut frame, consumed, payload_len);
 
         frame.append_payload(&ip6_packet.get_payload()[0..payload_len]);
         self.dgram_offset.set(consumed + payload_len);
         Ok(frame)
     }
 
-    fn prepare_next_fragment<'b>(&self,
-                                 ip6_packet: &'b IP6Packet<'b>,
-                                 mut frame: Frame)
-        -> Result<Frame, (ReturnCode, &'static mut [u8])> {
-
+    fn prepare_next_fragment<'b>(
+        &self,
+        ip6_packet: &'b IP6Packet<'b>,
+        mut frame: Frame,
+    ) -> Result<Frame, (ReturnCode, &'static mut [u8])> {
         let dgram_offset = self.dgram_offset.get();
         let mut remaining_capacity = frame.remaining_data_capacity();
         remaining_capacity -= self.write_frag_hdr(&mut frame, false);
@@ -500,14 +505,14 @@ impl<'a> TxState<'a> {
             remaining_payload
         };
 
-        let (payload_len, dgram_offset) = self.write_additional_headers(ip6_packet,
-                                                                        &mut frame,
-                                                                        dgram_offset,
-                                                                        payload_len);
+        let (payload_len, dgram_offset) =
+            self.write_additional_headers(ip6_packet, &mut frame, dgram_offset, payload_len);
 
         if payload_len > 0 {
             let payload_offset = dgram_offset - ip6_packet.get_total_hdr_size();
-            frame.append_payload(&ip6_packet.get_payload()[payload_offset..payload_offset + payload_len]);
+            frame.append_payload(
+                &ip6_packet.get_payload()[payload_offset..payload_offset + payload_len],
+            );
         }
 
         // Update the offset to be used for the next fragment
@@ -517,11 +522,13 @@ impl<'a> TxState<'a> {
 
     // NOTE: This function will not work for headers that span past the first
     // frame.
-    fn write_additional_headers<'b>(&self,
-                                    ip6_packet: &'b IP6Packet<'b>,
-                                    frame: &mut Frame,
-                                    dgram_offset: usize,
-                                    payload_len: usize) -> (usize, usize) {
+    fn write_additional_headers<'b>(
+        &self,
+        ip6_packet: &'b IP6Packet<'b>,
+        frame: &mut Frame,
+        dgram_offset: usize,
+        payload_len: usize,
+    ) -> (usize, usize) {
         let total_hdr_len = ip6_packet.get_total_hdr_size();
         let mut payload_len = payload_len;
         let mut dgram_offset = dgram_offset;
@@ -533,7 +540,7 @@ impl<'a> TxState<'a> {
             // functionality should be fixed in the future.
             let mut headers = [0 as u8; 60];
             ip6_packet.encode(&mut headers);
-            frame.append_payload(&mut headers[dgram_offset..dgram_offset+headers_to_write]);
+            frame.append_payload(&mut headers[dgram_offset..dgram_offset + headers_to_write]);
             payload_len -= headers_to_write;
             dgram_offset += headers_to_write;
         }
@@ -543,22 +550,26 @@ impl<'a> TxState<'a> {
     fn write_frag_hdr(&self, frame: &mut Frame, first_frag: bool) -> usize {
         if first_frag {
             let mut frag_header = [0 as u8; lowpan_frag::FRAG1_HDR_SIZE];
-            set_frag_hdr(self.dgram_size.get(),
-                         self.dgram_tag.get(),
-                         /*offset = */
-                         0,
-                         &mut frag_header,
-                         true);
+            set_frag_hdr(
+                self.dgram_size.get(),
+                self.dgram_tag.get(),
+                /*offset = */
+                0,
+                &mut frag_header,
+                true,
+            );
             // TODO: Check success
             frame.append_payload(&frag_header);
             lowpan_frag::FRAG1_HDR_SIZE
         } else {
             let mut frag_header = [0 as u8; lowpan_frag::FRAGN_HDR_SIZE];
-            set_frag_hdr(self.dgram_size.get(),
-                         self.dgram_tag.get(),
-                         self.dgram_offset.get(),
-                         &mut frag_header,
-                         first_frag);
+            set_frag_hdr(
+                self.dgram_size.get(),
+                self.dgram_tag.get(),
+                self.dgram_offset.get(),
+                &mut frag_header,
+                first_frag,
+            );
             // TODO: Check success
             frame.append_payload(&frag_header);
             lowpan_frag::FRAGN_HDR_SIZE
@@ -767,7 +778,6 @@ impl<'a, A: time::Alarm, C: ContextStore> RxClient for Sixlowpan<'a, A, C> {
 }
 
 impl<'a, A: time::Alarm, C: ContextStore> SixlowpanState<'a> for Sixlowpan<'a, A, C> {
-
     fn next_dgram_tag(&self) -> u16 {
         // Increment dgram_tag
         let dgram_tag = if (self.tx_dgram_tag.get() + 1) == 0 {
@@ -777,7 +787,6 @@ impl<'a, A: time::Alarm, C: ContextStore> SixlowpanState<'a> for Sixlowpan<'a, A
         };
         self.tx_dgram_tag.set(dgram_tag);
         dgram_tag
-
     }
 
     fn get_ctx_store(&self) -> &ContextStore {
@@ -797,7 +806,6 @@ impl<'a, A: time::Alarm, C: ContextStore> SixlowpanState<'a> for Sixlowpan<'a, A
     fn set_rx_client(&'a self, client: &'a SixlowpanRxClient) {
         self.rx_client.set(Some(client));
     }
-
 }
 
 impl<'a, A: time::Alarm, C: ContextStore> Sixlowpan<'a, A, C> {
@@ -814,9 +822,7 @@ impl<'a, A: time::Alarm, C: ContextStore> Sixlowpan<'a, A, C> {
     /// * `clock` - A implementation of `Alarm` used for tracking the timing of
     /// frame arrival. The clock should be continue running during sleep and
     /// have an accuracy of at least 60 seconds.
-    pub fn new(ctx_store: C,
-               clock: &'a A)
-               -> Sixlowpan<'a, A, C> {
+    pub fn new(ctx_store: C, clock: &'a A) -> Sixlowpan<'a, A, C> {
         Sixlowpan {
             ctx_store: ctx_store,
             clock: clock,

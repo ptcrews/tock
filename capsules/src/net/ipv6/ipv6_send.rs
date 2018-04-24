@@ -1,11 +1,11 @@
-use net::ipv6::ip_utils::IPAddr;
+use core::cell::Cell;
 use ieee802154::device::{MacDevice, TxClient};
-use net::ieee802154::MacAddress;
-use net::sixlowpan::sixlowpan_state::TxState;
-use net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader};
 use kernel::ReturnCode;
 use kernel::common::take_cell::TakeCell;
-use core::cell::Cell;
+use net::ieee802154::MacAddress;
+use net::ipv6::ip_utils::IPAddr;
+use net::ipv6::ipv6::{IP6Header, IP6Packet, TransportHeader};
+use net::sixlowpan::sixlowpan_state::TxState;
 
 // TODO: These should *not* be constants, and should be set at some other
 // point during the initialization of the IP stack
@@ -29,7 +29,6 @@ pub trait IP6Sender<'a> {
         -> ReturnCode;
 }
 
-
 pub struct IP6SendStruct<'a> {
     // We want the ip6_packet field to be a TakeCell so that it is easy to mutate
     ip6_packet: TakeCell<'static, IP6Packet<'static>>,
@@ -42,7 +41,6 @@ pub struct IP6SendStruct<'a> {
 }
 
 impl<'a> IP6Sender<'a> for IP6SendStruct<'a> {
-
     fn set_client(&self, client: &'a IP6Client) {
         self.client.set(Some(client));
     }
@@ -56,11 +54,16 @@ impl<'a> IP6Sender<'a> for IP6SendStruct<'a> {
     }
 
     fn set_header(&mut self, ip6_header: IP6Header) {
-        self.ip6_packet.map(|ip6_packet| ip6_packet.header = ip6_header);
+        self.ip6_packet
+            .map(|ip6_packet| ip6_packet.header = ip6_header);
     }
 
-    fn send_to(&self, dst: IPAddr, transport_header: TransportHeader, payload: &[u8])
-        -> ReturnCode {
+    fn send_to(
+        &self,
+        dst: IPAddr,
+        transport_header: TransportHeader,
+        payload: &[u8],
+    ) -> ReturnCode {
         self.sixlowpan.init(SRC_MAC_ADDR, DST_MAC_ADDR, None);
         self.init_packet(dst, transport_header, payload);
         self.send_next_fragment()
@@ -68,10 +71,12 @@ impl<'a> IP6Sender<'a> for IP6SendStruct<'a> {
 }
 
 impl<'a> IP6SendStruct<'a> {
-    pub fn new(ip6_packet: &'static mut IP6Packet<'static>,
-               tx_buf: &'static mut [u8],
-               sixlowpan: TxState<'a>,
-               radio: &'a MacDevice<'a>) -> IP6SendStruct<'a> {
+    pub fn new(
+        ip6_packet: &'static mut IP6Packet<'static>,
+        tx_buf: &'static mut [u8],
+        sixlowpan: TxState<'a>,
+        radio: &'a MacDevice<'a>,
+    ) -> IP6SendStruct<'a> {
         IP6SendStruct {
             ip6_packet: TakeCell::new(ip6_packet),
             src_addr: Cell::new(IPAddr::new()),
@@ -79,14 +84,11 @@ impl<'a> IP6SendStruct<'a> {
             tx_buf: TakeCell::new(tx_buf),
             sixlowpan: sixlowpan,
             radio: radio,
-            client: Cell::new(None), 
+            client: Cell::new(None),
         }
     }
 
-    fn init_packet(&self,
-                   dst_addr: IPAddr,
-                   transport_header: TransportHeader,
-                   payload: &[u8]) {
+    fn init_packet(&self, dst_addr: IPAddr, transport_header: TransportHeader, payload: &[u8]) {
         self.ip6_packet.map(|ip6_packet| {
             ip6_packet.header = IP6Header::default();
             ip6_packet.header.src_addr = self.src_addr.get();
@@ -98,8 +100,8 @@ impl<'a> IP6SendStruct<'a> {
 
     // Returns EBUSY if the tx_buf is not there
     fn send_next_fragment(&self) -> ReturnCode {
-        self.ip6_packet.map(move |ip6_packet| {
-            match self.tx_buf.take() {
+        self.ip6_packet
+            .map(move |ip6_packet| match self.tx_buf.take() {
                 Some(tx_buf) => {
                     let next_frame = self.sixlowpan.next_fragment(ip6_packet, tx_buf, self.radio);
 
@@ -111,23 +113,23 @@ impl<'a> IP6SendStruct<'a> {
                             } else {
                                 self.radio.transmit(frame);
                             }
-                        },
+                        }
                         Err((retcode, buf)) => {
                             self.tx_buf.replace(buf);
                             self.send_completed(retcode);
-                        },
+                        }
                     }
                     ReturnCode::SUCCESS
-                },
-                None => {
-                    ReturnCode::EBUSY
-                },
-            }
-        }).unwrap_or(ReturnCode::ENOMEM)
+                }
+                None => ReturnCode::EBUSY,
+            })
+            .unwrap_or(ReturnCode::ENOMEM)
     }
 
     fn send_completed(&self, result: ReturnCode) {
-        self.client.get().map(move |client| client.send_done(result));
+        self.client
+            .get()
+            .map(move |client| client.send_done(result));
     }
 }
 
@@ -135,7 +137,7 @@ impl<'a> TxClient for IP6SendStruct<'a> {
     fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         self.tx_buf.replace(tx_buf);
         debug!("sendDone return code is: {:?}, acked: {}", result, acked);
-        //The below code introduces a delay between frames to prevent 
+        //The below code introduces a delay between frames to prevent
         // a race condition on the receiver
         //it is sorta complicated bc I was having some trouble with dead code eliminationa
         //TODO: Remove this one link layer is fixed

@@ -1,10 +1,9 @@
+use core::cell::Cell;
+use kernel::ReturnCode;
 use net::ipv6::ip_utils::IPAddr;
 use net::ipv6::ipv6::TransportHeader;
-use net::ipv6::ipv6_send::{IP6Sender, IP6Client};
+use net::ipv6::ipv6_send::{IP6Client, IP6Sender};
 use net::udp::udp::UDPHeader;
-use kernel::ReturnCode;
-use core::cell::Cell;
-
 
 /// The `send_done` function in this trait is invoked
 /// after the UDPSender has completed sending the
@@ -35,11 +34,9 @@ pub trait UDPSender<'a> {
     fn send(&self, dest: IPAddr, udp_header: UDPHeader, buf: &'a [u8]) -> ReturnCode;
 }
 
-
 /// Below is the implementation of the `UDPSender` traits for the
 /// `UDPSendStruct`.
 impl<'a, T: IP6Sender<'a>> UDPSender<'a> for UDPSendStruct<'a, T> {
-
     fn set_client(&self, client: &'a UDPSendClient) {
         self.client.set(Some(client));
     }

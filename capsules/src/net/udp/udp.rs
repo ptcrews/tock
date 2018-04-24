@@ -3,9 +3,9 @@
 //! as the standard encode/decode functionality required for serializing
 //! the struct for transmission.
 
+use net::stream::SResult;
 use net::stream::decode_u16;
 use net::stream::encode_u16;
-use net::stream::SResult;
 
 /// The `UDPHeader` struct is the layout for the UDP packet header.
 #[derive(Copy, Clone)]
@@ -32,7 +32,9 @@ impl UDPHeader {
         UDPHeader::default()
     }
     // TODO: Always returns size of UDP header
-    pub fn get_offset(&self) -> usize{8}
+    pub fn get_offset(&self) -> usize {
+        8
+    }
 
     pub fn set_dst_port(&mut self, port: u16) {
         self.dst_port = port;
@@ -73,7 +75,7 @@ impl UDPHeader {
     pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
         stream_len_cond!(buf, self.get_hdr_size() + offset);
 
-        let mut off = offset; 
+        let mut off = offset;
         off = enc_consume!(buf, off; encode_u16, self.src_port);
         off = enc_consume!(buf, off; encode_u16, self.dst_port);
         off = enc_consume!(buf, off; encode_u16, self.len);

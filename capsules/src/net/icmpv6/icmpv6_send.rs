@@ -3,11 +3,11 @@
 //! - Author: Conor McAvity <cmcavity@stanford.edu>
 
 use core::cell::Cell;
-use net::icmpv6::icmpv6::ICMP6Header;
-use net::ipv6::ipv6::TransportHeader;
-use net::ipv6::ip_utils::IPAddr;
-use net::ipv6::ipv6_send::{IP6Sender, IP6Client};
 use kernel::ReturnCode;
+use net::icmpv6::icmpv6::ICMP6Header;
+use net::ipv6::ip_utils::IPAddr;
+use net::ipv6::ipv6::TransportHeader;
+use net::ipv6::ipv6_send::{IP6Client, IP6Sender};
 
 pub trait ICMP6SendClient {
     fn send_done(&self, result: ReturnCode);
@@ -15,8 +15,7 @@ pub trait ICMP6SendClient {
 
 pub trait ICMP6Sender<'a> {
     fn set_client(&self, client: &'a ICMP6SendClient);
-    fn send(&self, dest: IPAddr, icmp_header: ICMP6Header, buf: &'a [u8]) 
-        -> ReturnCode;
+    fn send(&self, dest: IPAddr, icmp_header: ICMP6Header, buf: &'a [u8]) -> ReturnCode;
 }
 
 pub struct ICMP6SendStruct<'a, T: IP6Sender<'a> + 'a> {
@@ -38,8 +37,7 @@ impl<'a, T: IP6Sender<'a>> ICMP6Sender<'a> for ICMP6SendStruct<'a, T> {
         self.client.set(Some(client));
     }
 
-    fn send(&self, dest: IPAddr, icmp_header: ICMP6Header, buf: &'a [u8]) 
-            -> ReturnCode {
+    fn send(&self, dest: IPAddr, icmp_header: ICMP6Header, buf: &'a [u8]) -> ReturnCode {
         let transport_header = TransportHeader::ICMP(icmp_header);
         self.ip_send_struct.send_to(dest, transport_header, buf)
     }

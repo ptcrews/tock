@@ -33,7 +33,7 @@
 //!                                                          mux_alarm as &'static
 //!                                                             MuxAlarm<'static,
 //!                                                                 sam4l::ast::Ast>);
-//! radio_mac.set_transmit_client(lowpan_frag_test); 
+//! radio_mac.set_transmit_client(lowpan_frag_test);
 //! ...
 //! // Imix initialization
 //! ...
@@ -44,13 +44,13 @@ extern crate sam4l;
 use capsules::ieee802154::device::{MacDevice, TxClient};
 use capsules::net::ieee802154::MacAddress;
 use capsules::net::ipv6::ip_utils::{IPAddr, ip6_nh};
-use capsules::net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader, IPPayload};
-use capsules::net::udp::udp::{UDPHeader};
-use capsules::net::sixlowpan::sixlowpan_state::{Sixlowpan, SixlowpanState, RxState, TxState, SixlowpanRxClient};
+use capsules::net::ipv6::ipv6::{IP6Header, IP6Packet, IPPayload, TransportHeader};
 use capsules::net::sixlowpan::sixlowpan_compression;
+use capsules::net::sixlowpan::sixlowpan_state::{RxState, Sixlowpan, SixlowpanRxClient,
+                                                SixlowpanState, TxState};
+use capsules::net::udp::udp::UDPHeader;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use core::cell::Cell;
-
 use core::ptr;
 use kernel::ReturnCode;
 use kernel::hil::radio;
@@ -63,16 +63,18 @@ pub const MLP: [u8; 8] = [0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7];
                                      0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
 pub const DST_ADDR: IPAddr = IPAddr([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);*/ 
+                                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);*/
 
-pub const SRC_ADDR: IPAddr = IPAddr([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
-                                     0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f]);
-pub const DST_ADDR: IPAddr = IPAddr([0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29,
-                                     0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f]);
-pub const SRC_MAC_ADDR: MacAddress = MacAddress::Long([0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
-                                                       0x17]);
-pub const DST_MAC_ADDR: MacAddress = MacAddress::Long([0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
-                                                       0x1f]);
+pub const SRC_ADDR: IPAddr = IPAddr([
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
+]);
+pub const DST_ADDR: IPAddr = IPAddr([
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f
+]);
+pub const SRC_MAC_ADDR: MacAddress =
+    MacAddress::Long([0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17]);
+pub const DST_MAC_ADDR: MacAddress =
+    MacAddress::Long([0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f]);
 //TODO: No longer pass MAC addresses to 6lowpan code, so these values arent used rn
 pub const IP6_HDR_SIZE: usize = 40;
 pub const UDP_HDR_SIZE: usize = 8;
@@ -84,7 +86,7 @@ const DEFAULT_CTX_PREFIX_LEN: u8 = 8;
 static DEFAULT_CTX_PREFIX: [u8; 16] = [0x0 as u8; 16];
 static mut RX_STATE_BUF: [u8; 1280] = [0x0; 1280];
 
-#[derive(Copy,Clone,Debug,PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 enum TF {
     Inline = 0b00,
     Traffic = 0b01,
@@ -138,36 +140,34 @@ pub struct LowpanTest<'a, A: time::Alarm + 'a> {
     test_counter: Cell<usize>,
 }
 
-pub unsafe fn initialize_all(radio_mac: &'static MacDevice,
-                      mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
-        -> &'static LowpanTest<'static,
-        capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {
+pub unsafe fn initialize_all(
+    radio_mac: &'static MacDevice,
+    mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>,
+) -> &'static LowpanTest<
+    'static,
+    capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>,
+> {
+    let default_rx_state = static_init!(RxState<'static>, RxState::new(&mut RX_STATE_BUF));
 
-    let default_rx_state = static_init!(
-        RxState<'static>,
-        RxState::new(&mut RX_STATE_BUF)
-        );
-
-    let sixlowpan =
-        static_init!(
-            Sixlowpan<'static, sam4l::ast::Ast<'static>, sixlowpan_compression::Context>,
-            Sixlowpan::new(sixlowpan_compression::Context {
-                                                     prefix: DEFAULT_CTX_PREFIX,
-                                                     prefix_len: DEFAULT_CTX_PREFIX_LEN,
-                                                     id: 0,
-                                                     compress: false,
-                                                 },
-                                                 &sam4l::ast::AST));
+    let sixlowpan = static_init!(
+        Sixlowpan<'static, sam4l::ast::Ast<'static>, sixlowpan_compression::Context>,
+        Sixlowpan::new(
+            sixlowpan_compression::Context {
+                prefix: DEFAULT_CTX_PREFIX,
+                prefix_len: DEFAULT_CTX_PREFIX_LEN,
+                id: 0,
+                compress: false,
+            },
+            &sam4l::ast::AST
+        )
+    );
 
     let sixlowpan_state = sixlowpan as &SixlowpanState;
     let sixlowpan_tx = TxState::new(sixlowpan_state);
 
     let lowpan_frag_test = static_init!(
-        LowpanTest<'static,
-        VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
-        LowpanTest::new(sixlowpan_tx,
-                        radio_mac,
-                        VirtualMuxAlarm::new(mux_alarm))
+        LowpanTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
+        LowpanTest::new(sixlowpan_tx, radio_mac, VirtualMuxAlarm::new(mux_alarm))
     );
 
     sixlowpan_state.add_rx_state(default_rx_state);
@@ -181,7 +181,7 @@ pub unsafe fn initialize_all(radio_mac: &'static MacDevice,
         src_port: 0,
         dst_port: 0,
         len: 0,
-        cksum: 0, 
+        cksum: 0,
     };
     udp_hdr.set_src_port(12345);
     udp_hdr.set_dst_port(54321);
@@ -189,7 +189,7 @@ pub unsafe fn initialize_all(radio_mac: &'static MacDevice,
     //checksum is calculated and set later
 
     let mut ip6_hdr: IP6Header = IP6Header::new();
-    ip6_hdr.set_next_header(ip6_nh::UDP); 
+    ip6_hdr.set_next_header(ip6_nh::UDP);
     ip6_hdr.set_payload_len(PAYLOAD_LEN as u16);
     ip6_hdr.src_addr = SRC_ADDR;
     ip6_hdr.dst_addr = DST_ADDR;
@@ -208,17 +208,15 @@ pub unsafe fn initialize_all(radio_mac: &'static MacDevice,
 
     ip6_dg.set_transport_checksum(); //calculates and sets UDP cksum
 
-    IP6_DG_OPT = Some(ip6_dg); //Now, other places in code should have access to initialized 
-    // IP6Packet. Note that this code is inherently unsafe and we make no effort to prevent
-    // race conditions, as this is merely test code
-    //lowpan_frag_test.init();
+    IP6_DG_OPT = Some(ip6_dg);
+    //Now, other places in code should have access to initialized IP6Packet.
+    //Note that this code is inherently unsafe and we make no effort to prevent
+    //race conditions, as this is merely test code
     lowpan_frag_test
 }
 
 impl<'a, A: time::Alarm> LowpanTest<'a, A> {
-    pub fn new(sixlowpan_tx: TxState<'a>,
-               radio: &'a MacDevice<'a>,
-               alarm: A) -> LowpanTest<'a, A> {
+    pub fn new(sixlowpan_tx: TxState<'a>, radio: &'a MacDevice<'a>, alarm: A) -> LowpanTest<'a, A> {
         LowpanTest {
             alarm: alarm,
             sixlowpan_tx: sixlowpan_tx,
@@ -226,12 +224,6 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
             test_counter: Cell::new(0),
         }
     }
-
-    /*
-    pub fn init(&'a self, sixlowpan: &'a SixlowpanState) {
-        sixlowpan.set_rx_client(self);
-    }
-    */
 
     pub fn start(&self) {
         //self.run_test_and_increment();
@@ -385,19 +377,17 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
         }
     }
 
-    unsafe fn send_ipv6_packet(&self,
-                               _: &[u8]) {
+    unsafe fn send_ipv6_packet(&self, _: &[u8]) {
         self.send_next(&mut RF233_BUF);
     }
 
     fn send_next(&self, tx_buf: &'static mut [u8]) {
-        
         unsafe {
             match IP6_DG_OPT {
                 Some(ref ip6_packet) => {
-                    match self.sixlowpan_tx.next_fragment(&ip6_packet,
-                                                          tx_buf,
-                                                          self.radio) {
+                    match self.sixlowpan_tx
+                        .next_fragment(&ip6_packet, tx_buf, self.radio)
+                    {
                         Ok((is_done, frame)) => {
                             //TODO: Fix ordering so that debug output does not indicate extra frame sent
                             debug!("Sent frame!");
@@ -409,24 +399,23 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
                                 let (retcode, _opt) = self.radio.transmit(frame);
                                 debug!("Retcode from radio transmit is: {:?}", retcode);
                                 match retcode {
-                                    ReturnCode::SUCCESS => {
-                                    },
-                                    _ => debug!("Error in radio transmit") 
+                                    ReturnCode::SUCCESS => {}
+                                    _ => debug!("Error in radio transmit"),
                                 }
                             }
-                        },
+                        }
                         Err((retcode, _buf)) => {
                             debug!("ERROR!: {:?}", retcode);
-                        },
+                        }
                     }
-                },
+                }
                 None => debug!("Error! tried to send uninitialized IP6Packet"),
             }
         }
     }
 }
 
-impl<'a, A: time::Alarm> time::Client for LowpanTest<'a, A, > {
+impl<'a, A: time::Alarm> time::Client for LowpanTest<'a, A> {
     fn fired(&self) {
         self.run_test_and_increment();
     }
@@ -444,11 +433,11 @@ impl<'a, A: time::Alarm> SixlowpanRxClient for LowpanTest<'a, A> {
 static mut ARRAY: [u8; 100] = [0x0; 100]; //used in introducing delay between frames
 impl<'a, A: time::Alarm> TxClient for LowpanTest<'a, A> {
     fn send_done(&self, tx_buf: &'static mut [u8], _acked: bool, result: ReturnCode) {
-
         debug!("sendDone return code is: {:?}", result);
-        unsafe { //This unsafe block introduces a delay between frames to prevent 
-                // a race condition on the receiver
-                //it is sorta complicated bc I was having some trouble with dead code elimination
+        unsafe {
+            //This unsafe block introduces a delay between frames to prevent
+            // a race condition on the receiver
+            //it is sorta complicated bc I was having some trouble with dead code elimination
             let mut i = 0;
             while i < 10000000 {
                 ARRAY[i % 100] = (i % 100) as u8;
@@ -457,101 +446,114 @@ impl<'a, A: time::Alarm> TxClient for LowpanTest<'a, A> {
                     debug!("Delay, step {:?}", i / 1000000);
                 }
             }
-        } 
+        }
         self.send_next(tx_buf);
     }
 }
 
-fn ipv6_check_receive_packet(tf: TF,
-                             hop_limit: u8,
-                             sac: SAC,
-                             dac: DAC,
-                             recv_packet: &[u8],
-                             len: u16) {
+fn ipv6_check_receive_packet(
+    tf: TF,
+    hop_limit: u8,
+    sac: SAC,
+    dac: DAC,
+    recv_packet: &[u8],
+    len: u16,
+) {
     ipv6_prepare_packet(tf, hop_limit, sac, dac);
     debug!("Checking received packet of length: {}", len);
     let mut test_success = true;
-    unsafe { 
+    unsafe {
         // First, need to check header fields match:
         // Do this by casting first 48 bytes of rcvd packet as IP/UDP headers
-        let rcvip6hdr: IP6Header = ptr::read(recv_packet.as_ptr() as *const _); //Cast IP hdr
-        let rcvudphdr: UDPHeader = ptr::read((recv_packet.as_ptr().offset(IP6_HDR_SIZE as isize)) as *const _); //Cast UDP hdr
-        
+        let rcvip6hdr: IP6Header = ptr::read(recv_packet.as_ptr() as *const _);
+        let rcvudphdr: UDPHeader =
+            ptr::read((recv_packet.as_ptr().offset(IP6_HDR_SIZE as isize)) as *const _);
+
         // Now compare to the headers that would be being sent by prepare packet
         // (as we know prepare packet is running in parallel on sender to generate tx packets)
         match IP6_DG_OPT {
-                Some(ref ip6_packet) => {
-                    //First check IP headers
-                    if rcvip6hdr.get_version() != ip6_packet.header.get_version() {
-                        test_success = false;
-                        debug!("Mismatched IP ver");
-                    }
-                    
-                    if rcvip6hdr.get_traffic_class() != ip6_packet.header.get_traffic_class() {
-                        debug!("Mismatched tc");
-                        test_success = false;
-                    }
-                    if rcvip6hdr.get_dscp() != ip6_packet.header.get_dscp() {
-                        debug!("Mismatched dcsp");
-                        test_success = false;
-                    }
-                    if rcvip6hdr.get_ecn() != ip6_packet.header.get_ecn() {
-                        debug!("Mismatched ecn");
-                        test_success = false;
-                    }
-                    if rcvip6hdr.get_payload_len() != ip6_packet.header.get_payload_len() {
-                        debug!("Mismatched IP len");
-                        test_success = false;
-                    }
-                    if rcvip6hdr.get_next_header() != ip6_packet.header.get_next_header() {
-                        debug!("Mismatched next hdr. Rcvd is: {:?}, expctd is: {:?}", 
-                                rcvip6hdr.get_next_header(), ip6_packet.header.get_next_header());
-                        test_success = false;
-                    }
-                    if rcvip6hdr.get_hop_limit() != ip6_packet.header.get_hop_limit() {
-                        debug!("Mismatched hop limit");
-                        test_success = false;
-                    }
+            Some(ref ip6_packet) => {
+                //First check IP headers
+                if rcvip6hdr.get_version() != ip6_packet.header.get_version() {
+                    test_success = false;
+                    debug!("Mismatched IP ver");
+                }
 
-                    //Now check UDP headers
+                if rcvip6hdr.get_traffic_class() != ip6_packet.header.get_traffic_class() {
+                    debug!("Mismatched tc");
+                    test_success = false;
+                }
+                if rcvip6hdr.get_dscp() != ip6_packet.header.get_dscp() {
+                    debug!("Mismatched dcsp");
+                    test_success = false;
+                }
+                if rcvip6hdr.get_ecn() != ip6_packet.header.get_ecn() {
+                    debug!("Mismatched ecn");
+                    test_success = false;
+                }
+                if rcvip6hdr.get_payload_len() != ip6_packet.header.get_payload_len() {
+                    debug!("Mismatched IP len");
+                    test_success = false;
+                }
+                if rcvip6hdr.get_next_header() != ip6_packet.header.get_next_header() {
+                    debug!(
+                        "Mismatched next hdr. Rcvd is: {:?}, expctd is: {:?}",
+                        rcvip6hdr.get_next_header(),
+                        ip6_packet.header.get_next_header()
+                    );
+                    test_success = false;
+                }
+                if rcvip6hdr.get_hop_limit() != ip6_packet.header.get_hop_limit() {
+                    debug!("Mismatched hop limit");
+                    test_success = false;
+                }
 
-                    match ip6_packet.payload.header {
-                        TransportHeader::UDP(ref sent_udp_pkt) => {
-                            if u16::from_be(rcvudphdr.get_src_port()) != 
-                                sent_udp_pkt.get_src_port() {
-                                debug!("Mismatched src_port. Rcvd is: {:?}, expctd is: {:?}", 
-                                        rcvudphdr.get_src_port(), sent_udp_pkt.get_src_port());  
-                                test_success = false;
-                            }
+                //Now check UDP headers
 
-                            if u16::from_be(rcvudphdr.get_dst_port()) != 
-                                sent_udp_pkt.get_dst_port() {
-                                debug!("Mismatched dst_port. Rcvd is: {:?}, expctd is: {:?}", 
-                                        rcvudphdr.get_dst_port(), sent_udp_pkt.get_dst_port());  
-                                test_success = false;
-                            }
-
-                            if u16::from_be(rcvudphdr.get_len()) != 
-                                sent_udp_pkt.get_len() {
-                                debug!("Mismatched udp_len. Rcvd is: {:?}, expctd is: {:?}", 
-                                        rcvudphdr.get_len(), sent_udp_pkt.get_len());  
-                                test_success = false;
-                            }
-
-                            if u16::from_be(rcvudphdr.get_cksum()) != 
-                                sent_udp_pkt.get_cksum() {
-                                debug!("mismatched cksum");  
-                                test_success = false;
-                            }
+                match ip6_packet.payload.header {
+                    TransportHeader::UDP(ref sent_udp_pkt) => {
+                        if u16::from_be(rcvudphdr.get_src_port()) != sent_udp_pkt.get_src_port() {
+                            debug!(
+                                "Mismatched src_port. Rcvd is: {:?}, expctd is: {:?}",
+                                rcvudphdr.get_src_port(),
+                                sent_udp_pkt.get_src_port()
+                            );
+                            test_success = false;
                         }
-                        _ => {
-                            debug!("Error: For some reason prepare packet is not 
-                                    preparing a UDP payload");
-                        } 
-                    } 
-                },
-                None => debug!("Error! tried to read uninitialized IP6Packet"),
-        } 
+
+                        if u16::from_be(rcvudphdr.get_dst_port()) != sent_udp_pkt.get_dst_port() {
+                            debug!(
+                                "Mismatched dst_port. Rcvd is: {:?}, expctd is: {:?}",
+                                rcvudphdr.get_dst_port(),
+                                sent_udp_pkt.get_dst_port()
+                            );
+                            test_success = false;
+                        }
+
+                        if u16::from_be(rcvudphdr.get_len()) != sent_udp_pkt.get_len() {
+                            debug!(
+                                "Mismatched udp_len. Rcvd is: {:?}, expctd is: {:?}",
+                                rcvudphdr.get_len(),
+                                sent_udp_pkt.get_len()
+                            );
+                            test_success = false;
+                        }
+
+                        if u16::from_be(rcvudphdr.get_cksum()) != sent_udp_pkt.get_cksum() {
+                            debug!("mismatched cksum");
+                            test_success = false;
+                        }
+                    }
+                    _ => {
+                        debug!(
+                            "Error: For some reason prepare packet is not
+                                    preparing a UDP payload"
+                        );
+                    }
+                }
+            }
+            None => debug!("Error! tried to read uninitialized IP6Packet"),
+        }
 
         // Finally, check bytes of UDP Payload
         let mut payload_success = true;
@@ -559,33 +561,34 @@ fn ipv6_check_receive_packet(tf: TF,
             if recv_packet[i] != UDP_DGRAM[i - (IP6_HDR_SIZE + UDP_HDR_SIZE)] {
                 test_success = false;
                 payload_success = false;
-                debug!("Packets differ at idx: {} where recv = {}, ref = {}",
-                       i-(IP6_HDR_SIZE + UDP_HDR_SIZE),
-                       recv_packet[i],
-                       UDP_DGRAM[i-(IP6_HDR_SIZE + UDP_HDR_SIZE)]);
+                debug!(
+                    "Packets differ at idx: {} where recv = {}, ref = {}",
+                    i - (IP6_HDR_SIZE + UDP_HDR_SIZE),
+                    recv_packet[i],
+                    UDP_DGRAM[i - (IP6_HDR_SIZE + UDP_HDR_SIZE)]
+                );
                 //break; //Comment this in to help prevent debug buffer overflows
             }
         }
-        debug!("Payload match is: {}", payload_success); 
+        debug!("Payload match is: {}", payload_success);
         debug!("Complete Test success is: {}", test_success);
     }
 }
 
 //TODO: Change this function to modify IP6Packet struct instead of raw buffer
 fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
-    debug!("Entering prepare packet"); 
+    debug!("Entering prepare packet");
     {
         let payload = unsafe { &mut UDP_DGRAM[0..] };
-        for i in 0..(PAYLOAD_LEN - UDP_HDR_SIZE) { 
+        for i in 0..(PAYLOAD_LEN - UDP_HDR_SIZE) {
             payload[i] = i as u8;
         }
     }
-    unsafe {//Had to use unsafe here bc IP6_DG_OPT is mutable static
+    unsafe {
+        //Had to use unsafe here bc IP6_DG_OPT is mutable static
 
         match IP6_DG_OPT {
             Some(ref mut ip6_packet) => {
-                
-
                 {
                     let ip6_header: &mut IP6Header = &mut ip6_packet.header;
                     ip6_header.set_payload_len(PAYLOAD_LEN as u16);
@@ -629,8 +632,9 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
                         SAC::LLPIID => {
                             // LLP::IID
                             ip6_header.src_addr.set_unicast_link_local();
-                            ip6_header.src_addr.0[8..16]
-                                .copy_from_slice(&sixlowpan_compression::compute_iid(&SRC_MAC_ADDR));
+                            ip6_header.src_addr.0[8..16].copy_from_slice(
+                                &sixlowpan_compression::compute_iid(&SRC_MAC_ADDR),
+                            );
                         }
                         SAC::Unspecified => {}
                         SAC::Ctx64 => {
@@ -649,8 +653,9 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
                         SAC::CtxIID => {
                             // MLP::IID
                             ip6_header.src_addr.set_prefix(&MLP, 64);
-                            ip6_header.src_addr.0[8..16]
-                                .copy_from_slice(&sixlowpan_compression::compute_iid(&SRC_MAC_ADDR));
+                            ip6_header.src_addr.0[8..16].copy_from_slice(
+                                &sixlowpan_compression::compute_iid(&SRC_MAC_ADDR),
+                            );
                         }
                     }
 
@@ -674,8 +679,9 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
                         DAC::LLPIID => {
                             // LLP::IID
                             ip6_header.dst_addr.set_unicast_link_local();
-                            ip6_header.dst_addr.0[8..16]
-                                .copy_from_slice(&sixlowpan_compression::compute_iid(&DST_MAC_ADDR));
+                            ip6_header.dst_addr.0[8..16].copy_from_slice(
+                                &sixlowpan_compression::compute_iid(&DST_MAC_ADDR),
+                            );
                         }
                         DAC::Ctx64 => {
                             // MLP::xxxx:xxxx:xxxx:xxxx
@@ -693,8 +699,9 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
                         DAC::CtxIID => {
                             // MLP::IID
                             ip6_header.dst_addr.set_prefix(&MLP, 64);
-                            ip6_header.dst_addr.0[8..16]
-                                .copy_from_slice(&sixlowpan_compression::compute_iid(&DST_MAC_ADDR));
+                            ip6_header.dst_addr.0[8..16].copy_from_slice(
+                                &sixlowpan_compression::compute_iid(&DST_MAC_ADDR),
+                            );
                         }
                         DAC::McastInline => {
                             // first byte is ff, that's all we know
@@ -728,18 +735,17 @@ fn ipv6_prepare_packet(tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
                             ip6_header.dst_addr.0[4..12].copy_from_slice(&MLP);
                             ip6_header.dst_addr.0[12..16].copy_from_slice(&DST_ADDR.0[12..16]);
                         }
-                    } 
+                    }
                 } //This bracket ends mutable borrow of ip6_packet for header
-                //Now that packet is fully prepared, set checksum
+                  //Now that packet is fully prepared, set checksum
                 ip6_packet.set_transport_checksum(); //calculates and sets UDP cksum
-            },//End of Some{}
+            } //End of Some{}
             None => debug!("Error! tried to prepare uninitialized IP6Packet"),
         }
     }
 
-    debug!("Packet with tf={:?} hl={} sac={:?} dac={:?}",
-           tf,
-           hop_limit,
-           sac,
-           dac);
+    debug!(
+        "Packet with tf={:?} hl={} sac={:?} dac={:?}",
+        tf, hop_limit, sac, dac
+    );
 }

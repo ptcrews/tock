@@ -3,8 +3,8 @@
 use core::mem;
 use core::result::Result;
 use net::ieee802154::MacAddress;
-use net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader};
 use net::ipv6::ip_utils::{IPAddr, ip6_nh};
+use net::ipv6::ipv6::{IP6Header, IP6Packet, TransportHeader};
 use net::udp::udp::UDPHeader;
 use net::util;
 use net::util::{slice_to_u16, u16_to_slice};
@@ -176,11 +176,12 @@ impl OnesComplement for u16 {
 //TODO: Replace use of this function with use of the function found in ip_utils
 // that operates on the new packet format rather than the received buffer
 // Alternatively, dont support checksum elision bc of security concerns
-fn compute_udp_checksum(ip6_header: &IP6Header,
-                        udp_header: &[u8],
-                        udp_length: u16,
-                        payload: &[u8])
-                        -> u16 {
+fn compute_udp_checksum(
+    ip6_header: &IP6Header,
+    udp_header: &[u8],
+    udp_length: u16,
+    payload: &[u8],
+) -> u16 {
     // The UDP checksum is computed on the IPv6 pseudo-header concatenated
     // with the UDP header and payload, but with the UDP checksum field
     // zeroed out. Hence, this function assumes that `udp_header` has already
@@ -263,12 +264,13 @@ fn nhc_to_ip6_nh(nhc: u8) -> Result<u8, ()> {
 /// compressed header bytes written into `buf`. Payload bytes and
 /// non-compressed next headers are not written, so the remaining `buf.len()
 /// - consumed` bytes must still be copied over to `buf`.
-pub fn compress<'a>(ctx_store: &ContextStore,
-                    ip6_packet: &'a IP6Packet<'a>,
-                    src_mac_addr: MacAddress,
-                    dst_mac_addr: MacAddress,
-                    mut buf: &mut [u8])
-                    -> Result<(usize, usize), ()> {
+pub fn compress<'a>(
+    ctx_store: &ContextStore,
+    ip6_packet: &'a IP6Packet<'a>,
+    src_mac_addr: MacAddress,
+    dst_mac_addr: MacAddress,
+    mut buf: &mut [u8],
+) -> Result<(usize, usize), ()> {
     // Note that consumed should be constant, and equal sizeof(IP6Header)
     //let (mut consumed, ip6_header) = IP6Header::decode(ip6_datagram).done().ok_or(())?;
     let mut consumed = 40; // TODO
@@ -357,10 +359,10 @@ pub fn compress<'a>(ctx_store: &ContextStore,
                 // Write the UDP LoWPAN_NHC byte
                 buf[udp_nh_offset] = nhc_header;
                 consumed += 8;
-            },
+            }
             // Return an error, as there is a conflict between IPv6 next
             // header and actual IPv6 payload
-            _ => return Err(())
+            _ => return Err(()),
         }
     }
     Ok((consumed, written))
@@ -1202,13 +1204,14 @@ fn decompress_udp_ports(udp_nhc: u8, buf: &[u8], consumed: &mut usize) -> (u16, 
 }
 
 // Returns the UDP checksum in host byte-order
-fn decompress_udp_checksum(udp_nhc: u8,
-                           udp_header: &[u8],
-                           udp_length: u16,
-                           ip6_header: &IP6Header,
-                           buf: &[u8],
-                           consumed: &mut usize)
-                           -> u16 {
+fn decompress_udp_checksum(
+    udp_nhc: u8,
+    udp_header: &[u8],
+    udp_length: u16,
+    ip6_header: &IP6Header,
+    buf: &[u8],
+    consumed: &mut usize,
+) -> u16 {
     // TODO: In keeping with Postel's Law, we accept UDP packets that elide the
     // checksum. We are not sure if we should continue to support this feature
     // however.
