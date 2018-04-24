@@ -4,7 +4,7 @@
 use core::mem;
 use core::result::Result;
 use net::ieee802154::MacAddress;
-use net::ipv6::ipv6::{IP6Packet, IP6Header};
+use net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader};
 use net::ipv6::ip_utils::{IPAddr, ip6_nh};
 use net::udp::udp::UDPHeader;
 use net::util;
@@ -152,58 +152,6 @@ pub fn is_lowpan(packet: &[u8]) -> bool {
     (packet[0] & iphc::DISPATCH[0]) == iphc::DISPATCH[0]
 }
 
-/// Determines if the next header is LoWPAN_NHC compressible, which depends on
-/// both the next header type and the length of the IPv6 next header extensions.
-/// Returns `Ok((false, 0))` if the next header is not compressible or
-/// `Ok((true, nh_len))`. `nh_len` is only meaningful when the next header type
-/// is an IPv6 next header extension, in which case it is the number of bytes
-/// after the first two bytes in the IPv6 next header extension. Returns
-/// `Err(())` in the case of an invalid IPv6 packet.
-fn is_ip6_nh_compressible(ip6_packet: &IP6Packet) -> Result<(bool, u8), ()> {
-    return Ok((false, 0));
-    /* TODO
-    match ip6_packet.payload {
-        TransportPacket::UDP(_) => {
-            Ok((true, 0))
-        },
-        _ => {
-            Ok((false, 0))
-        },
-    }
-    */
-    /*
-    match ip6_packet.get_next_header() {
-        // IP6 encapsulated headers are always compressed
-        ip6_nh::IP6 => Ok((true, 0)),
-        // UDP headers are always compresed
-        ip6_nh::UDP => Ok((true, 0)),
-        /* TODO
-        ip6_nh::FRAGMENT | ip6_nh::HOP_OPTS | ip6_nh::ROUTING | ip6_nh::DST_OPTS |
-        ip6_nh::MOBILITY => {
-            let mut header_len: u32 = 6;
-            if next_header != ip6_nh::FRAGMENT {
-                // All compressible next header extensions except
-                // for the fragment header have a length field
-                if next_headers.len() < 2 {
-                    return Err(());
-                } else {
-                    // The length field is the number of 8-octet
-                    // groups after the first 8 octets
-                    header_len += (next_headers[1] as u32) * 8;
-                }
-            }
-            if header_len <= 255 {
-                Ok((true, header_len as u8))
-            } else {
-                Ok((false, 0))
-            }
-        }
-        */
-        _ => Ok((false, 0)),
-    }
-        */
-}
-
 trait OnesComplement {
     fn ones_complement_add(self, other: Self) -> Self;
 }
@@ -275,20 +223,6 @@ fn compute_udp_checksum(ip6_header: &IP6Header,
     // Return the complement of the checksum, unless it is 0, in which case we
     // the checksum is one's complement -0 for a non-zero binary representation
     if !checksum != 0 { !checksum } else { checksum }
-}
-
-/// Maps values of a IPv6 next header field to a corresponding LoWPAN
-/// NHC-encoding extension ID, if that next header type is NHC-compressible
-fn ip6_nh_to_nhc_eid(next_header: u8) -> Option<u8> {
-    match next_header {
-        ip6_nh::HOP_OPTS => Some(nhc::HOP_OPTS),
-        ip6_nh::ROUTING => Some(nhc::ROUTING),
-        ip6_nh::FRAGMENT => Some(nhc::FRAGMENT),
-        ip6_nh::DST_OPTS => Some(nhc::DST_OPTS),
-        ip6_nh::MOBILITY => Some(nhc::MOBILITY),
-        ip6_nh::IP6 => Some(nhc::IP6),
-        _ => None,
-    }
 }
 
 /// Maps a LoWPAN_NHC header the corresponding IPv6 next header type,
@@ -364,7 +298,9 @@ pub fn compress<'a>(ctx_store: &ContextStore,
     compress_tf(&ip6_header, &mut buf, &mut written);
 
     // Next Header
-    let (mut is_nhc, mut nh_len): (bool, u8) = is_ip6_nh_compressible(ip6_packet)?;
+
+    //let (mut is_nhc, mut nh_len): (bool, u8) = is_ip6_nh_compressible(ip6_packet)?;
+    let is_nhc = ip6_header.next_header == ip6_nh::UDP;
     compress_nh(&ip6_header, is_nhc, &mut buf, &mut written);
 
     // Hop Limit
@@ -392,36 +328,9 @@ pub fn compress<'a>(ctx_store: &ContextStore,
     // At each iteration, next_headers begins at the first byte of the
     // current uncompressed next header.
     // Since we aren't recursing, we only handle UDP
-
-//     while is_nhc {
-//        match ip6_packet.payload.header {
-             //TODO: Currently don't handle IP encapsulation
-            /*ip6_nh::IP6 => {
-                // For IPv6 encapsulation, the NH bit in the NHC ID is 0
-                let nhc_header = nhc::DISPATCH_NHC | nhc::IP6;
-                buf[written] = nhc_header;
-                written += 1;
-
-                // Recursively place IPHC-encoded IPv6 after the NHC ID
-                //
-                // TODO: Support recursive behavior
-                // let (encap_consumed, encap_written) = compress(ctx_store,
-                                                               next_headers,
-                                                               src_mac_addr,
-                                                               dst_mac_addr,
-                                                               &mut buf[written..])?;
-                // consumed += encap_consumed;
-                // written += encap_written;
-                
-
-                // The above recursion handles the rest of the packet
-                // headers, so we are done
-                break;
-            } */
-        
-            /*ip6_nh::UDP => {
-            
-            TransportHeader::UDP(ref udp_packet) => {
+    if is_nhc {
+        match ip6_packet.payload.header {
+            TransportHeader::UDP(udp_header) => {
                 let mut nhc_header = nhc::DISPATCH_UDP;
 
                 // Leave a space for the UDP LoWPAN_NHC byte
@@ -429,66 +338,18 @@ pub fn compress<'a>(ctx_store: &ContextStore,
                 written += 1;
 
                 // Compress ports and checksum
-                nhc_header |= compress_udp_ports(&udp_packet, &mut buf, &mut written);
-                nhc_header |= compress_udp_checksum(&udp_packet, &mut buf, &mut written);
+                nhc_header |= compress_udp_ports(&udp_header, &mut buf, &mut written);
+                nhc_header |= compress_udp_checksum(&udp_header, &mut buf, &mut written);
 
                 // Write the UDP LoWPAN_NHC byte
                 buf[udp_nh_offset] = nhc_header;
                 consumed += 8;
-
-                // There cannot be any more next headers after UDP
-                //break;
-            }
-            */
-            /* TODO: Currently don't handle any extension headers... :(
-            ip6_nh::FRAGMENT | ip6_nh::HOP_OPTS | ip6_nh::ROUTING | ip6_nh::DST_OPTS |
-            ip6_nh::MOBILITY => {
-                // is_ip6_nh_compressible guarantees that the IPv6 next
-                // header corresponds to a valid LoWPAN_NHC EID
-                let mut nhc_header = nhc::DISPATCH_NHC |
-                                     match ip6_nh_to_nhc_eid(ip6_nh_type) {
-                    Some(eid) => eid,
-                    None => panic!("Unreachable case"),
-                };
-
-                // next_nh_offset includes the next header field and the
-                // length byte, while nh_len does not
-                let next_nh_offset = 2 + (nh_len as usize);
-
-                // Determine if the next header is compressible
-                let (next_is_nhc, next_nh_len) =
-                    is_ip6_nh_compressible(ip6_packet)?;
-                if next_is_nhc {
-                    nhc_header |= nhc::NH;
-                }
-
-                // Place NHC ID in buffer
-                buf[written] = nhc_header;
-                if ip6_nh_type != ip6_nh::FRAGMENT {
-                    // Fragment extension does not have a length field
-                    buf[written + 1] = nh_len;
-                }
-                written += 2;
-
-                compress_and_elide_padding(ip6_nh_type,
-                                           nh_len as usize,
-                                           &next_headers,
-                                           &mut buf,
-                                           &mut written);
-
-                ip6_nh_type = next_headers[0];
-                is_nhc = next_is_nhc;
-                nh_len = next_nh_len;
-                next_headers = &next_headers[next_nh_offset..];
-                consumed += next_nh_offset;
-            }
-            */
-            // This case should not be reachable because
-            // is_ip6_nh_compressible guarantees that is_nhc is true
-            // only if ip6_nh_type is one of the types matched above
-//            _ => panic!("Unreachable case (currently only support udp payloads)"),
-//        }
-    //}
+            },
+            // Return an error, as there is a conflict between IPv6 next
+            // header and actual IPv6 payload
+            _ => return Err(())
+        }
+    }
     Ok((consumed, written))
 }
 
@@ -700,9 +561,9 @@ fn compress_multicast(dst_ip_addr: &IPAddr,
     }
 }
 
-fn compress_udp_ports(udp_packet: &UDPHeader, buf: &mut [u8], written: &mut usize) -> u8 {
-    let src_port = udp_packet.get_src_port();
-    let dst_port = udp_packet.get_dst_port();
+fn compress_udp_ports(udp_header: &UDPHeader, buf: &mut [u8], written: &mut usize) -> u8 {
+    let src_port = udp_header.get_src_port();
+    let dst_port = udp_header.get_dst_port();
 
     let mut udp_port_nhc = 0;
     if (src_port & nhc::UDP_4BIT_PORT_MASK) == nhc::UDP_4BIT_PORT &&
@@ -736,81 +597,15 @@ fn compress_udp_ports(udp_packet: &UDPHeader, buf: &mut [u8], written: &mut usiz
     return udp_port_nhc;
 }
 
-fn compress_udp_checksum(udp_packet: &UDPHeader, buf: &mut [u8], written: &mut usize) -> u8 {
-    // TODO: Checksum is always inline, elision is currently not supported
-    let cksum = udp_packet.get_cksum();
+// NOTE: We currently only support (or intend to support) carrying the UDP
+// checksum inline.
+fn compress_udp_checksum(udp_header: &UDPHeader, buf: &mut [u8], written: &mut usize) -> u8 {
+    let cksum = udp_header.get_cksum();
     buf[*written] = cksum as u8;
     buf[*written + 1] = (cksum >> 8) as u8;
     *written += 2;
     // Inline checksum corresponds to the 0 flag
     0
-}
-
-fn compress_and_elide_padding(nh_type: u8,
-                              nh_len: usize,
-                              next_headers: &[u8],
-                              buf: &mut [u8],
-                              written: &mut usize) {
-    let total_len = nh_len + 2;
-    // is_multiple is true if the header length is a multiple of 8-octets
-    let is_multiple = (total_len % 8) == 0;
-    let correct_type = (nh_type == ip6_nh::HOP_OPTS) || (nh_type == ip6_nh::DST_OPTS);
-    let mut opt_offset = 2;
-    let mut is_padding = false;
-    if correct_type && is_multiple {
-        // Traverses the TLVs in the next header extension. We need to
-        // determine if there is a last padding TLV (Pad1 or PadN) that is
-        // not preceded by another padding TLV. Hence, we have a state
-        // machine that keeps track of whether the last TLV was a padding
-        // TLV. We only set is_padding to true if we encounter a padding
-        // byte that spans to the end of the TLV chain, and if the previous
-        // TLV was not a padding TLV. In that case, we break out of the loop
-        // so that opt_offset is the offset before the last padding TLV.
-        let mut prev_was_padding = false;
-        while opt_offset < total_len {
-            let opt_type = next_headers[opt_offset];
-            let new_opt_offset = match opt_type {
-                // Pad1, PadN
-                0 | 1 => {
-                    let new_opt_offset = match opt_type {
-                        0 => opt_offset + 1,
-                        1 => {
-                            let opt_len = next_headers[opt_offset + 1] as usize;
-                            opt_offset + opt_len + 2
-                        }
-                        _ => panic!("Unreachable case"),
-                    };
-                    if new_opt_offset == total_len {
-                        if !prev_was_padding {
-                            is_padding = true;
-                        }
-                        break;
-                    }
-                    prev_was_padding = true;
-                    new_opt_offset
-                }
-                // Any other TLV type
-                _ => {
-                    let opt_len = next_headers[opt_offset + 1] as usize;
-                    prev_was_padding = false;
-                    opt_offset + opt_len + 2
-                }
-            };
-            opt_offset = new_opt_offset;
-        }
-    }
-
-    // We only elide the padding if: 1) Encapsulating packet is a multiple
-    // of 8 octets in length, 2) the header is either hop options or dest
-    // options, and 3) if there is a single Pad1 or PadN trailing padding.
-    if is_multiple && correct_type && is_padding {
-        buf[*written..*written + opt_offset - 2].copy_from_slice(&next_headers[2..opt_offset]);
-        *written += opt_offset - 2;
-    } else {
-        // Copy over the remaining packet data
-        buf[*written..*written + nh_len].copy_from_slice(&next_headers[2..2 + nh_len]);
-        *written += nh_len;
-    }
 }
 
 /// Decompresses a 6loWPAN header into a full IPv6 header
@@ -1361,12 +1156,10 @@ fn decompress_udp_checksum(udp_nhc: u8,
                            buf: &[u8],
                            consumed: &mut usize)
                            -> u16 {
+    // TODO: In keeping with Postel's Law, we accept UDP packets that elide the
+    // checksum. We are not sure if we should continue to support this feature
+    // however.
     if (udp_nhc & nhc::UDP_CHECKSUM_FLAG) != 0 {
-        // TODO: Need to verify that the packet was sent with *some* kind
-        // of integrity check at a lower level (otherwise, we need to drop
-        // the packet)
-        //Hudson: I think we are better off not supporting checksum elision
-
         compute_udp_checksum(ip6_header, udp_header, udp_length, &buf[*consumed..])
     } else {
         let checksum = u16::from_be(slice_to_u16(&buf[*consumed..*consumed + 2]));

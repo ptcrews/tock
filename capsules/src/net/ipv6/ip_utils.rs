@@ -1,10 +1,6 @@
-use net::stream::{decode_u16, decode_u8, decode_bytes};
-use net::stream::{encode_u16, encode_u8, encode_bytes};
-use net::stream::SResult;
 use net::udp::udp::{UDPHeader};
 use net::icmpv6::icmpv6::{ICMP6Header, ICMP6HeaderOptions};
 use net::ipv6::ipv6::{IP6Header};
-use net::util::{slice_to_u16};
 
 #[derive(Copy,Clone,PartialEq)]
 pub enum MacAddr {
@@ -146,12 +142,12 @@ pub fn compute_icmp_checksum(ipv6_header: &IP6Header,
 
     // add ipv6 pseudo-header
     sum += compute_ipv6_ph_sum(ipv6_header);
-    
+
     // add type and code
     let msb = (icmp_header.get_type_as_int() as u32) << 8;
     let lsb = icmp_header.get_code() as u32;
-    sum += (msb + lsb);
-   
+    sum += msb + lsb;
+
     // add options
     match icmp_header.get_options() {
         ICMP6HeaderOptions::Type1 { unused } |
@@ -176,29 +172,29 @@ pub fn compute_icmp_checksum(ipv6_header: &IP6Header,
     while sum > 0xffff {
         let sum_upper = sum >> 16;
         let sum_lower = sum & 0xffff;
-        sum += (sum_upper + sum_lower);
+        sum += sum_upper + sum_lower;
     }
 
     sum = !sum;
     sum = sum & 0xffff;
-    
+
     sum as u16
 }
 
 pub fn compute_ipv6_ph_sum(ip6_header: &IP6Header) -> u32 {
     let mut sum: u32 = 0;
-    
+
     // sum over src/dest addresses    
     let mut i = 0;
     while i < 16 { 
         let msb_src = (ip6_header.src_addr.0[i] as u32) << 8;
         let lsb_src = ip6_header.src_addr.0[i+1] as u32;
-        sum += (msb_src + lsb_src);
+        sum += msb_src + lsb_src;
 
         let msb_dst = (ip6_header.dst_addr.0[i] as u32) << 8;
         let lsb_dst = ip6_header.dst_addr.0[i+1] as u32;
-        sum += (msb_dst + lsb_dst);
-        
+        sum += msb_dst + lsb_dst;
+
         i += 2;
     }
 
@@ -215,7 +211,7 @@ pub fn compute_sum(buf: &[u8], len: u16) -> u32 {
     while i < (len as usize) {
         let msb = (buf[i] as u32) << 8;
         let lsb = buf[i + 1] as u32;
-        sum += (msb + lsb);
+        sum += msb + lsb;
         i += 2;
     }
 

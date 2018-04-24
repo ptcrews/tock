@@ -1,17 +1,13 @@
-/* This file contains the structs, traits, and methods associated with the UDP
-   layer in the Tock Networking stack. This networking stack is explained more
-   in depth in the Thread_Stack_Design.txt document. */
+//! This file contains the structs and methods associated with the UDP header.
+//! This includes getters and setters for the various header fields, as well
+//! as the standard encode/decode functionality required for serializing
+//! the struct for transmission.
 
-use net::ipv6::ip_utils::{IPAddr,  ip6_nh};
-use net::ipv6::ipv6::{IPPayload, IP6Header, TransportHeader, IP6Packet};
-use net::ipv6::ipv6_send::{IP6SendStruct, IP6Client};
-use ieee802154::mac::Frame;
-use net::stream::{decode_u16, decode_u8, decode_bytes};
-use net::stream::{encode_u16, encode_u8, encode_bytes};
+use net::stream::decode_u16;
+use net::stream::encode_u16;
 use net::stream::SResult;
-use kernel::ReturnCode;
-use kernel::common::take_cell::TakeCell;
 
+/// The `UDPHeader` struct is the layout for the UDP packet header.
 #[derive(Copy, Clone)]
 pub struct UDPHeader {
     pub src_port: u16,
@@ -35,7 +31,8 @@ impl UDPHeader {
     pub fn new() -> UDPHeader {
         UDPHeader::default()
     }
-    pub fn get_offset(&self) -> usize{8} //Always returns size of UDP Header
+    // TODO: Always returns size of UDP header
+    pub fn get_offset(&self) -> usize{8}
 
     pub fn set_dst_port(&mut self, port: u16) {
         self.dst_port = port;
@@ -68,15 +65,13 @@ impl UDPHeader {
         self.cksum
     }
 
-    // TODO: change this to encode/decode stream functions?
     pub fn get_hdr_size(&self) -> usize {
         // TODO
         8
     }
 
     pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
-        // TODO
-        stream_len_cond!(buf, 8 + offset);
+        stream_len_cond!(buf, self.get_hdr_size() + offset);
 
         let mut off = offset; 
         off = enc_consume!(buf, off; encode_u16, self.src_port);
@@ -86,7 +81,8 @@ impl UDPHeader {
         stream_done!(off, off);
     }
 
-    pub fn decode(buf: &[u8]) -> SResult<UDPHeader> { //TODO: Test me
+    // TODO: Decode has not been tested
+    pub fn decode(buf: &[u8]) -> SResult<UDPHeader> {
         stream_len_cond!(buf, 8);
         let mut udp_header = Self::new();
         let off = 0;

@@ -1,17 +1,14 @@
-/* This file contains structs, traits, and methods associated with the IP layer
-   of the networking stack. For a full description of the networking stack on
-   tock, see the Thread_Stack_Design.txt document */
+//! This file contains structs, traits, and methods associated with the IP layer
+//! of the networking stack. This includes the declaration and methods for the
+//! IP6Header, IP6Packet, and IP6Payload structs. These methods implement the
+//! bulk of the functionality required for manipulating the fields of the
+//! IPv6 header. Additionally, the IP6Packet struct allows for multiple types
+//! of transport-level structures to be encapsulated within.
 
 use net::ipv6::ip_utils::{IPAddr, compute_udp_checksum, compute_icmp_checksum, ip6_nh};
-use ieee802154::mac::{Frame, Mac};
-use net::ieee802154::MacAddress;
 use net::udp::udp::{UDPHeader};
 use net::tcp::{TCPHeader};
 use net::icmpv6::icmpv6::{ICMP6Header};
-use net::sixlowpan::sixlowpan_state::{TxState, SixlowpanTxClient};
-use kernel::ReturnCode;
-use kernel::common::take_cell::TakeCell;
-use core::cell::Cell;
 
 use net::stream::{decode_u16, decode_u8, decode_bytes};
 use net::stream::{encode_u16, encode_u8, encode_bytes};
@@ -85,7 +82,6 @@ impl IP6Header {
         (self.version_class_flow[0] & 0xf0) >> 4
     }
 
-    // TODO: Confirm order
     pub fn get_traffic_class(&self) -> u8 {
         (self.version_class_flow[0] & 0x0f) << 4 | (self.version_class_flow[1] & 0xf0) >> 4
     }
@@ -165,10 +161,6 @@ impl IP6Header {
     }
 }
 
-
-
-
-
 // TODO: Note that this design decision means that we cannot have recursive
 // IP6 packets directly - we must have/use RawIPPackets instead. This makes
 // it difficult to recursively compress IP6 packets as required by 6lowpan
@@ -176,10 +168,7 @@ pub enum TransportHeader {
     UDP(UDPHeader),
     TCP(TCPHeader),
     ICMP(ICMP6Header),
-    
-    // NOTE: TCP,ICMP,RawIP traits not yet implemented
-    // , but follow logically from UDPPacket. 
-    
+
     // TODO: Need a length in RawIPPacket for the buffer in TransportHeader
     /* Raw(RawIPPacket<'a>), */
 }
@@ -205,19 +194,16 @@ impl<'a> IPPayload<'a> {
         self.payload.copy_from_slice(&payload);
         match transport_header {
             TransportHeader::UDP(mut udp_header) => {
-                debug!("I am a UDP Packet");
                 let length = (payload.len() + udp_header.get_hdr_size()) as u16;
                 udp_header.set_len(length);
                 (ip6_nh::UDP, length)
             },
             TransportHeader::ICMP(mut icmp_header) => {
-                debug!("I am an ICMP Packet");
                 let length = (payload.len() + icmp_header.get_hdr_size()) as u16;
                 icmp_header.set_len(length);
                 (ip6_nh::ICMP, length)
             },
             _ => {
-                debug!("I am a failure!");
                 (ip6_nh::NO_NEXT, payload.len() as u16)
             },
         }
@@ -303,22 +289,17 @@ impl<'a> IP6Packet<'a> {
 
         match self.payload.header {
             TransportHeader::UDP(ref mut udp_header) => {
-
                 let cksum = compute_udp_checksum(&self.header, &udp_header, udp_header.get_len(), 
                                                  self.payload.payload);
-
                 udp_header.set_cksum(cksum);
             },
             TransportHeader::ICMP(ref mut icmp_header) => {
-
                 let cksum = compute_icmp_checksum(&self.header, &icmp_header, 
                                                   self.payload.payload);
-
                 icmp_header.set_cksum(cksum);
             },
             _ => {
                 unimplemented!();
-                debug!("Transport cksum setting not supported for this transport payload");
             }
         }
     }
@@ -329,23 +310,20 @@ impl<'a> IP6Packet<'a> {
         self.header.set_payload_len(payload_len);
     }
 
-    // TODO: Implement
+    // TODO: Currently, the receive path is unimplemented, and this function
+    // should *not* be called
     pub fn decode(buf: &[u8], ip6_packet: &mut IP6Packet) -> Result<usize, ()> {
-        let (offset, header) = IP6Header::decode(buf).done().ok_or(())?;
+        let (_offset, header) = IP6Header::decode(buf).done().ok_or(())?;
         ip6_packet.header = header;
-        // TODO: When deserializing, its not clear to me how to construct
-        // the inner packet. Easiset would be to probably assume the 
         // TODO: Not sure how to convert an IP6Packet with a UDP payload to 
         // an IP6Packet with a TCP payload.
         unimplemented!();
-        Ok(offset)
     }
 
     pub fn encode(&self, buf: &mut [u8]) -> SResult<usize> {
         let ip6_header = self.header;
 
-        // TODO: Confirm this works (that stream_done! doesn't break stuff)
-        // Also, handle unwrap safely
+        // TODO: Handle unwrap safely
         let (off, _) = ip6_header.encode(buf).done().unwrap();
         self.payload.encode(buf, off)
     }

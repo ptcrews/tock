@@ -225,7 +225,7 @@
 
 use core::cell::Cell;
 use core::cmp::min;
-use ieee802154::mac::{Mac, Frame, TxClient, RxClient};
+use ieee802154::mac::{Mac, Frame, RxClient};
 use kernel::ReturnCode;
 use kernel::common::list::{List, ListLink, ListNode};
 use kernel::common::take_cell::{TakeCell, MapCell};
@@ -352,11 +352,6 @@ impl<'a> TxState<'a> {
         }
     }
 
-    // TODO: Figure out the correct interface here; don't want to
-    // init while busy, so either call init once globally or disallow
-    // init-ing while busy
-    // NOTE: Only one logical user should have access to a TxState at any
-    // time, so shouldn't be a problem (probably)
     pub fn init(&self,
                 src_mac_addr: MacAddress,
                 dst_mac_addr: MacAddress,
@@ -372,8 +367,7 @@ impl<'a> TxState<'a> {
         }
     }
 
-    // Assumes we have already called init_transmit
-
+    // Assumes we have already called init
     pub fn next_fragment<'b>(&self,
                          ip6_packet: &'b IP6Packet<'b>,
                          frag_buf: &'static mut [u8],
@@ -400,7 +394,7 @@ impl<'a> TxState<'a> {
             // Want the total datagram size we are sending to be less than
             // the length of the packet - otherwise, we risk reading off the
             // end of the array
-            if self.dgram_size.get() != ip6_packet.get_total_len() { //Flipped this inequality, I think it was wrong..?
+            if self.dgram_size.get() != ip6_packet.get_total_len() {
                 return Err((ReturnCode::ENOMEM, frame.into_buf()));
             }
 
@@ -412,7 +406,6 @@ impl<'a> TxState<'a> {
     fn is_transmit_done(&self) -> bool {
         self.dgram_size.get() as usize <= self.dgram_offset.get()
     }
-
 
     // Frag_buf needs to be >= 802.15.4 MTU
     // The radio takes frag_buf, consumes it, returns Frame or Error
@@ -436,7 +429,7 @@ impl<'a> TxState<'a> {
         // Here, we assume that the compressed headers fit in the first MTU
         // fragment. This is consistent with RFC 6282.
         let mut lowpan_packet = [0 as u8; radio::MAX_FRAME_SIZE as usize];
-        let (mut consumed, written) = {
+        let (consumed, written) = {
             match sixlowpan_compression::compress(ctx_store,
                                                   ip6_packet,
                                                   self.src_mac_addr.get(),
@@ -470,7 +463,7 @@ impl<'a> TxState<'a> {
 
         // Write the remainder of the payload, rounding down to a multiple
         // of 8 if the entire payload won't fit
-        let mut payload_len = if remaining_payload > remaining_capacity {
+        let payload_len = if remaining_payload > remaining_capacity {
             remaining_capacity & !0b111
         } else {
             remaining_payload
@@ -491,14 +484,14 @@ impl<'a> TxState<'a> {
                                  mut frame: Frame)
         -> Result<Frame, (ReturnCode, &'static mut [u8])> {
 
-        let mut dgram_offset = self.dgram_offset.get();
+        let dgram_offset = self.dgram_offset.get();
         let mut remaining_capacity = frame.remaining_data_capacity();
         remaining_capacity -= self.write_frag_hdr(&mut frame, false);
 
         // This rounds payload_len down to the nearest multiple of 8 if it
         // is not the last fragment (per RFC 4944)
         let remaining_payload = (self.dgram_size.get() as usize) - dgram_offset;
-        let mut payload_len = if remaining_payload > remaining_capacity {
+        let payload_len = if remaining_payload > remaining_capacity {
             remaining_capacity & !0b111
         } else {
             remaining_payload
@@ -519,8 +512,8 @@ impl<'a> TxState<'a> {
         Ok(frame)
     }
 
-    // TODO: Is this the cleanest function possible? Should we pass dgram_offset
-    // and payload as references and modify them directly?
+    // NOTE: This function will not work for headers that span past the first
+    // frame.
     fn write_additional_headers<'b>(&self,
                                     ip6_packet: &'b IP6Packet<'b>,
                                     frame: &mut Frame,
@@ -530,9 +523,11 @@ impl<'a> TxState<'a> {
         let mut payload_len = payload_len;
         let mut dgram_offset = dgram_offset;
         if total_hdr_len > dgram_offset {
-            // TODO: Didn't send some headers - need to serialize
             let headers_to_write = min(payload_len, total_hdr_len - dgram_offset);
-            // TODO: Fix this
+            // TODO: Note that in order to serialize the headers, we need to
+            // statically allocate room on the stack. However, we do not know
+            // how many additional headers we have until runtime. This
+            // functionality should be fixed in the future.
             let mut headers = [0 as u8; 60];
             ip6_packet.encode(&mut headers);
             frame.append_payload(&mut headers[dgram_offset..dgram_offset+headers_to_write]);
@@ -561,7 +556,7 @@ impl<'a> TxState<'a> {
                          self.dgram_offset.get(),
                          &mut frag_header,
                          first_frag);
-            // TODO: Check error
+            // TODO: Check success
             frame.append_payload(&frag_header);
             lowpan_frag::FRAGN_HDR_SIZE
         }
@@ -738,38 +733,6 @@ pub struct Sixlowpan<'a, A: time::Alarm + 'a, C: ContextStore> {
 
     // Receive state
     rx_states: List<'a, RxState<'a>>,
-}
-
-// This function is called after transmitting a frame
-// TODO: Implement for independent send
-#[allow(unused_must_use)]
-impl<'a, A: time::Alarm, C: ContextStore> TxClient for Sixlowpan<'a, A, C> {
-    fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
-        // If we are done sending the entire packet, or if the transmit failed,
-        // end the transmit state and issue callbacks.
-        /* TODO: Finish implementing
-        self.tx_state.map(|tx_state| {
-            if result != ReturnCode::SUCCESS || tx_state.is_transmit_done() {
-                tx_state.end_transmit();
-                self.tx_client.map(|client| client.send_done(tx_buf, acked, result));
-            } else {
-                let result = 
-            }
-        });
-        */
-        /*
-        if result != ReturnCode::SUCCESS || self.tx_state.is_transmit_done() {
-            self.tx_state.end_transmit(tx_buf, self.client.get(), acked, result);
-            // Otherwise, send next fragment
-        } else {
-            let result = self.tx_state.prepare_transmit_next_fragment(tx_buf, self.radio);
-            result.map_err(|(retcode, tx_buf)| {
-                // If we have an error, abort
-                self.tx_state.end_transmit(tx_buf, self.client.get(), acked, retcode);
-            });
-        }
-        */
-    }
 }
 
 // This function is called after receiving a frame
@@ -1049,15 +1012,14 @@ impl<'a, A: time::Alarm, C: ContextStore> Sixlowpan<'a, A, C> {
     }
 
     #[allow(dead_code)]
-    // FIXME
+    // TODO: This code is currently unimplemented
     // This function is called when a disassociation event occurs, as we need
-    // to expire all pending state. This is not fully implemented.
+    // to expire all pending state.
     fn discard_all_state(&self) {
         for rx_state in self.rx_states.iter() {
             rx_state.end_receive(None, ReturnCode::FAIL);
         }
-        // TODO: May lose tx_buf here
+        unimplemented!();
         // TODO: Need to get buffer back from Mac layer on disassociation
-        //self.tx_state.end_transmit(self.client.get(), false, ReturnCode::FAIL);
     }
 }

@@ -30,21 +30,17 @@
 
 use capsules;
 extern crate sam4l;
-use capsules::ieee802154::mac::{Mac, TxClient};
-use capsules::net::ieee802154::MacAddress;
-use capsules::net::ipv6::ip_utils::{IPAddr, ip6_nh};
-use capsules::net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader, IPPayload};
-use capsules::net::icmpv6::icmpv6::{ICMP6Header, ICMP6HeaderOptions, ICMP6Type};
-use capsules::net::icmpv6::icmpv6_send::{ICMP6SendStruct, ICMP6Sender, ICMP6SendClient};
-use capsules::net::sixlowpan::sixlowpan_state::{Sixlowpan, SixlowpanState, TxState, SixlowpanTxClient};
+use capsules::ieee802154::mac::Mac;
+use capsules::net::ipv6::ip_utils::IPAddr;
+use capsules::net::ipv6::ipv6::{IP6Packet, TransportHeader, IPPayload};
+use capsules::net::icmpv6::icmpv6::{ICMP6Header, ICMP6Type};
+use capsules::net::icmpv6::icmpv6_send::{ICMP6SendStruct, ICMP6Sender};
+use capsules::net::sixlowpan::sixlowpan_state::{Sixlowpan, SixlowpanState, TxState};
 use capsules::net::sixlowpan::sixlowpan_compression;
-use capsules::net::sixlowpan::sixlowpan_compression::Context;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use core::cell::Cell;
 use capsules::net::ipv6::ipv6_send::{IP6SendStruct, IP6Sender};
 
-use core::mem;
-use core::ptr;
 use kernel::ReturnCode;
 
 use kernel::hil::radio;

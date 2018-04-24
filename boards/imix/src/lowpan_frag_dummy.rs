@@ -46,13 +46,11 @@ use capsules::net::ieee802154::MacAddress;
 use capsules::net::ipv6::ip_utils::{IPAddr, ip6_nh};
 use capsules::net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader, IPPayload};
 use capsules::net::udp::udp::{UDPHeader};
-use capsules::net::sixlowpan::sixlowpan_state::{Sixlowpan, SixlowpanState, RxState, TxState, SixlowpanRxClient, SixlowpanTxClient};
+use capsules::net::sixlowpan::sixlowpan_state::{Sixlowpan, SixlowpanState, RxState, TxState, SixlowpanRxClient};
 use capsules::net::sixlowpan::sixlowpan_compression;
-use capsules::net::sixlowpan::sixlowpan_compression::Context;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use core::cell::Cell;
 
-use core::mem;
 use core::ptr;
 use kernel::ReturnCode;
 
@@ -410,18 +408,16 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
                                 self.schedule_next();
                             } else {
                                 // TODO: Handle err (not just debug statement)
-                                let (retcode, opt) = self.radio.transmit(frame);
+                                let (retcode, _opt) = self.radio.transmit(frame);
                                 debug!("Retcode from radio transmit is: {:?}", retcode);
                                 match retcode {
                                     ReturnCode::SUCCESS => {
-                                        
                                     },
                                     _ => debug!("Error in radio transmit") 
                                 }
-                                
                             }
                         },
-                        Err((retcode, buf)) => {
+                        Err((retcode, _buf)) => {
                             debug!("ERROR!: {:?}", retcode);
                         },
                     }
@@ -450,17 +446,17 @@ impl<'a, A: time::Alarm> SixlowpanRxClient for LowpanTest<'a, A> {
 
 static mut ARRAY: [u8; 100] = [0x0; 100]; //used in introducing delay between frames
 impl<'a, A: time::Alarm> TxClient for LowpanTest<'a, A> {
-    fn send_done(&self, tx_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
+    fn send_done(&self, tx_buf: &'static mut [u8], _acked: bool, result: ReturnCode) {
 
         debug!("sendDone return code is: {:?}", result);
         unsafe { //This unsafe block introduces a delay between frames to prevent 
                 // a race condition on the receiver
                 //it is sorta complicated bc I was having some trouble with dead code elimination
             let mut i = 0;
-            while(i < 10000000) {
-                ARRAY[i % 100] = ((i % 100) as u8);
+            while i < 10000000 {
+                ARRAY[i % 100] = (i % 100) as u8;
                 i = i + 1;
-                if (i % 1000000 == 0) {
+                if i % 1000000 == 0 {
                     debug!("Delay, step {:?}", i / 1000000);
                 }
             }

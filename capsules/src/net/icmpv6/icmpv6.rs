@@ -80,10 +80,10 @@ impl ICMP6Header {
 
     pub fn get_type(&self) -> ICMP6Type {
         match self.options {
-            ICMP6HeaderOptions::Type1 { unused } => ICMP6Type::Type1,
-            ICMP6HeaderOptions::Type3 { unused } => ICMP6Type::Type3,
-            ICMP6HeaderOptions::Type128 { id, seqno } => ICMP6Type::Type128,
-            ICMP6HeaderOptions::Type129 { id, seqno } => ICMP6Type::Type129,
+            ICMP6HeaderOptions::Type1 {..} => ICMP6Type::Type1,
+            ICMP6HeaderOptions::Type3 {..} => ICMP6Type::Type3,
+            ICMP6HeaderOptions::Type128 {..} => ICMP6Type::Type128,
+            ICMP6HeaderOptions::Type129 {..} => ICMP6Type::Type129,
         }
     }
 
@@ -143,17 +143,14 @@ impl ICMP6Header {
     pub fn decode(buf: &[u8]) -> SResult<ICMP6Header> {
         let off = 0;
         let (off, type_num) = dec_try!(buf, off; decode_u8);
-        
-        // placeholder value
-        let mut icmp_type = ICMP6Type::Type1;
 
-        match type_num {
-            1 => icmp_type = ICMP6Type::Type1,
-            3 => icmp_type = ICMP6Type::Type3,
-            128 => icmp_type = ICMP6Type::Type128,
-            129 => icmp_type = ICMP6Type::Type129,
+        let icmp_type = match type_num {
+            1 => ICMP6Type::Type1,
+            3 => ICMP6Type::Type3,
+            128 => ICMP6Type::Type128,
+            129 => ICMP6Type::Type129,
             _ => return SResult::Error(()),
-        }
+        };
 
         let mut icmp_header = Self::new(icmp_type);
         
@@ -164,27 +161,27 @@ impl ICMP6Header {
        
         match icmp_type {
             ICMP6Type::Type1 => {
-                let (off, unused) = dec_try!(buf, off; decode_u32);
+                let (_off, unused) = dec_try!(buf, off; decode_u32);
                 let unused = u32::from_be(unused);
                 icmp_header.set_options(ICMP6HeaderOptions::Type1 { unused });
             },
             ICMP6Type::Type3 => {
-                let (off, unused) = dec_try!(buf, off; decode_u32);
+                let (_off, unused) = dec_try!(buf, off; decode_u32);
                 let unused = u32::from_be(unused);
                 icmp_header.set_options(ICMP6HeaderOptions::Type3 { unused });
             },
             ICMP6Type::Type128 => {
-                let (off, id) = dec_try!(buf, off; decode_u16);
+                let (_off, id) = dec_try!(buf, off; decode_u16);
                 let id = u16::from_be(id);
-                let (off, seqno) = dec_try!(buf, off; decode_u16);
+                let (_off, seqno) = dec_try!(buf, off; decode_u16);
                 let seqno = u16::from_be(seqno);
                 icmp_header.set_options(ICMP6HeaderOptions::Type128 { id, 
                     seqno });
             },
             ICMP6Type::Type129 => {
-                let (off, id) = dec_try!(buf, off; decode_u16);
+                let (_off, id) = dec_try!(buf, off; decode_u16);
                 let id = u16::from_be(id);
-                let (off, seqno) = dec_try!(buf, off; decode_u16);
+                let (_off, seqno) = dec_try!(buf, off; decode_u16);
                 let seqno = u16::from_be(seqno);
                 icmp_header.set_options(ICMP6HeaderOptions::Type129 { id, 
                     seqno });

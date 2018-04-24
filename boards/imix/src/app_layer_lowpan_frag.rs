@@ -29,21 +29,17 @@
 
 use capsules;
 extern crate sam4l;
-use capsules::ieee802154::mac::{Mac, TxClient};
-use capsules::net::ieee802154::MacAddress;
+use capsules::ieee802154::mac::Mac;
 use capsules::net::ipv6::ip_utils::{IPAddr, ip6_nh};
 use capsules::net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader, IPPayload};
 use capsules::net::udp::udp::{UDPHeader};
-use capsules::net::udp::udp_send::{UDPSendStruct, UDPSender, UDPSendClient};
-use capsules::net::sixlowpan::sixlowpan_state::{Sixlowpan, SixlowpanState, TxState, SixlowpanTxClient};
+use capsules::net::udp::udp_send::{UDPSendStruct, UDPSender};
+use capsules::net::sixlowpan::sixlowpan_state::{Sixlowpan, SixlowpanState, TxState};
 use capsules::net::sixlowpan::sixlowpan_compression;
-use capsules::net::sixlowpan::sixlowpan_compression::Context;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use core::cell::Cell;
 use capsules::net::ipv6::ipv6_send::{IP6SendStruct, IP6Sender};
 
-use core::mem;
-use core::ptr;
 use kernel::ReturnCode;
 
 use kernel::hil::radio;
@@ -223,10 +219,8 @@ impl<'a, A: time::Alarm + 'a> LowpanTest<'a, A> {
 
     fn send_next(&self) {
         //Insert code to send UDP PAYLOAD here.
-        let mut dst_addr: IPAddr = IPAddr::new();
         let src_port: u16 = 12321;
         let dst_port: u16 = 32123;
-
         unsafe {self.udp_sender.send_to(DST_ADDR, src_port, dst_port, &UDP_PAYLOAD)};
 
     }
