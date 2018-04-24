@@ -10,7 +10,7 @@ export RUSTUP_TOOLCHAIN ?= nightly-2018-03-07
 TOOLCHAIN ?= arm-none-eabi
 
 XARGO ?= xargo
-MINIMUM_XARGO_VERSION ?= 0.3.8
+MINIMUM_XARGO_VERSION ?= 0.3.08
 # This will hopefully move into Cargo.toml (or Cargo.toml.local) eventually
 RUSTFLAGS_FOR_XARGO_LINKING := "-C link-arg=-nostartfiles -C link-arg=-Tlayout.ld"
 
