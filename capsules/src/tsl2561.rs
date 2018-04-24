@@ -1,6 +1,6 @@
 //! Driver for the Taos TSL2561 light sensor.
 //!
-//! http://www.digikey.com/product-detail/en/ams-taos-usa-inc/TSL2561FN/TSL2561-FNCT-ND/3095298
+//! <http://www.digikey.com/product-detail/en/ams-taos-usa-inc/TSL2561FN/TSL2561-FNCT-ND/3095298>
 //!
 //! > The TSL2560 and TSL2561 are light-to-digital converters that transform
 //! > light intensity to a digital signal output capable of direct I2C
@@ -15,10 +15,12 @@
 
 use core::cell::Cell;
 use kernel::{AppId, Callback, Driver, ReturnCode};
-
 use kernel::common::take_cell::TakeCell;
 use kernel::hil::gpio;
 use kernel::hil::i2c;
+
+/// Syscall driver number.
+pub const DRIVER_NUM: usize = 0x70000;
 
 // Buffer to use for I2C messages
 pub static mut BUFFER: [u8; 4] = [0; 4];
@@ -38,7 +40,6 @@ const LOW_GAIN_MODE: u8 = 0x00;
 // Interrupt_Control_Reg defines
 const INTERRUPT_CONTROL_LEVEL: u8 = 0x10;
 const INTERRUPT_ON_ADC_DONE: u8 = 0x0;
-
 
 // ADC counts to Lux value conversion copied from TSL2561 manual
 // −−−−------------------------------
@@ -158,8 +159,6 @@ const M8T: usize = 0x0000; // 0.000 * 2^LUX_SCALE
 // const B8C: usize = 0x0000; // 0.000 * 2^LUX_SCALE
 // const M8C: usize = 0x0000; // 0.000 * 2^LUX_SCALE
 
-
-
 #[allow(dead_code)]
 enum Registers {
     Control = 0x00,
@@ -176,7 +175,7 @@ enum Registers {
     Data1High = 0x0f,
 }
 
-#[derive(Clone,Copy,PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum State {
     Idle,
 
@@ -210,10 +209,11 @@ pub struct TSL2561<'a> {
 }
 
 impl<'a> TSL2561<'a> {
-    pub fn new(i2c: &'a i2c::I2CDevice,
-               interrupt_pin: &'a gpio::Pin,
-               buffer: &'static mut [u8])
-               -> TSL2561<'a> {
+    pub fn new(
+        i2c: &'a i2c::I2CDevice,
+        interrupt_pin: &'a gpio::Pin,
+        buffer: &'static mut [u8],
+    ) -> TSL2561<'a> {
         // setup and return struct
         TSL2561 {
             i2c: i2c,
@@ -239,7 +239,8 @@ impl<'a> TSL2561<'a> {
     pub fn take_measurement(&self) {
         // Need pull up on interrupt pin
         self.interrupt_pin.make_input();
-        self.interrupt_pin.enable_interrupt(0, gpio::InterruptMode::FallingEdge);
+        self.interrupt_pin
+            .enable_interrupt(0, gpio::InterruptMode::FallingEdge);
 
         self.buffer.take().map(|buf| {
             // Turn on i2c to send commands
@@ -257,7 +258,7 @@ impl<'a> TSL2561<'a> {
         // time. 16X, 402mS is nominal. Scale if integration time is NOT 402 msec.
         // let mut ch_scale = CHSCALE_TINT0 as usize; // 13.7ms
         let mut ch_scale = CHSCALE_TINT1 as usize; // 101ms
-        // let mut ch_scale: usize = 1 << CH_SCALE; // Default
+                                                   // let mut ch_scale: usize = 1 << CH_SCALE; // Default
 
         // Scale if gain is NOT 16X
         ch_scale = ch_scale << 4; // scale 1X to 16X
@@ -435,12 +436,17 @@ impl<'a> gpio::Client for TSL2561<'a> {
 }
 
 impl<'a> Driver for TSL2561<'a> {
-    fn subscribe(&self, subscribe_num: usize, callback: Callback) -> ReturnCode {
+    fn subscribe(
+        &self,
+        subscribe_num: usize,
+        callback: Option<Callback>,
+        _app_id: AppId,
+    ) -> ReturnCode {
         match subscribe_num {
             // Set a callback
             0 => {
                 // Set callback function
-                self.callback.set(Some(callback));
+                self.callback.set(callback);
                 ReturnCode::SUCCESS
             }
             // default

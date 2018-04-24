@@ -11,11 +11,33 @@ developing Tock.
 3. [arm-none-eabi toolchain](https://developer.arm.com/open-source/gnu-toolchain/gnu-rm/downloads) (version >= 5.2)
 4. Command line utilities: wget, sed, make, cmake
 
+### Super Quick Setup
+
+MacOS:
+```
+$ curl https://sh.rustup.rs -sSf | sh
+$ brew tap ARMmbed/homebrew-formulae && brew update && brew install arm-none-eabi-gcc
+$ pip3 install tockloader
+```
+
+Ubuntu:
+```
+$ curl https://sh.rustup.rs -sSf | sh
+$ sudo add-apt-repository ppa:team-gcc-arm-embedded/ppa && sudo apt update && sudo apt install gcc-arm-embedded
+$ pip3 install tockloader --user
+$ grep -q dialout <(groups $(whoami)) || sudo usermod -a -G dialout $(whoami) # Note, will need to reboot if prompted for password
+```
+
+Then build the kernel by running `make` in the `boards/<platform>` directory.
+
 ### Installing Requirements
+
+These steps go into a little more depth. Note that the build system is capable
+of installing some of these tools, but you can also install them yourself.
 
 #### Rust (nightly)
 
-We are using `rustc 1.22.0-nightly (325ba23d5 2017-09-19)`. We recommend
+We are using `rustc 1.26.0-nightly (2789b067d 2018-03-06)`. We recommend
 installing it with [rustup](http://www.rustup.rs) so you can manage multiple
 versions of Rust and continue using stable versions for other Rust code:
 
@@ -30,7 +52,7 @@ to your `$PATH`.
 Then install the correct nightly version of Rust:
 
 ```bash
-$ rustup install nightly-2017-09-20
+$ rustup install nightly-2018-03-07
 ```
 
 #### Xargo
@@ -114,8 +136,8 @@ $ sudo pacman -S arm-none-eabi-gcc arm-none-eabi-newlib arm-none-eabi-gdb
 
 You can download precompiled binaries for Windows from the ARM site listed
 above. While we expect things should work on Windows, none of the active Tock
-developers currently develop on Windows, so it is possible that are some
-unexpected pitfalls.
+developers currently develop on Windows, so it is possible that there are
+some unexpected pitfalls.
 
 ##### Other
 
@@ -181,7 +203,7 @@ such as easy to manage serial connections, and the ability to list, add,
 replace, and remove applications over JTAG (or USB if a bootloader is
 installed).
 
-1. [tockloader](https://github.com/helena-project/tockloader) (version >= 0.8)
+1. [tockloader](https://github.com/tock/tockloader) (version >= 0.8)
 
 Installing applications over JTAG, depending on your JTAG Debugger, you will
 need one of:
@@ -233,12 +255,11 @@ the board specific READMEs:
 ## Formatting Rust Source Code
 
 Rust includes a tool for automatically formatting Rust source
-code. This requires a `cargo` tool:
-
-    $ cargo install rustfmt
-
-Then run:
+code. Simply run:
 
     $ make format
 
-to format the repository.
+from the root of the repository to format all rust code in the repository.
+To format all code (rust and c), run:
+
+    $ make formatall

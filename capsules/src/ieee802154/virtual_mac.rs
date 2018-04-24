@@ -27,7 +27,7 @@
 //! ```
 
 use core::cell::Cell;
-use ieee802154::mac;
+use ieee802154::{device, framer};
 use kernel::ReturnCode;
 use kernel::common::{List, ListLink, ListNode};
 use kernel::common::take_cell::MapCell;
@@ -37,12 +37,12 @@ use net::ieee802154::*;
 /// any pending transmission requests. Any received frames from the underlying
 /// MAC device are sent to all users.
 pub struct MuxMac<'a> {
-    mac: &'a mac::Mac<'a>,
+    mac: &'a device::MacDevice<'a>,
     users: List<'a, MacUser<'a>>,
     inflight: Cell<Option<&'a MacUser<'a>>>,
 }
 
-impl<'a> mac::TxClient for MuxMac<'a> {
+impl<'a> device::TxClient for MuxMac<'a> {
     fn send_done(&self, spi_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         self.inflight.get().map(move |user| {
             self.inflight.set(None);
@@ -52,7 +52,7 @@ impl<'a> mac::TxClient for MuxMac<'a> {
     }
 }
 
-impl<'a> mac::RxClient for MuxMac<'a> {
+impl<'a> device::RxClient for MuxMac<'a> {
     fn receive<'b>(&self, buf: &'b [u8], header: Header<'b>, data_offset: usize, data_len: usize) {
         for user in self.users.iter() {
             user.receive(buf, header, data_offset, data_len);
@@ -61,7 +61,7 @@ impl<'a> mac::RxClient for MuxMac<'a> {
 }
 
 impl<'a> MuxMac<'a> {
-    pub const fn new(mac: &'a mac::Mac<'a>) -> MuxMac<'a> {
+    pub const fn new(mac: &'a device::MacDevice<'a>) -> MuxMac<'a> {
         MuxMac {
             mac: mac,
             users: List::new(),
@@ -106,17 +106,21 @@ impl<'a> MuxMac<'a> {
             let (result, mbuf) = self.mac.transmit(frame);
             // If a buffer is returned, the transmission failed,
             // otherwise it succeeded.
-            mbuf.map(|buf| { node.send_done(buf, false, result); })
-                .unwrap_or_else(|| { self.inflight.set(Some(node)); });
+            mbuf.map(|buf| {
+                node.send_done(buf, false, result);
+            }).unwrap_or_else(|| {
+                self.inflight.set(Some(node));
+            });
         }
     }
 
     /// Performs a non-idle operation on a `MacUser` synchronously, returning
     /// the error code and the buffer immediately.
-    fn perform_op_sync(&self,
-                       node: &'a MacUser<'a>,
-                       op: Op)
-                       -> Option<(ReturnCode, Option<&'static mut [u8]>)> {
+    fn perform_op_sync(
+        &self,
+        node: &'a MacUser<'a>,
+        op: Op,
+    ) -> Option<(ReturnCode, Option<&'static mut [u8]>)> {
         if let Op::Transmit(frame) = op {
             let (result, mbuf) = self.mac.transmit(frame);
             if result == ReturnCode::SUCCESS {
@@ -133,7 +137,8 @@ impl<'a> MuxMac<'a> {
     /// Since this is being called asynchronously, return any buffers to the active
     /// `tx_client` via the `send_done` callback in the event of failure.
     fn do_next_op_async(&self) {
-        self.get_next_op_if_idle().map(|(node, op)| self.perform_op_async(node, op));
+        self.get_next_op_if_idle()
+            .map(|(node, op)| self.perform_op_async(node, op));
     }
 
     /// Begins the next outstanding transmission if there is no ongoing
@@ -147,9 +152,10 @@ impl<'a> MuxMac<'a> {
     ///
     /// If the newly-enqueued transmission is immediately executed by this mux
     /// device but fails immediately, return the buffer synchronously.
-    fn do_next_op_sync(&self,
-                       new_node: &MacUser<'a>)
-                       -> Option<(ReturnCode, Option<&'static mut [u8]>)> {
+    fn do_next_op_sync(
+        &self,
+        new_node: &MacUser<'a>,
+    ) -> Option<(ReturnCode, Option<&'static mut [u8]>)> {
         self.get_next_op_if_idle().and_then(|(node, op)| {
             if node as *const _ == new_node as *const _ {
                 // The new node's operation is the one being scheduled, so the
@@ -168,7 +174,7 @@ impl<'a> MuxMac<'a> {
 #[derive(Eq, PartialEq, Debug)]
 enum Op {
     Idle,
-    Transmit(mac::Frame),
+    Transmit(framer::Frame),
 }
 
 /// Keep state for each Mac user. All users of the virtualized MAC interface
@@ -182,8 +188,8 @@ pub struct MacUser<'a> {
     mux: &'a MuxMac<'a>,
     operation: MapCell<Op>,
     next: ListLink<'a, MacUser<'a>>,
-    tx_client: Cell<Option<&'a mac::TxClient>>,
-    rx_client: Cell<Option<&'a mac::RxClient>>,
+    tx_client: Cell<Option<&'a device::TxClient>>,
+    rx_client: Cell<Option<&'a device::RxClient>>,
 }
 
 impl<'a> MacUser<'a> {
@@ -218,12 +224,12 @@ impl<'a> ListNode<'a, MacUser<'a>> for MacUser<'a> {
     }
 }
 
-impl<'a> mac::Mac<'a> for MacUser<'a> {
-    fn set_transmit_client(&self, client: &'a mac::TxClient) {
+impl<'a> device::MacDevice<'a> for MacUser<'a> {
+    fn set_transmit_client(&self, client: &'a device::TxClient) {
         self.tx_client.set(Some(client));
     }
 
-    fn set_receive_client(&self, client: &'a mac::RxClient) {
+    fn set_receive_client(&self, client: &'a device::RxClient) {
         self.rx_client.set(Some(client));
     }
 
@@ -239,14 +245,6 @@ impl<'a> mac::Mac<'a> for MacUser<'a> {
         self.mux.mac.get_pan()
     }
 
-    fn get_channel(&self) -> u8 {
-        self.mux.mac.get_channel()
-    }
-
-    fn get_tx_power(&self) -> i8 {
-        self.mux.mac.get_tx_power()
-    }
-
     fn set_address(&self, addr: u16) {
         self.mux.mac.set_address(addr)
     }
@@ -259,14 +257,6 @@ impl<'a> mac::Mac<'a> for MacUser<'a> {
         self.mux.mac.set_pan(id)
     }
 
-    fn set_channel(&self, chan: u8) -> ReturnCode {
-        self.mux.mac.set_channel(chan)
-    }
-
-    fn set_tx_power(&self, power: i8) -> ReturnCode {
-        self.mux.mac.set_tx_power(power)
-    }
-
     fn config_commit(&self) {
         self.mux.mac.config_commit()
     }
@@ -275,18 +265,21 @@ impl<'a> mac::Mac<'a> for MacUser<'a> {
         self.mux.mac.is_on()
     }
 
-    fn prepare_data_frame(&self,
-                          buf: &'static mut [u8],
-                          dst_pan: PanID,
-                          dst_addr: MacAddress,
-                          src_pan: PanID,
-                          src_addr: MacAddress,
-                          security_needed: Option<(SecurityLevel, KeyId)>)
-                          -> Result<mac::Frame, &'static mut [u8]> {
-        self.mux.mac.prepare_data_frame(buf, dst_pan, dst_addr, src_pan, src_addr, security_needed)
+    fn prepare_data_frame(
+        &self,
+        buf: &'static mut [u8],
+        dst_pan: PanID,
+        dst_addr: MacAddress,
+        src_pan: PanID,
+        src_addr: MacAddress,
+        security_needed: Option<(SecurityLevel, KeyId)>,
+    ) -> Result<framer::Frame, &'static mut [u8]> {
+        self.mux
+            .mac
+            .prepare_data_frame(buf, dst_pan, dst_addr, src_pan, src_addr, security_needed)
     }
 
-    fn transmit(&self, frame: mac::Frame) -> (ReturnCode, Option<&'static mut [u8]>) {
+    fn transmit(&self, frame: framer::Frame) -> (ReturnCode, Option<&'static mut [u8]>) {
         // If the muxer is idle, immediately transmit the frame, otherwise
         // attempt to queue the transmission request. However, each MAC user can
         // only have one pending transmission request, so if there already is a

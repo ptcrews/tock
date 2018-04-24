@@ -1,4 +1,4 @@
-#![feature(const_fn,const_cell_new)]
+#![feature(const_fn, const_cell_new)]
 #![forbid(unsafe_code)]
 #![no_std]
 
@@ -6,8 +6,11 @@
 #[macro_use(debug)]
 extern crate kernel;
 
+pub mod test;
+
 pub mod alarm;
 pub mod ambient_light;
+pub mod ble_advertising_driver;
 pub mod button;
 pub mod console;
 pub mod fm25cl;
@@ -33,7 +36,6 @@ pub mod crc;
 pub mod rf233;
 pub mod rf233_const;
 pub mod rng;
-pub mod symmetric_encryption;
 pub mod ninedof;
 pub mod ltc294x;
 pub mod mcp23008;
@@ -51,4 +53,5 @@ pub mod net;
 pub mod ieee802154;
 pub mod temperature;
 pub mod humidity;
+pub mod aes_ccm;
 //pub mod nrf_internal_temp_sensor;

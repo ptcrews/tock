@@ -170,13 +170,18 @@ $ git rebase upstream/master
 $ git push origin my-branch
 ```
 
-Go to https://github.com/yourusername/tock and select your branch.
+Go to https://github.com/<yourusername>/tock and select your branch.
 Click the 'Pull Request' button and fill out the form.
 
 ### Step 6: Discuss and update
 
 You will probably get feedback or requests for changes to your Pull Request.
 This is a big part of the submission process so don't be disheartened!
+
+Tock has a [standardized process for reviewing pull requests](../doc/CodeReview.md).
+In general the relevant team members will review a pull request, ask for any
+changes, and get support from the larger team before merging a PR. If you are
+curious about the specifics, feel free to read through the specific process.
 
 To make changes to an existing Pull Request, make the changes to your branch.
 When you push that branch to your fork, GitHub will automatically update the
@@ -199,13 +204,13 @@ commits (see notes about [rewriting-history](#rewriting-history)).
 ### Step 7: Style
 
 Mainline Tock uses [rustfmt](https://github.com/rust-lang-nursery/rustfmt) to
-format code, using mostly the default style options (see [rustfmt.toml](rustfmt.toml)
+format code, using mostly the default style options (see [rustfmt.toml](../rustfmt.toml)
 for details. As rustfmt is under development, Tock pegs a specific version for
 use in formatting. The build system will automatically use (and install if needed)
 the correct rustfmt version when you invoke `make format`.
 
 For userland C/C++ code, Tock uses [uncrustify](https://github.com/uncrustify/uncrustify).
-Style configuration can be found in [userland/tools/uncrustify/](userland/tools/uncrustify/uncrustify.cfg).
+Style configuration can be found in [userland/tools/uncrustify/](../userland/tools/uncrustify/uncrustify.cfg).
 
 The target `make formatall` in the root will automatically run all style checks
 and make any required changes. PRs must pass the formatting checks before landing.

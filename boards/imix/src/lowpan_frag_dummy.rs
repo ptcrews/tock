@@ -29,7 +29,7 @@
 //! ...
 //! // Radio initialization code
 //! ...
-//! let lowpan_frag_test = lowpan_frag_dummy::initialize_all(radio_mac as &'static Mac,
+//! let lowpan_frag_test = lowpan_frag_dummy::initialize_all(radio_mac as &'static MacDevice,
 //!                                                          mux_alarm as &'static
 //!                                                             MuxAlarm<'static,
 //!                                                                 sam4l::ast::Ast>);
@@ -41,7 +41,7 @@
 
 use capsules;
 extern crate sam4l;
-use capsules::ieee802154::mac::{Mac, TxClient};
+use capsules::ieee802154::device::{MacDevice, TxClient};
 use capsules::net::ieee802154::MacAddress;
 use capsules::net::ipv6::ip_utils::{IPAddr, ip6_nh};
 use capsules::net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader, IPPayload};
@@ -53,7 +53,6 @@ use core::cell::Cell;
 
 use core::ptr;
 use kernel::ReturnCode;
-
 use kernel::hil::radio;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
@@ -93,7 +92,7 @@ enum TF {
     TrafficFlow = 0b11,
 }
 
-#[derive(Copy,Clone,Debug)]
+#[derive(Copy, Clone, Debug)]
 enum SAC {
     Inline,
     LLP64,
@@ -105,7 +104,7 @@ enum SAC {
     CtxIID,
 }
 
-#[derive(Copy,Clone,Debug)]
+#[derive(Copy, Clone, Debug)]
 enum DAC {
     Inline,
     LLP64,
@@ -135,11 +134,11 @@ static mut IP6_DG_OPT: Option<IP6Packet> = None;
 pub struct LowpanTest<'a, A: time::Alarm + 'a> {
     alarm: A,
     sixlowpan_tx: TxState<'a>,
-    radio: &'a Mac<'a>,
+    radio: &'a MacDevice<'a>,
     test_counter: Cell<usize>,
 }
 
-pub unsafe fn initialize_all(radio_mac: &'static Mac,
+pub unsafe fn initialize_all(radio_mac: &'static MacDevice,
                       mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
         -> &'static LowpanTest<'static,
         capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {
@@ -218,7 +217,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 
 impl<'a, A: time::Alarm> LowpanTest<'a, A> {
     pub fn new(sixlowpan_tx: TxState<'a>,
-               radio: &'a Mac<'a>,
+               radio: &'a MacDevice<'a>,
                alarm: A) -> LowpanTest<'a, A> {
         LowpanTest {
             alarm: alarm,
@@ -327,14 +326,14 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
             11 => {
                 ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::LLPIID, DAC::Inline, buf, len)
             }
-            12 => {
-                ipv6_check_receive_packet(TF::TrafficFlow,
-                                          42,
-                                          SAC::Unspecified,
-                                          DAC::Inline,
-                                          buf,
-                                          len)
-            }
+            12 => ipv6_check_receive_packet(
+                TF::TrafficFlow,
+                42,
+                SAC::Unspecified,
+                DAC::Inline,
+                buf,
+                len,
+            ),
             13 => ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::Ctx64, DAC::Inline, buf, len),
             14 => ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::Ctx16, DAC::Inline, buf, len),
             15 => {
@@ -355,14 +354,14 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
             22 => {
                 ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::CtxIID, buf, len)
             }
-            23 => {
-                ipv6_check_receive_packet(TF::TrafficFlow,
-                                          42,
-                                          SAC::CtxIID,
-                                          DAC::McastInline,
-                                          buf,
-                                          len)
-            }
+            23 => ipv6_check_receive_packet(
+                TF::TrafficFlow,
+                42,
+                SAC::CtxIID,
+                DAC::McastInline,
+                buf,
+                len,
+            ),
             24 => {
                 ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Mcast48, buf, len)
             }
@@ -377,7 +376,6 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
             }
 
             _ => debug!("Finished tests"),
-
         }
     }
     fn ipv6_send_packet_test(&self, tf: TF, hop_limit: u8, sac: SAC, dac: DAC) {
@@ -425,7 +423,6 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
                 None => debug!("Error! tried to send uninitialized IP6Packet"),
             }
         }
-        
     }
 }
 

@@ -6,7 +6,7 @@ use kernel::common::math::PowerOfTwo;
 
 /// Indicates whether the MPU is present and, if so, how many regions it
 /// supports.
-#[repr(C,packed)]
+#[repr(C)]
 pub struct MpuType {
     /// Indicates whether the processor support unified (0) or separate
     /// (1) instruction and data regions. Always reads 0 on the
@@ -23,7 +23,7 @@ pub struct MpuType {
     _reserved: u8,
 }
 
-#[repr(C,packed)]
+#[repr(C)]
 /// MPU Registers for the Cortex-M4 family
 ///
 /// Described in section 4.5 of
@@ -32,12 +32,14 @@ pub struct Registers {
     pub mpu_type: VolatileCell<MpuType>,
 
     /// The control register:
+    ///
     ///   * Enables the MPU (bit 0).
     ///   * Enables MPU in hard-fault, non-maskable interrupt (NMI) and
     ///     FAULTMASK escalated handlers (bit 1).
     ///   * Enables the default memory map background region in privileged mode
     ///     (bit 2).
     ///
+    /// ```text
     /// Bit   | Name       | Function
     /// ----- | ---------- | -----------------------------
     /// 0     | ENABLE     | Enable the MPU (1=enabled)
@@ -45,14 +47,17 @@ pub struct Registers {
     ///       |            | regardless of bit 0. 1 leaves enabled.
     /// 2     | PRIVDEFENA | 0=Any memory access not explicitly enabled causes fault
     ///       |            | 1=Privledged mode code can read any memory address
+    /// ```
     pub control: VolatileCell<u32>,
 
     /// Selects the region number (zero-indexed) referenced by the region base
     /// address and region attribute and size registers.
     ///
+    /// ```text
     /// Bit   | Name     | Function
     /// ----- | -------- | -----------------------------
     /// [7:0] | REGION   | Region for writes to MPU_RBAR or MPU_RASR. Range 0-7.
+    /// ```
     pub region_number: VolatileCell<u32>,
 
     /// Defines the base address of the currently selected MPU region.
@@ -65,6 +70,7 @@ pub struct Registers {
     ///
     ///   N = Log2(Region size in bytes)
     ///
+    /// ```text
     /// Bit       | Name    | Function
     /// --------- | ------- | -----------------------------
     /// [31:N]    | ADDR    | Region base address
@@ -72,11 +78,13 @@ pub struct Registers {
     /// [4]       | VALID   | {RZ} 0=Use region_number reg, 1=Use REGION
     ///           |         |      Update base address for chosen region
     /// [3:0]     | REGION  | {W} (see VALID) ; {R} return region_number reg
+    /// ```
     pub region_base_address: VolatileCell<u32>,
 
     /// Defines the region size and memory attributes of the selected MPU
     /// region. The bits are defined as in 4.5.5 of the Cortex-M4 user guide:
     ///
+    /// ```text
     /// Bit   | Name   | Function
     /// ----- | ------ | -----------------------------
     /// 0     | ENABLE | Region enable
@@ -91,9 +99,9 @@ pub struct Registers {
     /// 26:24 | AP     | Access permission field
     /// 27    |        | Unused
     /// 28    | XN     | Instruction access disable
+    /// ```
     pub region_attributes_and_size: VolatileCell<u32>,
 }
-
 
 const MPU_BASE_ADDRESS: *const Registers = 0xE000ED90 as *const Registers;
 
@@ -119,8 +127,10 @@ impl kernel::mpu::MPU for MPU {
         let mpu_type = regs.mpu_type.get();
         let regions = mpu_type.data_regions.get();
         if regions != 8 {
-            panic!("Tock currently assumes 8 MPU regions. This chip has {}",
-                   regions);
+            panic!(
+                "Tock currently assumes 8 MPU regions. This chip has {}",
+                regions
+            );
         }
     }
 
@@ -129,12 +139,13 @@ impl kernel::mpu::MPU for MPU {
         regs.control.set(0b0);
     }
 
-    fn create_region(region_num: usize,
-                     start: usize,
-                     len: usize,
-                     execute: kernel::mpu::ExecutePermission,
-                     access: kernel::mpu::AccessPermission)
-                     -> Option<Region> {
+    fn create_region(
+        region_num: usize,
+        start: usize,
+        len: usize,
+        execute: kernel::mpu::ExecutePermission,
+        access: kernel::mpu::AccessPermission,
+    ) -> Option<Region> {
         if region_num >= 8 {
             // There are only 8 (0-indexed) regions available
             return None;
@@ -164,8 +175,10 @@ impl kernel::mpu::MPU for MPU {
             let xn = execute as u32;
             let ap = access as u32;
             Some(unsafe {
-                Region::new((start | 1 << 4 | (region_num & 0xf)) as u32,
-                            1 | (region_len.exp::<u32>() - 1) << 1 | ap << 24 | xn << 28)
+                Region::new(
+                    (start | 1 << 4 | (region_num & 0xf)) as u32,
+                    1 | (region_len.exp::<u32>() - 1) << 1 | ap << 24 | xn << 28,
+                )
             })
         } else {
             // Memory base not aligned to memory size
@@ -182,7 +195,11 @@ impl kernel::mpu::MPU for MPU {
                 // `start` should never be 0 because of that's taken care of by
                 // the previous branch, but in case it is, do the right thing
                 // anyway.
-                if tz < 32 { (1 as usize) << tz } else { 0 }
+                if tz < 32 {
+                    (1 as usize) << tz
+                } else {
+                    0
+                }
             };
 
             // Once we have a subregion size, we get a region size by
@@ -204,7 +221,6 @@ impl kernel::mpu::MPU for MPU {
                 // we take the max_subregion.
                 return None;
             }
-
 
             // The index of the first subregion to activate is the number of
             // regions between `region_start` (MPU) and `start` (memory).
@@ -229,15 +245,17 @@ impl kernel::mpu::MPU for MPU {
             //
             // Note: Rust ranges are minimum inclusive, maximum exclusive, hence
             // max_subregion + 1.
-            let subregion_mask = (min_subregion..(max_subregion + 1))
-                .fold(!0, |res, i| res & !(1 << i)) & 0xff;
+            let subregion_mask =
+                (min_subregion..(max_subregion + 1)).fold(!0, |res, i| res & !(1 << i)) & 0xff;
 
             let xn = execute as u32;
             let ap = access as u32;
             Some(unsafe {
-                Region::new((region_start | 1 << 4 | (region_num & 0xf)) as u32,
-                            1 | subregion_mask << 8 | (region_len.exp::<u32>() - 1) << 1 |
-                            ap << 24 | xn << 28)
+                Region::new(
+                    (region_start | 1 << 4 | (region_num & 0xf)) as u32,
+                    1 | subregion_mask << 8 | (region_len.exp::<u32>() - 1) << 1 | ap << 24
+                        | xn << 28,
+                )
             })
         }
     }

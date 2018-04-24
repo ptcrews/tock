@@ -29,7 +29,7 @@
 
 use capsules;
 extern crate sam4l;
-use capsules::ieee802154::mac::Mac;
+use capsules::ieee802154::device::MacDevice;
 use capsules::net::ipv6::ip_utils::{IPAddr, ip6_nh};
 use capsules::net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader, IPPayload};
 use capsules::net::udp::udp::{UDPHeader};
@@ -74,7 +74,7 @@ pub struct LowpanTest<'a, A: time::Alarm + 'a> {
     udp_sender: &'a UDPSender<'a>,
 }
 //TODO: Initialize UDP sender/send_done client in initialize all
-pub unsafe fn initialize_all(radio_mac: &'static Mac,
+pub unsafe fn initialize_all(radio_mac: &'static MacDevice,
                       mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
         -> &'static LowpanTest<'static,
         capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {

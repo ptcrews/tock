@@ -3,7 +3,9 @@
 MAKEFLAGS += -r
 MAKEFLAGS += -R
 
-export RUSTUP_TOOLCHAIN ?= nightly-2017-09-20
+MAKEFILE_COMMON_PATH := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
+export RUSTUP_TOOLCHAIN ?= nightly-2018-03-07
 
 TOOLCHAIN ?= arm-none-eabi
 
@@ -18,9 +20,22 @@ OBJCOPY   ?= $(TOOLCHAIN)-objcopy
 OBJDUMP   ?= $(TOOLCHAIN)-objdump
 OBJDUMP_FLAGS += --disassemble-all --source --disassembler-options=force-thumb -C --section-headers
 
-ifndef PLATFORM
-$(error Required make vairable PLATFORM is not defined)
-endif
+# http://stackoverflow.com/questions/10858261/abort-makefile-if-variable-not-set
+# Check that given variables are set and all have non-empty values,
+# die with an error otherwise.
+#
+# Params:
+#   1. Variable name(s) to test.
+#   2. (optional) Error message to print.
+check_defined = \
+    $(strip $(foreach 1,$1, \
+        $(call __check_defined,$1,$(strip $(value 2)))))
+__check_defined = \
+    $(if $(value $1),, \
+      $(error Undefined $1$(if $2, ($2))))
+
+
+$(call check_defined, PLATFORM)
 
 # If environment variable V is non-empty, be verbose
 ifneq ($(V),)
@@ -54,7 +69,7 @@ endif
 
 
 # Check that rustc is the right nightly - warn not error if wrong, sometimes useful to test others
-RUSTC_VERSION_STRING := rustc 1.22.0-nightly (325ba23d5 2017-09-19)
+RUSTC_VERSION_STRING := rustc 1.26.0-nightly (2789b067d 2018-03-06)
 ifneq ($(shell RUSTUP_TOOLCHAIN=$(RUSTUP_TOOLCHAIN) rustc --version), $(RUSTC_VERSION_STRING))
   DUMMY := $(shell rustup install $(RUSTUP_TOOLCHAIN))
   ifneq ($(shell RUSTUP_TOOLCHAIN=$(RUSTUP_TOOLCHAIN) rustc --version), $(RUSTC_VERSION_STRING))
@@ -79,7 +94,7 @@ ifneq ($(XARGO_NAME), xargo)
   $(shell sleep 3s)
   $(shell RUSTUP_TOOLCHAIN=$(RUSTUP_TOOLCHAIN) cargo install xargo)
   XARGO_VERSION := $(strip $(word 2, $(XARGO_CALL)))
-else ifeq ($(shell expr $(XARGO_VERSION) \< $(MINIMUM_XARGO_VERSION)), 1)
+else ifeq ($(shell $(MAKEFILE_COMMON_PATH)../tools/semver.sh $(XARGO_VERSION) \< $(MINIMUM_XARGO_VERSION)), true)
   $(warning Required tool `xargo` is out-of-date.)
   $(warning Running `cargo install cargo-update` and `cargo install-update xargo` in 3 seconds (ctrl-c to cancel))
   $(shell sleep 3s)
@@ -88,6 +103,12 @@ else ifeq ($(shell expr $(XARGO_VERSION) \< $(MINIMUM_XARGO_VERSION)), 1)
   $(info $(XARGO_UPDATE_RESULT))
   XARGO_VERSION := $(strip $(word 2, $(XARGO_CALL)))
 endif
+
+# Xargo 3.11 is broken an expects a `bin` folder to exist that doesn't. Work around
+# this by creating the bin folder ourselves if it doesn't exist.
+RUST_SYSROOT := $(shell RUSTUP_TOOLCHAIN=$(RUSTUP_TOOLCHAIN) rustc --print sysroot)
+RUST_HOST := $(shell RUSTUP_TOOLCHAIN=$(RUSTUP_TOOLCHAIN) rustc -vV | grep host | cut -b 7-)
+$(shell mkdir -p $(RUST_SYSROOT)/lib/rustlib/$(RUST_HOST)/bin)
 
 # Dump configuration for verbose builds
 ifneq ($(V),)
@@ -125,11 +146,7 @@ target:
 
 .PHONY: doc
 doc: | target
-	@# Need to make a wrapper script so we can pass flags to `rustdoc`.
-	@# This allows us to tell rustdoc to document internal functions and fields.
-	$(Q)printf '#!/bin/bash\nexec rustdoc $$@ --no-defaults --passes "collapse-docs" --passes "unindent-comments"\n' > target/rustdoc
-	$(Q)chmod +x target/rustdoc
-	$(Q)RUSTDOC=target/rustdoc $(XARGO) doc $(VERBOSE) --release --target=$(TARGET)
+	$(Q)RUSTDOCFLAGS=--document-private-items RUSTUP_TOOLCHAIN=$(RUSTUP_TOOLCHAIN) $(XARGO) doc $(VERBOSE) --release --target=$(TARGET)
 
 target/$(TARGET)/release/$(PLATFORM).elf: target/$(TARGET)/release/$(PLATFORM)
 	$(Q)cp target/$(TARGET)/release/$(PLATFORM) target/$(TARGET)/release/$(PLATFORM).elf

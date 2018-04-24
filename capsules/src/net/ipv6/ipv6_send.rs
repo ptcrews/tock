@@ -1,5 +1,5 @@
 use net::ipv6::ip_utils::IPAddr;
-use ieee802154::mac::{Mac, TxClient};
+use ieee802154::device::{MacDevice, TxClient};
 use net::ieee802154::MacAddress;
 use net::sixlowpan::sixlowpan_state::TxState;
 use net::ipv6::ipv6::{IP6Packet, IP6Header, TransportHeader};
@@ -37,7 +37,7 @@ pub struct IP6SendStruct<'a> {
     gateway: Cell<MacAddress>,
     tx_buf: TakeCell<'static, [u8]>,
     sixlowpan: TxState<'a>,
-    radio: &'a Mac<'a>,
+    radio: &'a MacDevice<'a>,
     client: Cell<Option<&'a IP6Client>>,
 }
 
@@ -71,7 +71,7 @@ impl<'a> IP6SendStruct<'a> {
     pub fn new(ip6_packet: &'static mut IP6Packet<'static>,
                tx_buf: &'static mut [u8],
                sixlowpan: TxState<'a>,
-               radio: &'a Mac<'a>) -> IP6SendStruct<'a> {
+               radio: &'a MacDevice<'a>) -> IP6SendStruct<'a> {
         IP6SendStruct {
             ip6_packet: TakeCell::new(ip6_packet),
             src_addr: Cell::new(IPAddr::new()),

@@ -1,7 +1,7 @@
 //! Provides userspace applications with a alarm API.
 
 use core::cell::Cell;
-use kernel::{AppId, Callback, Grant, Driver, ReturnCode};
+use kernel::{AppId, Callback, Driver, Grant, ReturnCode};
 use kernel::hil::time::{self, Alarm, Frequency};
 use kernel::process::Error;
 
@@ -74,10 +74,15 @@ impl<'a, A: Alarm> Driver for AlarmDriver<'a, A> {
     /// ### `_subscribe_num`
     ///
     /// - `0`: Subscribe to alarm expiration
-    fn subscribe(&self, _subscribe_num: usize, callback: Callback) -> ReturnCode {
+    fn subscribe(
+        &self,
+        _subscribe_num: usize,
+        callback: Option<Callback>,
+        app_id: AppId,
+    ) -> ReturnCode {
         self.app_alarm
-            .enter(callback.app_id(), |td, _allocator| {
-                td.callback = Some(callback);
+            .enter(app_id, |td, _allocator| {
+                td.callback = callback;
                 ReturnCode::SUCCESS
             })
             .unwrap_or_else(|err| err.into())
@@ -177,12 +182,16 @@ impl<'a, A: Alarm> time::Client for AlarmDriver<'a, A> {
     fn fired(&self) {
         let now = self.alarm.now();
 
-        self.app_alarm.each(|alarm| if let Expiration::Abs(exp) = alarm.expiration {
-            let expired = now.wrapping_sub(alarm.t0) >= exp.wrapping_sub(alarm.t0);
-            if expired {
-                alarm.expiration = Expiration::Disabled;
-                self.num_armed.set(self.num_armed.get() - 1);
-                alarm.callback.map(|mut cb| cb.schedule(now as usize, exp as usize, 0));
+        self.app_alarm.each(|alarm| {
+            if let Expiration::Abs(exp) = alarm.expiration {
+                let expired = now.wrapping_sub(alarm.t0) >= exp.wrapping_sub(alarm.t0);
+                if expired {
+                    alarm.expiration = Expiration::Disabled;
+                    self.num_armed.set(self.num_armed.get() - 1);
+                    alarm
+                        .callback
+                        .map(|mut cb| cb.schedule(now as usize, exp as usize, 0));
+                }
             }
         });
 

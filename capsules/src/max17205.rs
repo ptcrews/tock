@@ -1,6 +1,6 @@
 //! Driver for the Maxim MAX17205 fuel gauge.
 //!
-//! https://www.maximintegrated.com/en/products/power/battery-management/MAX17205.html
+//! <https://www.maximintegrated.com/en/products/power/battery-management/MAX17205.html>
 //!
 //! > The MAX1720x/MAX1721x are ultra-low power stand-alone fuel gauge ICs that
 //! > implement the Maxim ModelGauge™ m5 algorithm without requiring host
@@ -13,7 +13,6 @@
 //! -----
 //!
 //! ```rust
-//!
 //! // Two i2c addresses are necessary.
 //! // Registers 0x000-0x0FF are accessed by address 0x36.
 //! // Registers 0x100-0x1FF are accessed by address 0x0B.
@@ -41,6 +40,9 @@ use kernel::{AppId, Callback, Driver, ReturnCode};
 use kernel::common::take_cell::TakeCell;
 use kernel::hil::i2c;
 
+/// Syscall driver number.
+pub const DRIVER_NUM: usize = 0x80001;
+
 pub static mut BUFFER: [u8; 8] = [0; 8];
 
 // Addresses 0x000 - 0x0FF, 0x180 - 0x1FF can be written as blocks
@@ -56,12 +58,12 @@ enum Registers {
     //NPackCfg = 0x1B5, // Pack configuration
     NRomID = 0x1BC, //RomID - 64bit unique
     //NRSense = 0x1CF, // Sense resistor
-    Batt = 0x0DA, // Pack voltage, LSB = 1.25mV
+    Batt = 0x0DA,    // Pack voltage, LSB = 1.25mV
     Current = 0x00A, // Instantaneous current, LSB = 156.25 uA
     Coulomb = 0x04D,
 }
 
-#[derive(Clone,Copy,PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum State {
     Idle,
 
@@ -90,7 +92,6 @@ pub trait MAX17205Client {
     fn romid(&self, rid: u64, error: ReturnCode);
 }
 
-
 pub struct MAX17205<'a> {
     i2c_lower: &'a i2c::I2CDevice,
     i2c_upper: &'a i2c::I2CDevice,
@@ -103,10 +104,11 @@ pub struct MAX17205<'a> {
 }
 
 impl<'a> MAX17205<'a> {
-    pub fn new(i2c_lower: &'a i2c::I2CDevice,
-               i2c_upper: &'a i2c::I2CDevice,
-               buffer: &'static mut [u8])
-               -> MAX17205<'a> {
+    pub fn new(
+        i2c_lower: &'a i2c::I2CDevice,
+        i2c_upper: &'a i2c::I2CDevice,
+        buffer: &'static mut [u8],
+    ) -> MAX17205<'a> {
         MAX17205 {
             i2c_lower: i2c_lower,
             i2c_upper: i2c_upper,
@@ -193,7 +195,6 @@ impl<'a> MAX17205<'a> {
 
 impl<'a> i2c::I2CClient for MAX17205<'a> {
     fn command_complete(&self, buffer: &'static mut [u8], _error: i2c::Error) {
-
         match self.state.get() {
             State::SetupReadStatus => {
                 // Read status
@@ -222,7 +223,8 @@ impl<'a> i2c::I2CClient for MAX17205<'a> {
             }
             State::ReadSOC => {
                 // Read of SOC memory address complete
-                self.soc_mah.set(((buffer[1] as u16) << 8) | (buffer[0] as u16));
+                self.soc_mah
+                    .set(((buffer[1] as u16) << 8) | (buffer[0] as u16));
                 self.soc.set(((buffer[3] as u16) << 8) | (buffer[2] as u16));
 
                 self.buffer.replace(buffer);
@@ -275,7 +277,9 @@ impl<'a> i2c::I2CClient for MAX17205<'a> {
                     ReturnCode::SUCCESS
                 };
 
-                self.client.get().map(|client| { client.coulomb(coulomb, error); });
+                self.client.get().map(|client| {
+                    client.coulomb(coulomb, error);
+                });
 
                 self.buffer.replace(buffer);
                 self.i2c_lower.disable();
@@ -288,7 +292,8 @@ impl<'a> i2c::I2CClient for MAX17205<'a> {
             }
             State::ReadVolt => {
                 // Read of voltage memory address complete
-                self.voltage.set(((buffer[1] as u16) << 8) | (buffer[0] as u16));
+                self.voltage
+                    .set(((buffer[1] as u16) << 8) | (buffer[0] as u16));
 
                 self.buffer.replace(buffer);
 
@@ -328,9 +333,9 @@ impl<'a> i2c::I2CClient for MAX17205<'a> {
                 self.state.set(State::ReadRomID);
             }
             State::ReadRomID => {
-
                 // u64 from 8 bytes
-                let rid = buffer.iter()
+                let rid = buffer
+                    .iter()
                     .take(8)
                     .enumerate()
                     .fold(0u64, |rid, (i, b)| rid | ((*b as u64) << i * 8));
@@ -368,14 +373,18 @@ impl<'a> MAX17205Driver<'a> {
 
 impl<'a> MAX17205Client for MAX17205Driver<'a> {
     fn status(&self, status: u16, error: ReturnCode) {
-        self.callback.get().map(|mut cb| cb.schedule(From::from(error), status as usize, 0));
+        self.callback
+            .get()
+            .map(|mut cb| cb.schedule(From::from(error), status as usize, 0));
     }
 
     fn state_of_charge(&self, percent: u16, capacity: u16, full_capacity: u16, error: ReturnCode) {
         self.callback.get().map(|mut cb| {
-            cb.schedule(From::from(error),
-                        percent as usize,
-                        (capacity as usize) << 16 | (full_capacity as usize));
+            cb.schedule(
+                From::from(error),
+                percent as usize,
+                (capacity as usize) << 16 | (full_capacity as usize),
+            );
         });
     }
 
@@ -386,14 +395,18 @@ impl<'a> MAX17205Client for MAX17205Driver<'a> {
     }
 
     fn coulomb(&self, coulomb: u16, error: ReturnCode) {
-        self.callback.get().map(|mut cb| cb.schedule(From::from(error), coulomb as usize, 0));
+        self.callback
+            .get()
+            .map(|mut cb| cb.schedule(From::from(error), coulomb as usize, 0));
     }
 
     fn romid(&self, rid: u64, error: ReturnCode) {
         self.callback.get().map(|mut cb| {
-            cb.schedule(From::from(error),
-                        (rid & 0xffffffff) as usize,
-                        (rid >> 32) as usize)
+            cb.schedule(
+                From::from(error),
+                (rid & 0xffffffff) as usize,
+                (rid >> 32) as usize,
+            )
         });
     }
 }
@@ -404,10 +417,15 @@ impl<'a> Driver for MAX17205Driver<'a> {
     /// ### `subscribe_num`
     ///
     /// - `0`: Setup a callback for when all events complete or data is ready.
-    fn subscribe(&self, subscribe_num: usize, callback: Callback) -> ReturnCode {
+    fn subscribe(
+        &self,
+        subscribe_num: usize,
+        callback: Option<Callback>,
+        _app_id: AppId,
+    ) -> ReturnCode {
         match subscribe_num {
             0 => {
-                self.callback.set(Some(callback));
+                self.callback.set(callback);
                 ReturnCode::SUCCESS
             }
 

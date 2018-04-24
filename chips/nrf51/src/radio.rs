@@ -10,460 +10,383 @@
 //! * Fredrik Nilsson <frednils@student.chalmers.se>
 //! * Date: June 22, 2017
 
-
 use core::cell::Cell;
+use core::convert::TryFrom;
 use kernel;
+use kernel::ReturnCode;
+use kernel::common::VolatileCell;
+use kernel::hil::ble_advertising;
+use kernel::hil::ble_advertising::RadioChannel;
 use nrf5x;
-use peripheral_registers;
+use nrf5x::constants::TxPower;
 
-// nrf51 specific constants
-pub const PACKET0_S1_SIZE: u32 = 0;
-pub const PACKET0_S0_SIZE: u32 = 0;
-pub const RADIO_PCNF0_S0LEN_POS: u32 = 8;
-pub const RADIO_PCNF0_S1LEN_POS: u32 = 16;
-pub const RADIO_PCNF0_LFLEN_POS: u32 = 0;
-pub const RADIO_PCNF1_WHITEEN_DISABLED: u32 = 0;
-pub const RADIO_PCNF1_WHITEEN_ENABLED: u32 = 1;
-pub const RADIO_PCNF1_WHITEEN_POS: u32 = 25;
-pub const RADIO_PCNF1_BALEN_POS: u32 = 16;
-pub const RADIO_PCNF1_STATLEN_POS: u32 = 8;
-pub const RADIO_PCNF1_MAXLEN_POS: u32 = 0;
-pub const RADIO_PCNF1_ENDIAN_POS: u32 = 24;
-pub const RADIO_PCNF1_ENDIAN_BIG: u32 = 1;
-pub const PACKET_LENGTH_FIELD_SIZE: u32 = 0;
-pub const PACKET_PAYLOAD_MAXSIZE: u32 = 64;
-pub const PACKET_BASE_ADDRESS_LENGTH: u32 = 4;
-pub const PACKET_STATIC_LENGTH: u32 = 64;
-pub const NRF_LFLEN_LEN_1BYTE: u32 = 8;
-pub const NRF_S0_LEN_1BYTE: u32 = 1;
-
-
-// internal Radio State
-pub const RADIO_STATE_DISABLE: u32 = 0;
-pub const RADIO_STATE_RXRU: u32 = 1;
-pub const RADIO_STATE_RXIDLE: u32 = 2;
-pub const RADIO_STATE_RX: u32 = 3;
-pub const RADIO_STATE_RXDISABLE: u32 = 4;
-pub const RADIO_STATE_TXRU: u32 = 9;
-pub const RADIO_STATE_TXIDLE: u32 = 10;
-pub const RADIO_STATE_TX: u32 = 11;
-pub const RADIO_STATE_TXDISABLE: u32 = 12;
-
-
-// constants for readability purposes
-pub const PAYLOAD_HDR_PDU: usize = 0;
-pub const PAYLOAD_HDR_LEN: usize = 1;
-pub const PAYLOAD_ADDR_START: usize = 2;
-pub const PAYLOAD_ADDR_END: usize = 7;
-pub const PAYLOAD_DATA_START: usize = 8;
-pub const PAYLOAD_LENGTH: usize = 39;
-
-
-// Header (2 bytes) which consist of:
-//
-// Byte #1
-// PDU Type (4 bits) - see below for info
-// RFU (2 bits)      - don't care
-// TXAdd (1 bit)     - don't used yet (use public or private addr)
-// RXAdd (1 bit)     - don't care (not used for beacons)
-//
-// Byte #2
-// Length of the total packet
-
-// PDU TYPES
-// 0x00 - ADV_IND
-// 0x01 - ADV_DIRECT_IND
-// 0x02 - ADV_NONCONN_IND
-// 0x03 - SCAN_REQ
-// 0x04 - SCAN_RSP
-// 0x05 - CONNECT_REQ
-// 0x06 - ADV_SCAN_IND
-
-//  Advertising Type   Connectable  Scannable   Directed    GAP Name
-//  ADV_IND            Yes           Yes         No          Connectable Undirected Advertising
-//  ADV_DIRECT_IND     Yes           No          Yes         Connectable Directed Advertising
-//  ADV_NONCONN_IND    Yes           No          No          Non-connectible Undirected Advertising
-//  ADV_SCAN_IND       Yes           Yes         No          Scannable Undirected Advertising
-
-static mut PAYLOAD: [u8; PAYLOAD_LENGTH] = [0x00; PAYLOAD_LENGTH];
-
-pub struct Radio {
-    regs: *const peripheral_registers::RADIO_REGS,
-    txpower: Cell<usize>,
-    client: Cell<Option<&'static nrf5x::ble_advertising_hil::RxClient>>,
-    freq: Cell<u32>,
-}
+const RADIO_BASE: usize = 0x40001000;
 
 pub static mut RADIO: Radio = Radio::new();
+
+static mut PAYLOAD: [u8; nrf5x::constants::RADIO_PAYLOAD_LENGTH] =
+    [0x00; nrf5x::constants::RADIO_PAYLOAD_LENGTH];
+
+#[repr(C)]
+pub struct RadioRegisters {
+    pub txen: VolatileCell<u32>,        // 0x000 ---> 0x004
+    pub rxen: VolatileCell<u32>,        // 0x004 ---> 0x008
+    pub start: VolatileCell<u32>,       // 0x008 ---> 0x00c
+    pub stop: VolatileCell<u32>,        // 0x00c ---> 0x010
+    pub disable: VolatileCell<u32>,     // 0x010 ---> 0x014
+    pub rssistart: VolatileCell<u32>,   // 0x014 ---> 0x018
+    pub rssistop: VolatileCell<u32>,    // 0x018 ---> 0x01c
+    pub bcstart: VolatileCell<u32>,     // 0x01c ---> 0x020
+    pub bcstop: VolatileCell<u32>,      // 0x020 ---> 0x024
+    _reserved1: [u32; 55],              // 0x024 ---> 0x100
+    pub ready: VolatileCell<u32>,       // 0x100 ---> 0x104
+    pub address: VolatileCell<u32>,     // 0x104 ---> 0x108
+    pub payload: VolatileCell<u32>,     // 0x108 ---> 0x10c
+    pub end: VolatileCell<u32>,         // 0x10c ---> 0x110
+    pub disabled: VolatileCell<u32>,    // 0x110 ---> 0x114
+    pub devmatch: VolatileCell<u32>,    // 0x114 ---> 0x118
+    pub devmiss: VolatileCell<u32>,     // 0x118 ---> 0x11c
+    pub rssiend: VolatileCell<u32>,     // 0x11c -->  0x120
+    _reserved2: [u32; 2],               // 0x120 ---> 0x128
+    pub bcmatch: VolatileCell<u32>,     // 0x128 ---> 0x12c
+    _reserved3: [u32; 53],              // 0x12c ---> 0x200
+    pub shorts: VolatileCell<u32>,      // 0x200 ---> 0x204
+    _reserved4: [u32; 64],              // 0x204 ---> 0x304
+    pub intenset: VolatileCell<u32>,    // 0x304 ---> 0x308
+    pub intenclr: VolatileCell<u32>,    // 0x308 ---> 0x30c
+    _reserved5: [u32; 61],              // 0x30c ---> 0x400
+    pub crcstatus: VolatileCell<u32>,   // 0x400 - 0x404
+    _reserved6: [u32; 1],               // 0x404 - 0x408
+    pub rxmatch: VolatileCell<u32>,     // 0x408 - 0x40c
+    pub rxcrc: VolatileCell<u32>,       // 0x40c - 0x410
+    pub dai: VolatileCell<u32>,         // 0x410 - 0x414
+    _reserved7: [u32; 60],              // 0x414 - 0x504
+    pub packetptr: VolatileCell<u32>,   // 0x504 - 0x508
+    pub frequency: VolatileCell<u32>,   // 0x508 - 0x50c
+    pub txpower: VolatileCell<u32>,     // 0x50c - 0x510
+    pub mode: VolatileCell<u32>,        // 0x510 - 0x514
+    pub pcnf0: VolatileCell<u32>,       // 0x514 - 0x518
+    pub pcnf1: VolatileCell<u32>,       // 0x518 - 0x51c
+    pub base0: VolatileCell<u32>,       // 0x51c - 0x520
+    pub base1: VolatileCell<u32>,       // 0x520 - 0x524
+    pub prefix0: VolatileCell<u32>,     // 0x524 - 0x528
+    pub prefix1: VolatileCell<u32>,     // 0x528 - 0x52c
+    pub txaddress: VolatileCell<u32>,   // 0x52c - 0x530
+    pub rxaddresses: VolatileCell<u32>, // 0x530 - 0x534
+    pub crccnf: VolatileCell<u32>,      // 0x534 - 0x538
+    pub crcpoly: VolatileCell<u32>,     // 0x538 - 0x53c
+    pub crcinit: VolatileCell<u32>,     // 0x53c - 0x540
+    pub test: VolatileCell<u32>,        // 0x540 - 0x544
+    pub tifs: VolatileCell<u32>,        // 0x544 - 0x548
+    pub rssisample: VolatileCell<u32>,  // 0x548 - 0x54c
+    _reserved8: [u32; 1],               // 0x54c - 0x550
+    pub state: VolatileCell<u32>,       // 0x550 - 0x554
+    pub datawhiteiv: VolatileCell<u32>, // 0x554 - 0x558
+    _reserved9: [u32; 2],               // 0x558 - 0x560
+    pub bcc: VolatileCell<u32>,         // 0x560 - 0x564
+    _reserved10: [u32; 39],             // 0x560 - 0x600
+    pub dab0: VolatileCell<u32>,        // 0x600 - 0x604
+    pub dab1: VolatileCell<u32>,        // 0x604 - 0x608
+    pub dab2: VolatileCell<u32>,        // 0x608 - 0x60c
+    pub dab3: VolatileCell<u32>,        // 0x60c - 0x610
+    pub dab4: VolatileCell<u32>,        // 0x610 - 0x614
+    pub dab5: VolatileCell<u32>,        // 0x614 - 0x618
+    pub dab6: VolatileCell<u32>,        // 0x618 - 0x61c
+    pub dab7: VolatileCell<u32>,        // 0x61c - 0x620
+    pub dap0: VolatileCell<u32>,        // 0x620 - 0x624
+    pub dap1: VolatileCell<u32>,        // 0x624 - 0x628
+    pub dap2: VolatileCell<u32>,        // 0x628 - 0x62c
+    pub dap3: VolatileCell<u32>,        // 0x62c - 0x630
+    pub dap4: VolatileCell<u32>,        // 0x630 - 0x634
+    pub dap5: VolatileCell<u32>,        // 0x634 - 0x638
+    pub dap6: VolatileCell<u32>,        // 0x638 - 0x63c
+    pub dap7: VolatileCell<u32>,        // 0x63c - 0x640
+    pub dacnf: VolatileCell<u32>,       // 0x640 - 0x644
+    _reserved11: [u32; 56],             // 0x644 - 0x724
+    pub override0: VolatileCell<u32>,   // 0x724 - 0x728
+    pub override1: VolatileCell<u32>,   // 0x728 - 0x72c
+    pub override2: VolatileCell<u32>,   // 0x72c - 0x730
+    pub override3: VolatileCell<u32>,   // 0x730 - 0x734
+    pub override4: VolatileCell<u32>,   // 0x734 - 0x738
+    _reserved12: [u32; 561],            // 0x738 - 0x724
+    pub power: VolatileCell<u32>,       // 0xFFC - 0x1000
+}
+
+pub struct Radio {
+    regs: *const RadioRegisters,
+    tx_power: Cell<TxPower>,
+    rx_client: Cell<Option<&'static ble_advertising::RxClient>>,
+    tx_client: Cell<Option<&'static ble_advertising::TxClient>>,
+}
 
 impl Radio {
     pub const fn new() -> Radio {
         Radio {
-            regs: peripheral_registers::RADIO_BASE as *const peripheral_registers::RADIO_REGS,
-            txpower: Cell::new(0),
-            client: Cell::new(None),
-            freq: Cell::new(0),
+            regs: RADIO_BASE as *const RadioRegisters,
+            tx_power: Cell::new(TxPower::ZerodBm),
+            rx_client: Cell::new(None),
+            tx_client: Cell::new(None),
         }
     }
 
-    // FIXME: Add to another trait for physical configuration of the Radio
-    // Will be useful later if a separate two or more CPUs are used etc
+    fn ble_initialize(&self, channel: RadioChannel) {
+        let regs = unsafe { &*self.regs };
+
+        self.radio_on();
+
+        // TX Power acc. to twpower variable in the struct
+        self.set_tx_power();
+
+        // BLE MODE
+        self.set_channel_rate(nrf5x::constants::RadioMode::Ble1Mbit as u32);
+
+        self.set_channel_freq(channel);
+        self.set_data_whitening(channel);
+
+        // Set PREFIX | BASE Address
+        regs.prefix0.set(0x0000008e);
+        regs.base0.set(0x89bed600);
+
+        self.set_tx_address(0x00);
+        self.set_rx_address(0x01);
+
+        // Set Packet Config
+        self.set_packet_config(0x00);
+
+        // CRC Config
+        self.set_crc_config();
+
+        // Buffer configuration
+        self.set_dma_ptr();
+    }
+
+    fn tx(&self) {
+        let regs = unsafe { &*self.regs };
+        regs.ready.set(0);
+        regs.txen.set(1);
+    }
+
+    fn rx(&self) {
+        let regs = unsafe { &*self.regs };
+        regs.ready.set(0);
+        regs.rxen.set(1);
+    }
 
     fn set_crc_config(&self) {
         let regs = unsafe { &*self.regs };
-        // CRC Config
-        regs.CRCCNF.set(0x103); // 3 bytes CRC and don't include Address field in the CRC
-        regs.CRCINIT.set(0x555555); // INIT CRC Value
-        // CRC Polynomial  x24 + x10 + x9 + x6 + x4 + x3 + x + 1
-        regs.CRCPOLY.set(0x00065B);
+        regs.crccnf.set(
+            nrf5x::constants::RADIO_CRCCNF_LEN_3BYTES
+                | nrf5x::constants::RADIO_CRCCNF_SKIPADDR
+                    << nrf5x::constants::RADIO_CRCCNF_SKIPADDR_POS,
+        );
+        regs.crcinit.set(nrf5x::constants::RADIO_CRCINIT_BLE);
+        regs.crcpoly.set(nrf5x::constants::RADIO_CRCPOLY_BLE);
     }
-
 
     // Packet configuration
-    // Argument unsed atm
     fn set_packet_config(&self, _: u32) {
         let regs = unsafe { &*self.regs };
+        regs.pcnf0.set(
+            (nrf5x::constants::RADIO_PCNF0_S0_LEN_1BYTE << nrf5x::constants::RADIO_PCNF0_S0LEN_POS)
+                | (nrf5x::constants::RADIO_PCNF0_LFLEN_1BYTE
+                    << nrf5x::constants::RADIO_PCNF0_LFLEN_POS),
+        );
 
-        // sets the header of PDU TYPE to 1 byte
-        // sets the header length to 1 byte
-        regs.PCNF0.set((NRF_S0_LEN_1BYTE << RADIO_PCNF0_S0LEN_POS) |
-                       (NRF_LFLEN_LEN_1BYTE << RADIO_PCNF0_LFLEN_POS));
-
-
-        regs.PCNF1
-            .set((RADIO_PCNF1_WHITEEN_ENABLED << RADIO_PCNF1_WHITEEN_POS) |
-                 // set little-endian
-                 (0 << RADIO_PCNF1_ENDIAN_POS) |
-                 // Set BASE + PREFIX address to 4 bytes
-                 (3 << RADIO_PCNF1_BALEN_POS) |
-                 // don't extend packet length
-                 (0 << RADIO_PCNF1_STATLEN_POS) |
-                 // max payload size 37
-                 (37 << RADIO_PCNF1_MAXLEN_POS));
+        regs.pcnf1.set(
+            (nrf5x::constants::RADIO_PCNF1_WHITEEN_ENABLED <<
+                nrf5x::constants::RADIO_PCNF1_WHITEEN_POS) |
+                 (nrf5x::constants::RADIO_PCNF1_ENDIAN_LITTLE <<
+                     nrf5x::constants::RADIO_PCNF1_ENDIAN_POS) |
+                 // Total Address is 4 bytes (BASE ADDRESS + PREFIX (1))
+                 (nrf5x::constants::RADIO_PCNF1_BALEN_3BYTES <<
+                  nrf5x::constants::RADIO_PCNF1_BALEN_POS)
+                | (nrf5x::constants::RADIO_PCNF1_STATLEN_DONT_EXTEND
+                    << nrf5x::constants::RADIO_PCNF1_STATLEN_POS)
+                | (nrf5x::constants::RADIO_PCNF1_MAXLEN_37BYTES
+                    << nrf5x::constants::RADIO_PCNF1_MAXLEN_POS),
+        );
     }
 
-    // TODO set from capsules?!
     fn set_rx_address(&self, _: u32) {
         let regs = unsafe { &*self.regs };
-        regs.RXADDRESSES.set(0x01);
+        regs.rxaddresses.set(0x01);
     }
 
-    // TODO set from capsules?!
     fn set_tx_address(&self, _: u32) {
         let regs = unsafe { &*self.regs };
-        regs.TXADDRESS.set(0x00);
+        regs.txaddress.set(0x00);
     }
 
-    // should not be configured from the capsule i.e.
-    // assume always BLE
     fn set_channel_rate(&self, rate: u32) {
         let regs = unsafe { &*self.regs };
         // set channel rate,  3 - BLE 1MBIT/s
-        regs.MODE.set(rate);
+        regs.mode.set(rate);
     }
 
-    fn set_data_white_iv(&self, val: u32) {
+    fn set_data_whitening(&self, channel: RadioChannel) {
         let regs = unsafe { &*self.regs };
-        // DATAIV
-        regs.DATAWHITEIV.set(val);
+        regs.datawhiteiv.set(channel.get_channel_index());
     }
 
-    fn set_channel_freq(&self, val: u32) {
+    fn set_channel_freq(&self, channel: RadioChannel) {
         let regs = unsafe { &*self.regs };
         //37, 38 and 39 for adv.
-        match val {
-            37 => regs.FREQEUNCY.set(2),
-            38 => regs.FREQEUNCY.set(26),
-            39 => regs.FREQEUNCY.set(80),
-            _ => regs.FREQEUNCY.set(7),
-        }
+        regs.frequency.set(channel as u32);
     }
 
     fn radio_on(&self) {
         let regs = unsafe { &*self.regs };
         // reset and enable power
-        regs.POWER.set(0);
-        regs.POWER.set(1);
+        regs.power.set(0);
+        regs.power.set(1);
     }
 
     fn radio_off(&self) {
         let regs = unsafe { &*self.regs };
-        regs.POWER.set(0);
+        regs.power.set(0);
     }
 
     // pre-condition validated before arriving here
-    fn set_txpower(&self) {
+    fn set_tx_power(&self) {
         let regs = unsafe { &*self.regs };
-        regs.TXPOWER.set(self.txpower.get() as u32);
+        regs.txpower.set(self.tx_power.get() as u32);
     }
 
-    fn set_buffer(&self) {
+    fn set_dma_ptr(&self) {
         let regs = unsafe { &*self.regs };
         unsafe {
-            regs.PACKETPTR.set((&PAYLOAD as *const u8) as u32);
+            regs.packetptr.set(PAYLOAD.as_ptr() as u32);
         }
     }
 
     #[inline(never)]
-    #[no_mangle]
     pub fn handle_interrupt(&self) {
         let regs = unsafe { &*self.regs };
-        self.disable_nvic();
         self.disable_interrupts();
-        nrf5x::nvic::clear_pending(nrf5x::peripheral_interrupts::NvicIdx::RADIO);
 
-        if regs.READY.get() == 1 {
-            regs.READY.set(0);
-            regs.END.set(0);
-            regs.START.set(1);
+        if regs.ready.get() == 1 {
+            regs.ready.set(0);
+            regs.end.set(0);
+            regs.start.set(1);
         }
 
-        if regs.PAYLOAD.get() == 1 {
-            regs.PAYLOAD.set(0);
+        if regs.payload.get() == 1 {
+            regs.payload.set(0);
         }
 
-        if regs.ADDRESS.get() == 1 {
-            regs.ADDRESS.set(0);
+        if regs.address.get() == 1 {
+            regs.address.set(0);
         }
 
-        if regs.END.get() == 1 {
-            regs.END.set(0);
-            regs.DISABLE.set(1);
-            // this state only verifies that END is received in TX-mode
-            // which means that the transmission is finished
-            match regs.STATE.get() {
-                RADIO_STATE_TXRU |
-                RADIO_STATE_TXIDLE |
-                RADIO_STATE_TXDISABLE |
-                RADIO_STATE_TX => {
-                    match regs.FREQEUNCY.get() {
-                        // frequency 39
-                        80 => {
-                            self.radio_off();
-                        }
-                        // frequency 38
-                        26 => {
-                            self.set_channel_freq(39);
-                            self.set_data_white_iv(39);
-                            regs.READY.set(0);
-                            regs.TXEN.set(1);
-                        }
-                        // frequency 37
-                        2 => {
-                            self.set_channel_freq(38);
-                            self.set_data_white_iv(38);
-                            regs.READY.set(0);
-                            regs.TXEN.set(1);
-                        }
-                        // don't care as we only support advertisements at the moment
-                        _ => {
-                            self.set_channel_freq(37);
-                            self.set_data_white_iv(37)
-                        }
+        if regs.end.get() == 1 {
+            regs.end.set(0);
+            regs.disable.set(1);
+
+            let result = if regs.crcstatus.get() == 1 {
+                ReturnCode::SUCCESS
+            } else {
+                ReturnCode::FAIL
+            };
+
+            match regs.state.get() {
+                nrf5x::constants::RADIO_STATE_TXRU
+                | nrf5x::constants::RADIO_STATE_TXIDLE
+                | nrf5x::constants::RADIO_STATE_TXDISABLE
+                | nrf5x::constants::RADIO_STATE_TX => {
+                    self.radio_off();
+                    self.tx_client
+                        .get()
+                        .map(|client| client.transmit_event(result));
+                }
+                nrf5x::constants::RADIO_STATE_RXRU
+                | nrf5x::constants::RADIO_STATE_RXIDLE
+                | nrf5x::constants::RADIO_STATE_RXDISABLE
+                | nrf5x::constants::RADIO_STATE_RX => {
+                    self.radio_off();
+                    unsafe {
+                        self.rx_client.get().map(|client| {
+                            // Length is: S0 (1 Byte) + Length (1 Byte) + S1 (0 Bytes) + Payload
+                            // And because the length field is directly read from the packet
+                            // We need to add 2 to length to get the total length
+                            client.receive_event(&mut PAYLOAD, PAYLOAD[1] + 2, result)
+                        });
                     }
                 }
-                RADIO_STATE_RXRU |
-                RADIO_STATE_RXIDLE |
-                RADIO_STATE_RXDISABLE |
-                RADIO_STATE_RX => {
-                    if regs.CRCSTATUS.get() == 1 {
-                        unsafe {
-                            // TODO: check if we can read how many bytes have been written
-                            // by the DMA
-                            self.client.get().map(|client| {
-                                client.receive(&mut PAYLOAD,
-                                               PAYLOAD_LENGTH as u8,
-                                               kernel::returncode::ReturnCode::SUCCESS)
-                            });
-                        }
-                    }
-                }
+                // Radio state - Disabled
                 _ => (),
             }
         }
-        self.enable_nvic();
         self.enable_interrupts();
     }
 
-
     pub fn enable_interrupts(&self) {
-        // INTENSET REG
         let regs = unsafe { &*self.regs };
-        // 15 i.e set 4 LSB
-        regs.INTENSET.set(1 | 1 << 1 | 1 << 2 | 1 << 3);
+        regs.intenset.set(
+            nrf5x::constants::RADIO_INTENSET_READY | nrf5x::constants::RADIO_INTENSET_ADDRESS
+                | nrf5x::constants::RADIO_INTENSET_PAYLOAD
+                | nrf5x::constants::RADIO_INTENSET_END,
+        );
     }
 
     pub fn disable_interrupts(&self) {
         let regs = unsafe { &*self.regs };
         // disable all possible interrupts
-        regs.INTENCLR.set(0x4ff);
+        regs.intenclr.set(0xffffffff);
     }
 
-    pub fn enable_nvic(&self) {
-        nrf5x::nvic::enable(nrf5x::peripheral_interrupts::NvicIdx::RADIO);
-    }
-
-    pub fn disable_nvic(&self) {
-        nrf5x::nvic::disable(nrf5x::peripheral_interrupts::NvicIdx::RADIO);
-    }
-
-    // FIXME: Support for other PDU types than ADV_NONCONN_IND
-    pub fn set_payload_header_pdu(&self, pdu: u8) {
-        unsafe {
-            PAYLOAD[PAYLOAD_HDR_PDU] = pdu;
-        }
-    }
-
-    pub fn set_payload_header_len(&self, len: u8) {
-        unsafe {
-            PAYLOAD[PAYLOAD_HDR_LEN] = len;
-        }
-    }
-
-    // pre-condition address buffer is 6 bytes ensured by the capsule
-    pub fn set_advertisement_address(&self, addr: &'static mut [u8]) -> &'static mut [u8] {
-        for (i, c) in addr.as_ref()[0..6].iter().enumerate() {
+    pub fn replace_radio_buffer(&self, buf: &'static mut [u8], len: usize) -> &'static mut [u8] {
+        // set payload
+        for (i, c) in buf.as_ref()[0..len].iter().enumerate() {
             unsafe {
-                PAYLOAD[i + PAYLOAD_ADDR_START] = *c;
+                PAYLOAD[i] = *c;
             }
         }
-        addr
+        buf
     }
 }
 
+impl ble_advertising::BleAdvertisementDriver for Radio {
+    fn transmit_advertisement(
+        &self,
+        buf: &'static mut [u8],
+        len: usize,
+        channel: RadioChannel,
+    ) -> &'static mut [u8] {
+        let res = self.replace_radio_buffer(buf, len);
+        self.ble_initialize(channel);
+        self.tx();
+        self.enable_interrupts();
+        res
+    }
 
-impl nrf5x::ble_advertising_hil::BleAdvertisementDriver for Radio {
-    fn clear_adv_data(&self) {
-        // reset contents except header || address
-        for i in PAYLOAD_DATA_START..PAYLOAD_LENGTH {
-            unsafe {
-                PAYLOAD[i] = 0;
-            }
-        }
-        // configures a payload with only ADV address
-        self.set_payload_header_len(6);
+    fn receive_advertisement(&self, channel: RadioChannel) {
+        self.ble_initialize(channel);
+        self.rx();
+        self.enable_interrupts();
     }
-    fn set_advertisement_data(&self,
-                              ad_type: usize,
-                              data: &'static mut [u8],
-                              len: usize,
-                              offset: usize)
-                              -> &'static mut [u8] {
-        // set ad type length and type
-        unsafe {
-            PAYLOAD[offset] = (len + 1) as u8;
-            PAYLOAD[offset + 1] = ad_type as u8;
-        }
-        // set payload
-        for (i, c) in data.as_ref()[0..len].iter().enumerate() {
-            unsafe {
-                PAYLOAD[i + offset + 2] = *c;
-            }
-        }
 
-        self.set_payload_header_len((offset + len) as u8);
-        data
+    fn set_receive_client(&self, client: &'static ble_advertising::RxClient) {
+        self.rx_client.set(Some(client));
     }
-    fn set_advertisement_address(&self, addr: &'static mut [u8]) -> &'static mut [u8] {
-        for (i, c) in addr.as_ref()[0..6].iter().enumerate() {
-            unsafe {
-                PAYLOAD[i + PAYLOAD_ADDR_START] = *c;
-            }
-        }
-        addr
+
+    fn set_transmit_client(&self, client: &'static ble_advertising::TxClient) {
+        self.tx_client.set(Some(client));
     }
-    fn set_advertisement_txpower(&self, power: usize) -> kernel::ReturnCode {
-        match power {
-            // +4 dBm, 0 dBm, -4 dBm, -8 dBm, -12 dBm, -16 dBm, -20 dBm, -30 dBm
-            0x04 | 0x00 | 0xF4 | 0xFC | 0xF8 | 0xF0 | 0xEC | 0xD8 => {
-                self.txpower.set(power);
+}
+
+impl ble_advertising::BleConfig for Radio {
+    // The BLE Advertising Driver validates that the `tx_power` is between -20 to 10 dBm but then
+    // underlying chip must validate if the current `tx_power` is supported as well
+    fn set_tx_power(&self, tx_power: u8) -> kernel::ReturnCode {
+        // Convert u8 to TxPower
+        match nrf5x::constants::TxPower::try_from(tx_power) {
+            // Invalid transmitting power, propogate error
+            Err(_) => kernel::ReturnCode::ENOSUPPORT,
+            // Valid transmitting power, propogate success
+            Ok(res) => {
+                self.tx_power.set(res);
                 kernel::ReturnCode::SUCCESS
             }
-            _ => kernel::ReturnCode::ENOSUPPORT,
         }
-    }
-    fn start_advertisement_tx(&self, ch: usize) {
-        let regs = unsafe { &*self.regs };
-
-        self.radio_on();
-
-        self.set_payload_header_pdu(0x02);
-
-        // TX Power acc. to twpower variable in the struct
-        self.set_txpower();
-
-        // BLE MODE
-        self.set_channel_rate(0x03);
-
-        self.set_channel_freq(ch as u32);
-        self.set_data_white_iv(ch as u32);
-
-        // Set PREFIX | BASE Address
-        regs.PREFIX0.set(0x0000008e);
-        regs.BASE0.set(0x89bed600);
-
-        self.set_tx_address(0x00);
-        self.set_rx_address(0x01);
-        // regs.RXMATCH.set(0x00);
-
-        // Set Packet Config
-        self.set_packet_config(0x00);
-
-        // CRC Config
-        self.set_crc_config();
-
-        // Buffer configuration
-        self.set_buffer();
-
-        self.enable_interrupts();
-        self.enable_nvic();
-
-        regs.READY.set(0);
-        regs.TXEN.set(1);
-    }
-    fn start_advertisement_rx(&self, _: usize) {
-        let regs = unsafe { &*self.regs };
-
-        self.radio_on();
-
-        // BLE MODE
-        self.set_channel_rate(0x03);
-
-        // temporary to listen on all advertising frequencies
-        match self.freq.get() {
-            37 => self.freq.set(38),
-            38 => self.freq.set(39),
-            _ => self.freq.set(37),
-        }
-
-        self.set_channel_freq(self.freq.get());
-        self.set_data_white_iv(self.freq.get());
-
-        // Set PREFIX | BASE Address
-        regs.PREFIX0.set(0x0000008e);
-        regs.BASE0.set(0x89bed600);
-
-        self.set_tx_address(0x00);
-        self.set_rx_address(0x01);
-        // regs.RXMATCH.set(0x00);
-
-        // Set Packet Config
-        self.set_packet_config(0x00);
-
-        // CRC Config
-        self.set_crc_config();
-
-        // Buffer configuration
-        self.set_buffer();
-
-        self.enable_interrupts();
-        self.enable_nvic();
-
-        regs.READY.set(0);
-        regs.RXEN.set(1);
-    }
-
-    fn set_client(&self, client: &'static nrf5x::ble_advertising_hil::RxClient) {
-        self.client.set(Some(client));
     }
 }

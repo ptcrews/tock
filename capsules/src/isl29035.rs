@@ -1,6 +1,6 @@
 //! Driver for the ISL29035 digital light sensor.
 //!
-//! http://bit.ly/2rA00cH
+//! <http://bit.ly/2rA00cH>
 //!
 //! > The ISL29035 is an integrated ambient and infrared light-to-digital
 //! > converter with I2C (SMBus compatible) Interface. Its advanced self-
@@ -28,13 +28,13 @@
 use core::cell::Cell;
 use kernel::ReturnCode;
 use kernel::common::take_cell::TakeCell;
-use kernel::hil::i2c::{I2CDevice, I2CClient, Error};
+use kernel::hil::i2c::{Error, I2CClient, I2CDevice};
 use kernel::hil::sensors::{AmbientLight, AmbientLightClient};
 use kernel::hil::time::{self, Frequency};
 
 pub static mut BUF: [u8; 3] = [0; 3];
 
-#[derive(Copy,Clone,PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 enum State {
     Disabled,
     Enabling,

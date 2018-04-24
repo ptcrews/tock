@@ -1,24 +1,186 @@
-//! Provides a `debug!` macro for in-kernel debugging.
+//! Support for in-kernel debugging.
 //!
-//! This module uses an internal buffer to write the strings into. If you are
-//! writing and the buffer fills up, you can make the size of `output_buffer`
-//! larger.
+//! For printing, this module uses an internal buffer to write the strings into.
+//! If you are writing and the buffer fills up, you can make the size of
+//! `output_buffer` larger.
+//!
+//! Before debug interfaces can be used, the board file must assign them hardware:
+//!
+//! ```rust
+//! kernel::debug::assign_gpios(
+//!     Some(&sam4l::gpio::PA[13]),
+//!     Some(&sam4l::gpio::PA[15]),
+//!     None,
+//!     );
+//!
+//! let kc = static_init!(
+//!     capsules::console::App,
+//!     capsules::console::App::default());
+//! kernel::debug::assign_console_driver(Some(hail.console), kc);
+//! ```
 //!
 //! Example
 //! -------
 //!
 //! ```rust
 //! debug!("Yes the code gets here with value {}", i);
+//! debug_verbose!("got here"); // includes message count, file, and line
+//! debug_gpio!(0, toggle); // Toggles the first debug GPIO
+//! ```
+//!
+//! ```
+//! Yes the code gets here with value 42
+//! TOCK_DEBUG(0): /tock/capsules/src/sensys.rs:24: got here
 //! ```
 
 use callback::{AppId, Callback};
+use core::{slice, str};
 use core::cmp::min;
-use core::fmt::{Arguments, Result, Write, write};
+use core::fmt::{write, Arguments, Result, Write};
 use core::ptr::{read_volatile, write_volatile};
-use core::str;
 use driver::Driver;
+use hil;
 use mem::AppSlice;
+use process;
 use returncode::ReturnCode;
+
+///////////////////////////////////////////////////////////////////
+// panic! support routines
+
+/// Tock default panic routine.
+///
+/// **NOTE:** The supplied `writer` must be synchronous.
+pub unsafe fn panic<L: hil::led::Led, W: Write>(
+    led: &mut L,
+    writer: &mut W,
+    args: Arguments,
+    file: &'static str,
+    line: u32,
+) -> ! {
+    panic_begin();
+    panic_banner(writer, args, file, line);
+    // Flush debug buffer if needed
+    flush(writer);
+    panic_process_info(writer);
+    panic_blink_forever(led)
+}
+
+/// Generic panic entry.
+///
+/// This opaque method should always be called at the beginning of a board's
+/// panic method to allow hooks for any core kernel cleanups that may be
+/// appropriate.
+pub unsafe fn panic_begin() {
+    // Let any outstanding uart DMA's finish
+    asm!("nop");
+    asm!("nop");
+    for _ in 0..200000 {
+        asm!("nop");
+    }
+    asm!("nop");
+    asm!("nop");
+}
+
+/// Lightweight prints about the current panic and kernel version.
+///
+/// **NOTE:** The supplied `writer` must be synchronous.
+pub unsafe fn panic_banner<W: Write>(
+    writer: &mut W,
+    args: Arguments,
+    file: &'static str,
+    line: u32,
+) {
+    let _ = writer.write_fmt(format_args!(
+        "\r\n\nKernel panic at {}:{}:\r\n\t\"",
+        file, line
+    ));
+    let _ = write(writer, args);
+    let _ = writer.write_str("\"\r\n");
+
+    // Print version of the kernel
+    let _ = writer.write_fmt(format_args!(
+        "\tKernel version {}\r\n",
+        env!("TOCK_KERNEL_VERSION")
+    ));
+}
+
+/// More detailed prints about all processes.
+///
+/// **NOTE:** The supplied `writer` must be synchronous.
+pub unsafe fn panic_process_info<W: Write>(writer: &mut W) {
+    // Print fault status once
+    let procs = &mut process::PROCS;
+    if procs.len() > 0 {
+        procs[0].as_mut().map(|process| {
+            process.fault_str(writer);
+        });
+    }
+
+    // print data about each process
+    let _ = writer.write_fmt(format_args!("\r\n---| App Status |---\r\n"));
+    let procs = &mut process::PROCS;
+    for idx in 0..procs.len() {
+        procs[idx].as_mut().map(|process| {
+            process.statistics_str(writer);
+        });
+    }
+}
+
+/// Blinks a recognizable pattern forever.
+///
+/// If a multi-color LED is used for the panic pattern, it is
+/// advised to turn off other LEDs before calling this method.
+pub fn panic_blink_forever<L: hil::led::Led>(led: &mut L) -> ! {
+    led.init();
+    loop {
+        for _ in 0..1000000 {
+            led.on();
+        }
+        for _ in 0..100000 {
+            led.off();
+        }
+        for _ in 0..1000000 {
+            led.on();
+        }
+        for _ in 0..500000 {
+            led.off();
+        }
+    }
+}
+
+// panic! support routines
+///////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////
+// debug_gpio! support
+
+pub static mut DEBUG_GPIOS: (
+    Option<&'static hil::gpio::Pin>,
+    Option<&'static hil::gpio::Pin>,
+    Option<&'static hil::gpio::Pin>,
+) = (None, None, None);
+
+pub unsafe fn assign_gpios(
+    gpio0: Option<&'static hil::gpio::Pin>,
+    gpio1: Option<&'static hil::gpio::Pin>,
+    gpio2: Option<&'static hil::gpio::Pin>,
+) {
+    DEBUG_GPIOS.0 = gpio0;
+    DEBUG_GPIOS.1 = gpio1;
+    DEBUG_GPIOS.2 = gpio2;
+}
+
+/// In-kernel gpio debugging, accepts any GPIO HIL method
+#[macro_export]
+macro_rules! debug_gpio {
+    ($i:tt, $method:ident) => ({
+        #[allow(unused_unsafe)]
+        unsafe { $crate::debug::DEBUG_GPIOS.$i.map(|g| g.$method()); }
+    });
+}
+
+///////////////////////////////////////////////////////////////////
+// debug! and debug_verbose! support
 
 pub const APPID_IDX: usize = 255;
 const BUF_SIZE: usize = 20000;
@@ -37,10 +199,10 @@ static mut DEBUG_WRITER: DebugWriter = DebugWriter {
     driver: None,
     grant: None,
     output_buffer: [0; BUF_SIZE],
-    output_head: 0, // ........ first valid index in output_buffer
-    output_tail: 0, // ........ one past last valid index (wraps to 0)
+    output_head: 0,       // ........ first valid index in output_buffer
+    output_tail: 0,       // ........ one past last valid index (wraps to 0)
     output_active_len: 0, //... how big is the current transaction?
-    count: 0, // .............. how many debug! calls
+    count: 0,             // .............. how many debug! calls
 };
 
 pub unsafe fn assign_console_driver<T>(driver: Option<&'static Driver>, grant: &mut T) {
@@ -63,7 +225,10 @@ impl DebugWriter {
             if end < start {
                 panic!("wb bounds: start {} end {} bytes {:?}", start, end, bytes);
             }
-            for (dst, src) in DEBUG_WRITER.output_buffer[start..end].iter_mut().zip(bytes.iter()) {
+            for (dst, src) in DEBUG_WRITER.output_buffer[start..end]
+                .iter_mut()
+                .zip(bytes.iter())
+            {
                 *dst = *src;
             }
         }
@@ -108,20 +273,29 @@ impl DebugWriter {
                         panic!("Consistency error: publish empty buffer?")
                     };
 
-                    let slice =
-                        AppSlice::new(self.output_buffer.as_mut_ptr().offset(start as isize),
-                                      end - start,
-                                      AppId::kernel_new(APPID_IDX));
+                    let slice = AppSlice::new(
+                        self.output_buffer.as_mut_ptr().offset(start as isize),
+                        end - start,
+                        AppId::kernel_new(APPID_IDX),
+                    );
                     let slice_len = slice.len();
-                    if driver.allow(AppId::kernel_new(APPID_IDX), 1, slice) != ReturnCode::SUCCESS {
+                    if driver.allow(AppId::kernel_new(APPID_IDX), 1, Some(slice))
+                        != ReturnCode::SUCCESS
+                    {
                         panic!("Debug print allow fail");
                     }
                     write_volatile(&mut DEBUG_WRITER.output_active_len, slice_len);
-                    if driver.subscribe(1, KERNEL_CONSOLE_CALLBACK) != ReturnCode::SUCCESS {
+                    if driver.subscribe(
+                        1,
+                        Some(KERNEL_CONSOLE_CALLBACK),
+                        AppId::kernel_new(APPID_IDX),
+                    ) != ReturnCode::SUCCESS
+                    {
                         panic!("Debug print subscribe fail");
                     }
-                    if driver.command(1, slice_len, 0, AppId::kernel_new(APPID_IDX)) !=
-                       ReturnCode::SUCCESS {
+                    if driver.command(1, slice_len, 0, AppId::kernel_new(APPID_IDX))
+                        != ReturnCode::SUCCESS
+                    {
                         panic!("Debug print command fail");
                     }
                 }
@@ -135,10 +309,10 @@ impl DebugWriter {
         let active = unsafe { read_volatile(&DEBUG_WRITER.output_active_len) };
         if active != bytes_written {
             let count = unsafe { read_volatile(&DEBUG_WRITER.count) };
-            panic!("active {} bytes_written {} count {}",
-                   active,
-                   bytes_written,
-                   count);
+            panic!(
+                "active {} bytes_written {} count {}",
+                active, bytes_written, count
+            );
         }
         let len = unsafe { DEBUG_WRITER.output_buffer.len() };
         let head = unsafe { read_volatile(&DEBUG_WRITER.output_head) };
@@ -172,8 +346,8 @@ impl DebugWriter {
 // inappropriate way?
 unsafe impl Sync for Callback {}
 
-static KERNEL_CONSOLE_CALLBACK: Callback = Callback::kernel_new(AppId::kernel_new(APPID_IDX),
-                                                                DebugWriter::callback);
+static KERNEL_CONSOLE_CALLBACK: Callback =
+    Callback::kernel_new(AppId::kernel_new(APPID_IDX), DebugWriter::callback);
 
 impl Write for DebugWriter {
     fn write_str(&mut self, s: &str) -> Result {
@@ -238,21 +412,25 @@ impl Write for DebugWriter {
             let end = tail;
             if (tail == 0) && (head == len - 1) {
                 let active = unsafe { read_volatile(&DEBUG_WRITER.output_active_len) };
-                panic!("Debug buffer full. Head {} tail {} len {} active {} remaining {}",
-                       head,
-                       tail,
-                       len,
-                       active,
-                       remaining_bytes.len());
+                panic!(
+                    "Debug buffer full. Head {} tail {} len {} active {} remaining {}",
+                    head,
+                    tail,
+                    len,
+                    active,
+                    remaining_bytes.len()
+                );
             }
             if remaining_bytes.len() > end - start {
                 let active = unsafe { read_volatile(&DEBUG_WRITER.output_active_len) };
-                panic!("Debug buffer out of room. Head {} tail {} len {} active {} remaining {}",
-                       head,
-                       tail,
-                       len,
-                       active,
-                       remaining_bytes.len());
+                panic!(
+                    "Debug buffer out of room. Head {} tail {} len {} active {} remaining {}",
+                    head,
+                    tail,
+                    len,
+                    active,
+                    remaining_bytes.len()
+                );
             }
             DebugWriter::write_buffer(start, end, remaining_bytes);
             let written = min(end - start, remaining_bytes.len());
@@ -269,7 +447,16 @@ impl Write for DebugWriter {
     }
 }
 
-pub fn begin_debug_fmt(args: Arguments, file_line: &(&'static str, u32)) {
+pub fn begin_debug_fmt(args: Arguments) {
+    unsafe {
+        let writer = &mut DEBUG_WRITER;
+        let _ = write(writer, args);
+        let _ = writer.write_str("\n");
+        writer.publish_str();
+    }
+}
+
+pub fn begin_debug_verbose_fmt(args: Arguments, file_line: &(&'static str, u32)) {
     unsafe {
         let count = read_volatile(&DEBUG_WRITER.count);
         write_volatile(&mut DEBUG_WRITER.count, count + 1);
@@ -283,20 +470,7 @@ pub fn begin_debug_fmt(args: Arguments, file_line: &(&'static str, u32)) {
     }
 }
 
-pub fn begin_debug(msg: &str, file_line: &(&'static str, u32)) {
-    unsafe {
-        let count = read_volatile(&DEBUG_WRITER.count);
-        write_volatile(&mut DEBUG_WRITER.count, count + 1);
-
-        let writer = &mut DEBUG_WRITER;
-        let (file, line) = *file_line;
-        let _ = writer.write_fmt(format_args!("TOCK_DEBUG({}): {}:{}: ", count, file, line));
-        let _ = writer.write_fmt(format_args!("{}\n", msg));
-        writer.publish_str();
-    }
-}
-
-/// In-kernel `printf()` debugging.
+/// In-kernel `println()` debugging.
 #[macro_export]
 macro_rules! debug {
     () => ({
@@ -304,7 +478,22 @@ macro_rules! debug {
         debug!("")
     });
     ($msg:expr) => ({
-        $crate::debug::begin_debug($msg, {
+        $crate::debug::begin_debug_fmt(format_args!($msg))
+    });
+    ($fmt:expr, $($arg:tt)+) => ({
+        $crate::debug::begin_debug_fmt(format_args!($fmt, $($arg)+))
+    });
+}
+
+/// In-kernel `println()` debugging with filename and line numbers.
+#[macro_export]
+macro_rules! debug_verbose {
+    () => ({
+        // Allow an empty debug_verbose!() to print the location when hit
+        debug_verbose!("")
+    });
+    ($msg:expr) => ({
+        $crate::debug::begin_debug_verbose_fmt(format_args!($msg), {
             // TODO: Maybe make opposite choice of panic!, no `static`, more
             // runtime code for less static data
             static _FILE_LINE: (&'static str, u32) = (file!(), line!());
@@ -312,7 +501,7 @@ macro_rules! debug {
         })
     });
     ($fmt:expr, $($arg:tt)+) => ({
-        $crate::debug::begin_debug_fmt(format_args!($fmt, $($arg)+), {
+        $crate::debug::begin_debug_verbose_fmt(format_args!($fmt, $($arg)+), {
             static _FILE_LINE: (&'static str, u32) = (file!(), line!());
             &_FILE_LINE
         })
@@ -326,7 +515,36 @@ pub trait Debug {
 #[cfg(debug = "true")]
 impl Default for Debug {
     fn write(&self, buf: &'static mut [u8], len: usize) {
-        panic!("No registered kernel debug printer. Thrown printing {:?}",
-               buf);
+        panic!(
+            "No registered kernel debug printer. Thrown printing {:?}",
+            buf
+        );
+    }
+}
+
+pub unsafe fn flush<W: Write>(writer: &mut W) {
+    let debug_head = read_volatile(&DEBUG_WRITER.output_head);
+    let mut debug_tail = read_volatile(&DEBUG_WRITER.output_tail);
+    let mut debug_buffer = DEBUG_WRITER.output_buffer;
+    if debug_head != debug_tail {
+        let _ = writer.write_str(
+            "\r\n---| Debug buffer not empty. Flushing. May repeat some of last message(s):\r\n",
+        );
+
+        if debug_tail > debug_head {
+            let start = debug_buffer.as_mut_ptr().offset(debug_tail as isize);
+            let len = debug_buffer.len();
+            let slice = slice::from_raw_parts(start, len);
+            let s = str::from_utf8_unchecked(slice);
+            let _ = writer.write_str(s);
+            debug_tail = 0;
+        }
+        if debug_tail != debug_head {
+            let start = debug_buffer.as_mut_ptr().offset(debug_tail as isize);
+            let len = debug_head - debug_tail;
+            let slice = slice::from_raw_parts(start, len);
+            let s = str::from_utf8_unchecked(slice);
+            let _ = writer.write_str(s);
+        }
     }
 }

@@ -1,13 +1,14 @@
-use chip;
 use core::cell::Cell;
 use kernel::common::VolatileCell;
 use kernel::common::take_cell::TakeCell;
 use kernel::hil::uart;
-use nrf5x;
 use nrf5x::pinmux::Pinmux;
 
-#[repr(C, packed)]
-pub struct Registers {
+pub static mut UART0: UART = UART::new();
+const UART_BASE: u32 = 0x40002000;
+
+#[repr(C)]
+pub struct UartRegisters {
     pub task_startrx: VolatileCell<u32>,
     pub task_stoprx: VolatileCell<u32>,
     pub task_starttx: VolatileCell<u32>,
@@ -48,10 +49,8 @@ pub struct Registers {
     pub power: VolatileCell<u32>,
 }
 
-const UART_BASE: u32 = 0x40002000;
-
 pub struct UART {
-    regs: *const Registers,
+    regs: *const UartRegisters,
     client: Cell<Option<&'static uart::Client>>,
     buffer: TakeCell<'static, [u8]>,
     len: Cell<usize>,
@@ -63,17 +62,10 @@ pub struct UARTParams {
     pub baud_rate: u32,
 }
 
-pub static mut UART0: UART = UART::new();
-
-// This UART implementation uses pins 8-11:
-//   pin  8: RTS
-//   pin  9: TX
-//   pin 10: CTS
-//   pin 11: RX
 impl UART {
     pub const fn new() -> UART {
         UART {
-            regs: UART_BASE as *mut Registers,
+            regs: UART_BASE as *const UartRegisters,
             client: Cell::new(None),
             buffer: TakeCell::empty(),
             len: Cell::new(0),
@@ -81,6 +73,12 @@ impl UART {
         }
     }
 
+    /// This UART implementation uses pins 8-11:
+    ///
+    /// * pin  8: RTS
+    /// * pin  9: TX
+    /// * pin 10: CTS
+    /// * pin 11: RX
     pub fn configure(&self, tx: Pinmux, rx: Pinmux, cts: Pinmux, rts: Pinmux) {
         let regs = unsafe { &*self.regs };
 
@@ -117,14 +115,6 @@ impl UART {
         regs.enable.set(0b100);
     }
 
-    pub fn enable_nvic(&self) {
-        nrf5x::nvic::enable(nrf5x::peripheral_interrupts::NvicIdx::UART0);
-    }
-
-    pub fn disable_nvic(&self) {
-        nrf5x::nvic::disable(nrf5x::peripheral_interrupts::NvicIdx::UART0);
-    }
-
     pub fn enable_rx_interrupts(&self) {
         let regs = unsafe { &*self.regs };
         regs.intenset.set(1 << 3 as u32);
@@ -147,15 +137,8 @@ impl UART {
 
     pub fn handle_interrupt(&mut self) {
         let regs = unsafe { &*self.regs };
-        // let rx = regs.event_rxdrdy.get() != 0;
         let tx = regs.event_txdrdy.get() != 0;
 
-        // if rx {
-        //     let val = regs.rxd.get();
-        //     self.client.map(|client| {
-        //         client.read_done(val as u8);
-        //     });
-        // }
         if tx {
             regs.event_txdrdy.set(0 as u32);
 
@@ -191,7 +174,6 @@ impl UART {
         self.enable_tx_interrupts();
         regs.task_starttx.set(1);
         regs.txd.set(byte as u32);
-        self.enable_nvic();
     }
 
     pub fn tx_ready(&self) -> bool {
@@ -230,9 +212,9 @@ impl uart::UART for UART {
         regs.task_starttx.set(1);
         regs.txd.set(tx_data[0] as u32);
         self.buffer.replace(tx_data);
-        self.enable_nvic();
     }
 
+    // Blocking implementation
     fn receive(&self, rx_buffer: &'static mut [u8], rx_len: usize) {
         let regs = unsafe { &*self.regs };
         regs.task_startrx.set(1);
@@ -243,12 +225,4 @@ impl uart::UART for UART {
             i += 1;
         }
     }
-}
-
-#[no_mangle]
-#[allow(non_snake_case)]
-pub unsafe extern "C" fn UART0_Handler() {
-    use kernel::common::Queue;
-    nrf5x::nvic::disable(nrf5x::peripheral_interrupts::NvicIdx::UART0);
-    chip::INTERRUPT_QUEUE.as_mut().unwrap().enqueue(nrf5x::peripheral_interrupts::NvicIdx::UART0);
 }

@@ -1,3 +1,19 @@
+//! Driver for sending 802.15.4 packets with an Atmel RF233.
+//!
+//! This implementation is completely non-blocking. This means that the state
+//! machine is somewhat complex, as it must interleave interrupt handling with
+//! requests and radio state management. See the SPI `read_write_done` handler
+//! for details.
+//!
+//! To do items:
+//!
+//! - Support TX power control
+//! - Support channel selection
+//! - Support link-layer acknowledgements
+//
+// Author: Philip Levis
+// Date: Jan 12 2017
+//
 
 #![allow(unused_parens)]
 
@@ -371,11 +387,10 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
         // receiving a frame.
         if self.interrupt_pending.get() {
             match self.state.get() {
-                InternalState::RX_TURNING_OFF |
-                InternalState::RX_START_READING |
-                InternalState::RX_READING_FRAME_DONE |
-                InternalState::RX_READING_FRAME_FCS_DONE => {
-                }
+                InternalState::RX_TURNING_OFF
+                | InternalState::RX_START_READING
+                | InternalState::RX_READING_FRAME_DONE
+                | InternalState::RX_READING_FRAME_FCS_DONE => {}
                 _ => {
                     self.interrupt_pending.set(false);
                     self.handle_interrupt();
@@ -786,7 +801,8 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 // start reading out the frame.
                 self.state_transition_read(
                     RF233Register::IRQ_STATUS,
-                    InternalState::RX_READY_TO_READ);
+                    InternalState::RX_READY_TO_READ,
+                );
                 self.interrupt_handling.set(true);
             }
             // This state is when the driver handles the pending TRX_END interrupt
@@ -1051,7 +1067,8 @@ impl<'a, S: spi::SpiMasterDevice + 'a> RF233<'a, S> {
                 self.state_transition_write(
                     RF233Register::TRX_STATE,
                     RF233TrxCmd::PLL_ON as u8,
-                    InternalState::RX_TURNING_OFF);
+                    InternalState::RX_TURNING_OFF,
+                );
             } else {
                 self.interrupt_handling.set(true);
                 self.register_read(RF233Register::IRQ_STATUS);

@@ -26,8 +26,10 @@
 use core::cell::Cell;
 use kernel::{AppId, Callback, Driver};
 use kernel::ReturnCode;
-
 use kernel::hil;
+
+/// Syscall driver number.
+pub const DRIVER_NUM: usize = 0x80003;
 
 pub struct GPIOAsync<'a, Port: hil::gpio_async::Port + 'a> {
     ports: &'a [&'a Port],
@@ -69,7 +71,9 @@ impl<'a, Port: hil::gpio_async::Port> GPIOAsync<'a, Port> {
 
 impl<'a, Port: hil::gpio_async::Port> hil::gpio_async::Client for GPIOAsync<'a, Port> {
     fn fired(&self, pin: usize, identifier: usize) {
-        self.interrupt_callback.get().map(|mut cb| cb.schedule(identifier, pin, 0));
+        self.interrupt_callback
+            .get()
+            .map(|mut cb| cb.schedule(identifier, pin, 0));
     }
 
     fn done(&self, value: usize) {
@@ -92,17 +96,22 @@ impl<'a, Port: hil::gpio_async::Port> Driver for GPIOAsync<'a, Port> {
     /// - `1`: Setup a callback for when a **GPIO interrupt** occurs. This
     ///   callback will be called with two arguments, the first being the port
     ///   number of the interrupting pin, and the second being the pin number.
-    fn subscribe(&self, subscribe_num: usize, callback: Callback) -> ReturnCode {
+    fn subscribe(
+        &self,
+        subscribe_num: usize,
+        callback: Option<Callback>,
+        _app_id: AppId,
+    ) -> ReturnCode {
         match subscribe_num {
             // Set callback for `done()` events
             0 => {
-                self.callback.set(Some(callback));
+                self.callback.set(callback);
                 ReturnCode::SUCCESS
             }
 
             // Set callback for pin interrupts
             1 => {
-                self.interrupt_callback.set(Some(callback));
+                self.interrupt_callback.set(callback);
                 ReturnCode::SUCCESS
             }
 
@@ -147,7 +156,9 @@ impl<'a, Port: hil::gpio_async::Port> Driver for GPIOAsync<'a, Port> {
 
         match command_num {
             // How many ports
-            0 => ReturnCode::SuccessWithValue { value: ports.len() as usize },
+            0 => ReturnCode::SuccessWithValue {
+                value: ports.len() as usize,
+            },
 
             // enable output
             1 => ports[port].make_output(pin),

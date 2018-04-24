@@ -24,7 +24,7 @@ List of Tock Capsules
 
 The list of Tock capsules and a brief description.
 
-### Sensor Drivers
+### Sensor and other IC Drivers
 
 These implement a driver to setup and read various physical sensors.
 
@@ -34,9 +34,6 @@ These implement a driver to setup and read various physical sensors.
 - **[SI7021](src/si7021.rs)**: Temperature and humidity sensor.
 - **[TMP006](src/tmp006.rs)**: Infrared temperature sensor.
 - **[TSL2561](src/tsl2561.rs)**: Light sensor.
-
-
-### Other IC Drivers
 
 These drivers provide support for various ICs.
 
@@ -54,8 +51,16 @@ Support for wireless radios.
 
 - **[nRF51822 Serialization](src/nrf51822_serialization.rs)**: Kernel support
   for using the nRF51 serialization library.
-- **[IEEE 802.15.4 Radio](src/radio.rs)**: Userspace library for 15.4 radios.
 - **[RF233](src/rf233.rs)**: Driver for RF233 radio.
+- **[BLE Advertising](src/ble_advertising_driver.rs)**: Driver for sending BLE
+  advertisements.
+
+### Libraries
+
+Protocol stacks and other libraries.
+
+- **[IEEE 802.15.4](src/ieee802154)**: 802.15.4 networking.
+- **[USB](src/usb.rs)**: USB 2.0.
 
 
 ### MCU Peripherals for Userspace
@@ -63,25 +68,27 @@ Support for wireless radios.
 These capsules provide a `Driver` interface for common MCU peripherals.
 
 - **[ADC](src/adc.rs)**: Individual and continuous samples.
+- **[Alarm](src/alarm.rs)**: Oneshot and periodic timers.
 - **[CRC](src/crc.rs)**: CRC calculation.
 - **[DAC](src/dac.rs)**: Digital to analog conversion.
 - **[GPIO](src/gpio.rs)**: GPIO configuring and control.
 - **[I2C](src/i2c_master_slave_driver.rs)**: I2C master and slave access.
 - **[RNG](src/rng.rs)**: Random number generation.
 - **[SPI](src/spi.rs)**: SPI master and slave.
-- **[Symmetric Encryption](src/symmetric_encryption.rs)**: AES encryption.
-- **[Timer](src/timer.rs)**: Oneshot and periodic timers.
 
 
 ### Helpful Userspace Capsules
 
 These provide common and better abstractions for userspace.
 
+- **[Ambient Light](src/ambient_light.rs)**: Query light sensors.
 - **[App Flash](src/app_flash_driver.rs)**: Allow applications to write their
   own flash.
 - **[Button](src/button.rs)**: Detect button presses.
 - **[Console](src/console.rs)**: UART console support.
+- **[Humidity](src/humidity.rs)**: Query humidity sensors.
 - **[LED](src/led.rs)**: Turn on and off LEDs.
+- **[Temperature](src/temperature.rs)**: Query temperature sensors.
 
 
 ### Virtualized Sensor Capsules for Userspace
@@ -92,7 +99,7 @@ simultaneously) support for generic sensor interfaces.
 - **[Asynchronous GPIO](src/gpio_async.rs)**: GPIO pins accessed by split-phase
   calls.
 - **[9DOF](src/ninedof.rs)**: 9DOF sensors (acceleration, magnetometer, gyroscope).
-- **[Nonvolatile Storage](src/nonvolatile_storage.rs)**: Persistent storage for
+- **[Nonvolatile Storage](src/nonvolatile_storage_driver.rs)**: Persistent storage for
   userspace.
 
 
@@ -112,3 +119,4 @@ Other capsules that implement reusable logic.
 
 - **[Nonvolatile to Pages](src/nonvolatile_to_pages.rs)**: Map arbitrary reads
   and writes to flash pages.
+- **[AES Encryption](src/aes_ccm.rs)**: AES-CCM encryption.

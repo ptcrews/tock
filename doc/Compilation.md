@@ -72,10 +72,10 @@ $ cargo build --release --target=sam4l.json
 ```
 
 The `--release` argument tells Cargo to invoke the Rust compiler with
-optimizations turned on and without debug symbols. `--target` points Cargo to
-the target specification which includes the LLVM data-layout definition,
-architecture definitions for the compiler, arguments to pass to the linker and
-compilation options such as floating-point support.
+optimizations turned on. `--target` points Cargo to the target specification
+which includes the LLVM data-layout definition, architecture definitions for
+the compiler, arguments to pass to the linker and compilation options such as
+floating-point support.
 
 ### Xargo
 
@@ -173,7 +173,7 @@ requires four flags:
 ### Tock Binary Format
 
 In order to be loaded correctly, applications must follow the [Tock Binary
-Format](../TockBinaryFormat.md). This means the use of a linker script following
+Format](TockBinaryFormat.md). This means the use of a linker script following
 specific rules and a header for the binary so that Tock can load the application
 correctly.
 
@@ -496,7 +496,7 @@ these methods are subject to change based on whatever is easiest for users of
 the platform.
 
 In order to support multiple concurrent applications, the easiest option is to
-use `tockloader` ([git repo](https://github.com/helena-project/tockloader)) to
+use `tockloader` ([git repo](https://github.com/tock/tockloader)) to
 manage multiple applications on a platform. Importantly, while applications
 currently share the same upload process as the kernel, they are planned to
 support additional methods in the future. Application loading through wireless

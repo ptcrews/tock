@@ -5,7 +5,7 @@
 //!
 //! You need a device that provides the `hil::uart::UART` trait.
 //!
-//! ``rust
+//! ```rust
 //! let console = static_init!(
 //!     Console<usart::USART>,
 //!     Console::new(&usart::USART0,
@@ -37,9 +37,9 @@
 
 use core::cell::Cell;
 use core::cmp;
-use kernel::{AppId, AppSlice, Grant, Callback, Shared, Driver, ReturnCode};
+use kernel::{AppId, AppSlice, Callback, Driver, Grant, ReturnCode, Shared};
 use kernel::common::take_cell::TakeCell;
-use kernel::hil::uart::{self, UART, Client};
+use kernel::hil::uart::{self, Client, UART};
 use kernel::process::Error;
 
 /// Syscall driver number.
@@ -76,11 +76,12 @@ pub struct Console<'a, U: UART + 'a> {
 }
 
 impl<'a, U: UART> Console<'a, U> {
-    pub fn new(uart: &'a U,
-               baud_rate: u32,
-               tx_buffer: &'static mut [u8],
-               grant: Grant<App>)
-               -> Console<'a, U> {
+    pub fn new(
+        uart: &'a U,
+        baud_rate: u32,
+        tx_buffer: &'static mut [u8],
+        grant: Grant<App>,
+    ) -> Console<'a, U> {
         Console {
             uart: uart,
             apps: grant,
@@ -116,10 +117,12 @@ impl<'a, U: UART> Console<'a, U> {
     /// Returns true if this send is still active, or false if it has completed
     fn send_continue(&self, app_id: AppId, app: &mut App) -> Result<bool, ReturnCode> {
         if app.write_remaining > 0 {
-            app.write_buffer.take().map_or(Err(ReturnCode::ERESERVE), |slice| {
-                self.send(app_id, app, slice);
-                Ok(true)
-            })
+            app.write_buffer
+                .take()
+                .map_or(Err(ReturnCode::ERESERVE), |slice| {
+                    self.send(app_id, app, slice);
+                    Ok(true)
+                })
         } else {
             Ok(false)
         }
@@ -134,7 +137,8 @@ impl<'a, U: UART> Console<'a, U> {
                 let mut transaction_len = app.write_remaining;
                 for (i, c) in slice.as_ref()[slice.len() - app.write_remaining..slice.len()]
                     .iter()
-                    .enumerate() {
+                    .enumerate()
+                {
                     if buffer.len() <= i {
                         break;
                     }
@@ -166,16 +170,19 @@ impl<'a, U: UART> Driver for Console<'a, U> {
     /// ### `allow_num`
     ///
     /// - `1`: Writeable buffer for write buffer
-    fn allow(&self, appid: AppId, allow_num: usize, slice: AppSlice<Shared, u8>) -> ReturnCode {
+    fn allow(
+        &self,
+        appid: AppId,
+        allow_num: usize,
+        slice: Option<AppSlice<Shared, u8>>,
+    ) -> ReturnCode {
         match allow_num {
-            1 => {
-                self.apps
-                    .enter(appid, |app, _| {
-                        app.write_buffer = Some(slice);
-                        ReturnCode::SUCCESS
-                    })
-                    .unwrap_or_else(|err| err.into())
-            }
+            1 => self.apps
+                .enter(appid, |app, _| {
+                    app.write_buffer = slice;
+                    ReturnCode::SUCCESS
+                })
+                .unwrap_or_else(|err| err.into()),
             _ => ReturnCode::ENOSUPPORT,
         }
     }
@@ -185,11 +192,16 @@ impl<'a, U: UART> Driver for Console<'a, U> {
     /// ### `subscribe_num`
     ///
     /// - `1`: Write buffer completed callback
-    fn subscribe(&self, subscribe_num: usize, callback: Callback) -> ReturnCode {
+    fn subscribe(
+        &self,
+        subscribe_num: usize,
+        callback: Option<Callback>,
+        app_id: AppId,
+    ) -> ReturnCode {
         match subscribe_num {
             1 /* putstr/write_done */ => {
-                self.apps.enter(callback.app_id(), |app, _| {
-                    app.write_callback = Some(callback);
+                self.apps.enter(app_id, |app, _| {
+                    app.write_callback = callback;
                     ReturnCode::SUCCESS
                 }).unwrap_or_else(|err| {
                     match err {
@@ -244,7 +256,9 @@ impl<'a, U: UART> Client for Console<'a, U> {
                             // Go ahead and signal the application
                             let written = app.write_len;
                             app.write_len = 0;
-                            app.write_callback.map(|mut cb| { cb.schedule(written, 0, 0); });
+                            app.write_callback.map(|mut cb| {
+                                cb.schedule(written, 0, 0);
+                            });
                         }
                     }
                     Err(return_code) => {
@@ -253,7 +267,9 @@ impl<'a, U: UART> Client for Console<'a, U> {
                         app.write_remaining = 0;
                         app.pending_write = false;
                         let r0 = isize::from(return_code) as usize;
-                        app.write_callback.map(|mut cb| { cb.schedule(r0, 0, 0); });
+                        app.write_callback.map(|mut cb| {
+                            cb.schedule(r0, 0, 0);
+                        });
                     }
                 }
             })
@@ -274,7 +290,9 @@ impl<'a, U: UART> Client for Console<'a, U> {
                                 app.write_remaining = 0;
                                 app.pending_write = false;
                                 let r0 = isize::from(return_code) as usize;
-                                app.write_callback.map(|mut cb| { cb.schedule(r0, 0, 0); });
+                                app.write_callback.map(|mut cb| {
+                                    cb.schedule(r0, 0, 0);
+                                });
                                 false
                             }
                         }
@@ -289,10 +307,7 @@ impl<'a, U: UART> Client for Console<'a, U> {
         }
     }
 
-    fn receive_complete(&self,
-                        _rx_buffer: &'static mut [u8],
-                        _rx_len: usize,
-                        _error: uart::Error) {
+    fn receive_complete(&self, _rx_buffer: &'static mut [u8], _rx_len: usize, _error: uart::Error) {
         // this is currently unimplemented for console
     }
 }

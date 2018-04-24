@@ -38,7 +38,7 @@
 //!
 //! You need a device that provides the `hil::sensors::TemperatureDriver` trait.
 //!
-//! ``rust
+//! ```rust
 //! let temp = static_init!(
 //!        capsules::temperature::TemperatureSensor<'static>,
 //!        capsules::temperature::TemperatureSensor::new(si7021,
@@ -47,7 +47,7 @@
 //! ```
 
 use core::cell::Cell;
-use kernel::{AppId, Callback, Grant, Driver};
+use kernel::{AppId, Callback, Driver, Grant};
 use kernel::ReturnCode;
 use kernel::hil;
 
@@ -67,9 +67,10 @@ pub struct TemperatureSensor<'a> {
 }
 
 impl<'a> TemperatureSensor<'a> {
-    pub fn new(driver: &'a hil::sensors::TemperatureDriver,
-               grant: Grant<App>)
-               -> TemperatureSensor<'a> {
+    pub fn new(
+        driver: &'a hil::sensors::TemperatureDriver,
+        grant: Grant<App>,
+    ) -> TemperatureSensor<'a> {
         TemperatureSensor {
             driver: driver,
             apps: grant,
@@ -79,20 +80,22 @@ impl<'a> TemperatureSensor<'a> {
 
     fn enqueue_command(&self, appid: AppId) -> ReturnCode {
         self.apps
-            .enter(appid, |app, _| if !self.busy.get() {
-                app.subscribed = true;
-                self.busy.set(true);
-                self.driver.read_temperature()
-            } else {
-                ReturnCode::EBUSY
+            .enter(appid, |app, _| {
+                if !self.busy.get() {
+                    app.subscribed = true;
+                    self.busy.set(true);
+                    self.driver.read_temperature()
+                } else {
+                    ReturnCode::EBUSY
+                }
             })
             .unwrap_or_else(|err| err.into())
     }
 
-    fn configure_callback(&self, callback: Callback) -> ReturnCode {
+    fn configure_callback(&self, callback: Option<Callback>, app_id: AppId) -> ReturnCode {
         self.apps
-            .enter(callback.app_id(), |app, _| {
-                app.callback = Some(callback);
+            .enter(app_id, |app, _| {
+                app.callback = callback;
                 ReturnCode::SUCCESS
             })
             .unwrap_or_else(|err| err.into())
@@ -102,27 +105,33 @@ impl<'a> TemperatureSensor<'a> {
 impl<'a> hil::sensors::TemperatureClient for TemperatureSensor<'a> {
     fn callback(&self, temp_val: usize) {
         for cntr in self.apps.iter() {
-            cntr.enter(|app, _| if app.subscribed {
-                self.busy.set(false);
-                app.subscribed = false;
-                app.callback.map(|mut cb| cb.schedule(temp_val, 0, 0));
+            cntr.enter(|app, _| {
+                if app.subscribed {
+                    self.busy.set(false);
+                    app.subscribed = false;
+                    app.callback.map(|mut cb| cb.schedule(temp_val, 0, 0));
+                }
             });
         }
     }
 }
 
 impl<'a> Driver for TemperatureSensor<'a> {
-    fn subscribe(&self, subscribe_num: usize, callback: Callback) -> ReturnCode {
+    fn subscribe(
+        &self,
+        subscribe_num: usize,
+        callback: Option<Callback>,
+        app_id: AppId,
+    ) -> ReturnCode {
         match subscribe_num {
             // subscribe to temperature reading with callback
-            0 => self.configure_callback(callback),
+            0 => self.configure_callback(callback, app_id),
             _ => ReturnCode::ENOSUPPORT,
         }
     }
 
     fn command(&self, command_num: usize, _: usize, _: usize, appid: AppId) -> ReturnCode {
         match command_num {
-
             // check whether the driver exists!!
             0 => ReturnCode::SUCCESS,
 

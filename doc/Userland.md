@@ -250,8 +250,9 @@ method with the following signature:
 int main(void);
 ```
 
-Applications **should** return 0 from `main`, but `main` is called from `_start`
-and includes an implicit `while()` loop:
+Applications **should** return 0 from `main`. Returning non-zero is undefined and the
+behavior may change in future versions of `libtock`.
+Today, `main` is called from `_start` and includes an implicit `while()` loop:
 
 ```c
 void _start(void* text_start, void* mem_start, void* memory_len, void* app_heap_break) {
@@ -270,6 +271,13 @@ method and then return.
 Applications can specify their required stack and heap sizes by defining the
 make variables `STACK_SIZE` and `APP_HEAP_SIZE`, which default to 2K and 1K
 respectively as of this writing.
+
+`libtock` will set the stack pointer during startup. To allow each application
+to set its own stack size, the linker script expects a symbol `STACK_SIZE` to
+be defined. The Tock build system will define this symbol during linking, using
+the make variable `STACK_SIZE`. A consequence of this technique is that
+changing the stack size requires that any source file also be touched so that
+the app will re-link.
 
 ### Libraries
 
@@ -296,9 +304,9 @@ a synchronous interface to a driver using an internal callback and `yield_for`
 [`tmp006_read_sync`](https://github.com/helena-project/tock/blob/master/userland/libtock/tmp006.c#L19))
 
 `libtock` also provides the startup code for applications
-([`crt1.c`](https://github.com/helena-project/tock/blob/master/userland/libtock/crt1.c)),
+([`crt0.c`](../userland/libtock/crt0.c)),
 an implementation for the system calls
-([`tock.c`](https://github.com/helena-project/tock/blob/master/userland/libtock/tock.c)),
+([`tock.c`](../userland/libtock/tock.c)),
 and pin definitions for platforms.
 
 #### libc++

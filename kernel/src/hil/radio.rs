@@ -13,11 +13,13 @@ pub trait TxClient {
 }
 
 pub trait RxClient {
-    fn receive(&self,
-               buf: &'static mut [u8],
-               frame_len: usize,
-               crc_valid: bool,
-               result: ReturnCode);
+    fn receive(
+        &self,
+        buf: &'static mut [u8],
+        frame_len: usize,
+        crc_valid: bool,
+        result: ReturnCode,
+    );
 }
 
 pub trait ConfigClient {
@@ -35,16 +37,19 @@ pub trait PowerClient {
 /// constant in this generic trait for now.
 ///
 /// Furthermore, the minimum MHR size assumes that
+///
 /// - The source PAN ID is omitted
 /// - There is no auxiliary security header
 /// - There are no IEs
 ///
+/// ```text
 /// +---------+-----+-----+-------------+-----+
 /// | SPI com | PHR | MHR | MAC payload | MFR |
 /// +---------+-----+-----+-------------+-----+
 /// \______ Static buffer rx/txed to SPI _____/
 ///                 \__ PSDU / frame length __/
 /// \___ 2 bytes ___/
+/// ```
 
 pub const MIN_MHR_SIZE: usize = 9;
 pub const MFR_SIZE: usize = 2;
@@ -62,11 +67,12 @@ pub trait Radio: RadioConfig + RadioData {}
 pub trait RadioConfig {
     /// buf must be at least MAX_BUF_SIZE in length, and
     /// reg_read and reg_write must be 2 bytes.
-    fn initialize(&self,
-                  spi_buf: &'static mut [u8],
-                  reg_write: &'static mut [u8],
-                  reg_read: &'static mut [u8])
-                  -> ReturnCode;
+    fn initialize(
+        &self,
+        spi_buf: &'static mut [u8],
+        reg_write: &'static mut [u8],
+        reg_read: &'static mut [u8],
+    ) -> ReturnCode;
     fn reset(&self) -> ReturnCode;
     fn start(&self) -> ReturnCode;
     fn stop(&self) -> ReturnCode;
@@ -99,8 +105,9 @@ pub trait RadioData {
     fn set_receive_client(&self, client: &'static RxClient, receive_buffer: &'static mut [u8]);
     fn set_receive_buffer(&self, receive_buffer: &'static mut [u8]);
 
-    fn transmit(&self,
-                spi_buf: &'static mut [u8],
-                frame_len: usize)
-                -> (ReturnCode, Option<&'static mut [u8]>);
+    fn transmit(
+        &self,
+        spi_buf: &'static mut [u8],
+        frame_len: usize,
+    ) -> (ReturnCode, Option<&'static mut [u8]>);
 }

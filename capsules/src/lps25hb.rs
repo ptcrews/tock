@@ -1,6 +1,6 @@
 //! Driver for the ST LPS25HB pressure sensor.
 //!
-//! http://www.st.com/en/mems-and-sensors/lps25hb.html
+//! <http://www.st.com/en/mems-and-sensors/lps25hb.html>
 //!
 //! Usage
 //! -----
@@ -18,10 +18,12 @@
 
 use core::cell::Cell;
 use kernel::{AppId, Callback, Driver, ReturnCode};
-
 use kernel::common::take_cell::TakeCell;
 use kernel::hil::gpio;
 use kernel::hil::i2c;
+
+/// Syscall driver number.
+pub const DRIVER_NUM: usize = 0x70004;
 
 // Buffer to use for I2C messages
 pub static mut BUFFER: [u8; 5] = [0; 5];
@@ -62,7 +64,7 @@ enum Registers {
 }
 
 /// States of the I2C protocol with the LPS25HB.
-#[derive(Clone,Copy,PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum State {
     Idle,
 
@@ -97,10 +99,11 @@ pub struct LPS25HB<'a> {
 }
 
 impl<'a> LPS25HB<'a> {
-    pub fn new(i2c: &'a i2c::I2CDevice,
-               interrupt_pin: &'a gpio::Pin,
-               buffer: &'static mut [u8])
-               -> LPS25HB<'a> {
+    pub fn new(
+        i2c: &'a i2c::I2CDevice,
+        interrupt_pin: &'a gpio::Pin,
+        buffer: &'static mut [u8],
+    ) -> LPS25HB<'a> {
         // setup and return struct
         LPS25HB {
             i2c: i2c,
@@ -124,7 +127,8 @@ impl<'a> LPS25HB<'a> {
 
     pub fn take_measurement(&self) {
         self.interrupt_pin.make_input();
-        self.interrupt_pin.enable_interrupt(0, gpio::InterruptMode::RisingEdge);
+        self.interrupt_pin
+            .enable_interrupt(0, gpio::InterruptMode::RisingEdge);
 
         self.buffer.take().map(|buf| {
             // turn on i2c to send commands
@@ -174,17 +178,20 @@ impl<'a> i2c::I2CClient for LPS25HB<'a> {
                 self.state.set(State::GotMeasurement);
             }
             State::GotMeasurement => {
-                let pressure = (((buffer[2] as u32) << 16) | ((buffer[1] as u32) << 8) |
-                                (buffer[0] as u32)) as u32;
+                let pressure = (((buffer[2] as u32) << 16) | ((buffer[1] as u32) << 8)
+                    | (buffer[0] as u32)) as u32;
 
                 // Returned as microbars
                 let pressure_ubar = (pressure * 1000) / 4096;
 
-                self.callback.get().map(|mut cb| cb.schedule(pressure_ubar as usize, 0, 0));
+                self.callback
+                    .get()
+                    .map(|mut cb| cb.schedule(pressure_ubar as usize, 0, 0));
 
                 buffer[0] = Registers::CtrlReg1 as u8;
                 buffer[1] = 0;
                 self.i2c.write(buffer, 2);
+                self.interrupt_pin.disable_interrupt();
                 self.state.set(State::Done);
             }
             State::Done => {
@@ -212,12 +219,17 @@ impl<'a> gpio::Client for LPS25HB<'a> {
 }
 
 impl<'a> Driver for LPS25HB<'a> {
-    fn subscribe(&self, subscribe_num: usize, callback: Callback) -> ReturnCode {
+    fn subscribe(
+        &self,
+        subscribe_num: usize,
+        callback: Option<Callback>,
+        _app_id: AppId,
+    ) -> ReturnCode {
         match subscribe_num {
             // Set a callback
             0 => {
                 // Set callback function
-                self.callback.set(Some(callback));
+                self.callback.set(callback);
                 ReturnCode::SUCCESS
             }
             // default

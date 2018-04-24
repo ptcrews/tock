@@ -30,7 +30,7 @@
 
 use capsules;
 extern crate sam4l;
-use capsules::ieee802154::mac::Mac;
+use capsules::ieee802154::device::MacDevice;
 use capsules::net::ipv6::ip_utils::IPAddr;
 use capsules::net::ipv6::ipv6::{IP6Packet, TransportHeader, IPPayload};
 use capsules::net::icmpv6::icmpv6::{ICMP6Header, ICMP6Type};
@@ -75,7 +75,7 @@ pub struct LowpanICMPTest<'a, A: time::Alarm + 'a> {
     icmp_sender: &'a ICMP6Sender<'a>,
 }
 
-pub unsafe fn initialize_all(radio_mac: &'static Mac,
+pub unsafe fn initialize_all(radio_mac: &'static MacDevice,
                       mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
         -> &'static LowpanICMPTest<'static,
         capsules::virtual_alarm::VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {
