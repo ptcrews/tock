@@ -210,12 +210,11 @@ impl<'a> IPPayload<'a> {
             TransportHeader::ICMP(icmp_header) => icmp_header.encode(buf, offset).done().unwrap(),
             _ => {
                 unimplemented!();
-                stream_done!(offset, offset);
             }
         };
         let payload_length = self.get_payload_length();
         let offset = enc_consume!(buf, offset; encode_bytes, &self.payload[..payload_length]);
-        stream_done!(offset, offset);
+        stream_done!(offset, offset)
     }
 
     fn get_payload_length(&self) -> usize {
