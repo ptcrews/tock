@@ -603,6 +603,10 @@ pub unsafe fn reset_handler() {
     );
     hil::nonvolatile_storage::NonvolatileStorage::set_client(nv_to_page, nonvolatile_storage);
 
+    let app_lowpan_frag_test = icmp_lowpan_test::initialize_all(radio_mac as &'static MacDevice,
+                                                            mux_alarm as &'static
+                                                                MuxAlarm<'static,
+                                                                    sam4l::ast::Ast>);
     let imix = Imix {
         console: console,
         alarm: alarm,
@@ -653,6 +657,7 @@ pub unsafe fn reset_handler() {
         &mut PROCESSES,
         FAULT_RESPONSE,
     );
+    app_lowpan_frag_test.start();
 
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }

@@ -204,7 +204,11 @@ pub fn compute_sum(buf: &[u8], len: u16) -> u32 {
     let mut i: usize = 0;
     while i < (len as usize) {
         let msb = (buf[i] as u32) << 8;
-        let lsb = buf[i + 1] as u32;
+        let lsb = if i + 1 < (len as usize) {
+            buf[i + 1] as u32
+        } else {
+            0 as u32
+        };
         sum += msb + lsb;
         i += 2;
     }

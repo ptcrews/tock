@@ -59,7 +59,8 @@ static mut RX_STATE_BUF: [u8; 1280] = [0x0; 1280];
 pub const TEST_DELAY_MS: u32 = 10000;
 pub const TEST_LOOP: bool = false;
 
-static mut ICMP_PAYLOAD: [u8; 10] = [0; 10];
+pub const PAYLOAD_LEN: usize = 10;
+static mut ICMP_PAYLOAD: [u8; PAYLOAD_LEN] = [0; PAYLOAD_LEN];
 
 pub static mut RF233_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_SIZE];
 
@@ -96,7 +97,7 @@ pub unsafe fn initialize_all(
     let sixlowpan_state = sixlowpan as &SixlowpanState;
     let sixlowpan_tx = TxState::new(sixlowpan_state);
 
-    let icmp_hdr = ICMP6Header::new(ICMP6Type::Type128); // Echo Request
+    let icmp_hdr = ICMP6Header::new(ICMP6Type::Type128, PAYLOAD_LEN as u16); // Echo Request
 
     let ip_pyld: IPPayload = IPPayload {
         header: TransportHeader::ICMP(icmp_hdr),
@@ -208,7 +209,7 @@ impl<'a, A: time::Alarm + 'a> LowpanICMPTest<'a, A> {
     }
 
     fn send_next(&self) {
-        let icmp_hdr = ICMP6Header::new(ICMP6Type::Type128); // Echo Request
+        let icmp_hdr = ICMP6Header::new(ICMP6Type::Type128, PAYLOAD_LEN as u16); // Echo Request
         unsafe { self.icmp_sender.send(DST_ADDR, icmp_hdr, &ICMP_PAYLOAD) };
     }
 }

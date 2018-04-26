@@ -31,7 +31,7 @@ pub enum ICMP6Type {
 }
 
 impl ICMP6Header {
-    pub fn new(icmp_type: ICMP6Type) -> ICMP6Header {
+    pub fn new(icmp_type: ICMP6Type, payload_len: u16) -> ICMP6Header {
         let options = match icmp_type {
             ICMP6Type::Type1 => ICMP6HeaderOptions::Type1 { unused: 0 },
             ICMP6Type::Type3 => ICMP6HeaderOptions::Type3 { unused: 0 },
@@ -43,7 +43,7 @@ impl ICMP6Header {
             code: 0,
             cksum: 0,
             options: options,
-            len: 0,
+            len: payload_len,
         }
     }
 
@@ -143,7 +143,7 @@ impl ICMP6Header {
             _ => return SResult::Error(()),
         };
 
-        let mut icmp_header = Self::new(icmp_type);
+        let mut icmp_header = Self::new(icmp_type, 0);
 
         let (off, code) = dec_try!(buf, off; decode_u8);
         icmp_header.set_code(code);
