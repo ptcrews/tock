@@ -558,8 +558,13 @@ pub unsafe fn reset_handler() {
     mac_device.set_device_procedure(radio_driver);
     radio_mac.set_transmit_client(radio_driver);
     radio_mac.set_receive_client(radio_driver);
-    radio_mac.set_pan(0xABCD);
-    radio_mac.set_address(0x1008);
+    radio_mac.set_pan(0x0000);
+    //radio_mac.set_address_long([0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17]);
+    radio_mac.set_address_long([0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f]);
+
+    let ipv6_lowpan_test = ipv6_lowpan_test::initialize_all(radio_mac as &'static MacDevice,
+                                                             mux_alarm as &'static MuxAlarm<'static, sam4l::ast::Ast>);
+    radio_mac.set_transmit_client(ipv6_lowpan_test);
 
     // Configure the USB controller
     let usb_client = static_init!(
@@ -603,10 +608,11 @@ pub unsafe fn reset_handler() {
     );
     hil::nonvolatile_storage::NonvolatileStorage::set_client(nv_to_page, nonvolatile_storage);
 
-    let app_lowpan_frag_test = icmp_lowpan_test::initialize_all(radio_mac as &'static MacDevice,
+    /*let app_lowpan_frag_test = icmp_lowpan_test::initialize_all(radio_mac as &'static MacDevice,
                                                             mux_alarm as &'static
                                                                 MuxAlarm<'static,
                                                                     sam4l::ast::Ast>);
+                                                                    */
     let imix = Imix {
         console: console,
         alarm: alarm,
@@ -657,7 +663,8 @@ pub unsafe fn reset_handler() {
         &mut PROCESSES,
         FAULT_RESPONSE,
     );
-    app_lowpan_frag_test.start();
+    // app_lowpan_frag_test.start();
+    //ipv6_lowpan_test.start(); // If flashing the transmitting Imix
 
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }

@@ -164,6 +164,7 @@ pub unsafe fn initialize_all(
 
     let sixlowpan_state = sixlowpan as &SixlowpanState;
     let sixlowpan_tx = TxState::new(sixlowpan_state);
+    sixlowpan_tx.init(SRC_MAC_ADDR, DST_MAC_ADDR, None);
 
     let lowpan_frag_test = static_init!(
         LowpanTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
@@ -287,8 +288,7 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
             25 => self.ipv6_send_packet_test(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Mcast32),
             26 => self.ipv6_send_packet_test(TF::TrafficFlow, 42, SAC::CtxIID, DAC::Mcast8),
             27 => self.ipv6_send_packet_test(TF::TrafficFlow, 42, SAC::CtxIID, DAC::McastCtx),
-
-            _ => {}
+            _ => debug!("Finished send tests")
         }
     }
 
@@ -366,7 +366,6 @@ impl<'a, A: time::Alarm> LowpanTest<'a, A> {
             27 => {
                 ipv6_check_receive_packet(TF::TrafficFlow, 42, SAC::CtxIID, DAC::McastCtx, buf, len)
             }
-
             _ => debug!("Finished tests"),
         }
     }
