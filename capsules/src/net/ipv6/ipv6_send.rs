@@ -7,6 +7,15 @@
 //! This file also includes an implementation of the `IP6Sender` trait, which
 //! sends an IPv6 packet using 6LoWPAN.
 
+// Additional Work and Known Problems
+// ----------------------------------
+// The main areas for additional work is with regards to the interface provided
+// by `IP6Sender`. The current interface differs from the one provided in
+// the networking stack overview document, and should be changed to better
+// reflect that document. Additionally, the specific implementation is
+// over 6LoWPAN, and should be separated from the generic IPv6 sending
+// interface.
+
 use core::cell::Cell;
 use ieee802154::device::{MacDevice, TxClient};
 use kernel::ReturnCode;
