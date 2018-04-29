@@ -4,6 +4,11 @@
 //! bulk of the functionality required for manipulating the fields of the
 //! IPv6 header. Additionally, the IP6Packet struct allows for multiple types
 //! of transport-level structures to be encapsulated within.
+//!
+//! Why is the definition of the IP6 stuff so weird? A: Because we wanted to
+//! avoid additional allocation, and so the buffer is *perminantly* tied to
+//! an instance of the struct. To deal with various headers, we had to
+//! decompose the header structure as viewed below.
 
 use net::icmpv6::icmpv6::ICMP6Header;
 use net::ipv6::ip_utils::{compute_icmp_checksum, compute_udp_checksum, IPAddr, ip6_nh};
