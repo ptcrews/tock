@@ -58,6 +58,7 @@ mod aes_ccm_test;
 mod power;
 
 // State for loading apps.
+const IS_TX: bool = true; // false == receiver
 
 const NUM_PROCS: usize = 2;
 
@@ -559,8 +560,11 @@ pub unsafe fn reset_handler() {
     radio_mac.set_transmit_client(radio_driver);
     radio_mac.set_receive_client(radio_driver);
     radio_mac.set_pan(0x0000);
-    //radio_mac.set_address_long([0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17]);
-    radio_mac.set_address_long([0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f]);
+    if IS_TX {
+        radio_mac.set_address_long([0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17]);
+    } else {
+        radio_mac.set_address_long([0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f]);
+    }
 
     let ipv6_lowpan_test = ipv6_lowpan_test::initialize_all(radio_mac as &'static MacDevice,
                                                              mux_alarm as &'static MuxAlarm<'static, sam4l::ast::Ast>);
@@ -663,8 +667,10 @@ pub unsafe fn reset_handler() {
         &mut PROCESSES,
         FAULT_RESPONSE,
     );
-    // app_lowpan_frag_test.start();
-    //ipv6_lowpan_test.start(); // If flashing the transmitting Imix
+
+    if IS_TX {
+        ipv6_lowpan_test.start(); // If flashing the transmitting Imix
+    }
 
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }
