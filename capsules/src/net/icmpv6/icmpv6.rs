@@ -1,5 +1,3 @@
-//! ICMPv6 layer of the Tock network stack.
-//!
 //! This file contains types, structs and methods associated with the 
 //! ICMPv6 header, including getter and setter methods and encode/decode 
 //! functionality necessary for transmission. 
@@ -10,6 +8,7 @@ use net::stream::{decode_u16, decode_u32, decode_u8};
 use net::stream::{encode_u16, encode_u32, encode_u8};
 use net::stream::SResult;
 
+/// This struct stores the fields of an ICMPv6 header. 
 #[derive(Copy, Clone)]
 pub struct ICMP6Header {
     pub code: u8,
@@ -123,7 +122,8 @@ impl ICMP6Header {
     ///
     /// # Return Value
     ///
-    /// This function returns the new offset into the buffer wrapped in an SResult
+    /// This function returns the new offset into the buffer, 
+    /// wrapped in an SResult
     pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
         let mut off = offset;
 
@@ -154,7 +154,7 @@ impl ICMP6Header {
     ///
     /// # Return Value
     ///
-    /// This function returns the `ICMP6Header` wrapped in an SResult
+    /// This function returns the `ICMP6Header`, wrapped in an SResult
     pub fn decode(buf: &[u8]) -> SResult<ICMP6Header> {
         let off = 0;
         let (off, type_num) = dec_try!(buf, off; decode_u8);
