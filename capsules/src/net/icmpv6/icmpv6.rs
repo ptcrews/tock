@@ -114,6 +114,16 @@ impl ICMP6Header {
         return 8;
     }
 
+    /// Serializes an `ICMP6Header` into a buffer.
+    ///
+    /// # Arguments
+    ///
+    /// `buf` - A buffer to serialize the `ICMP6Header` into
+    /// `offset` - The current offset into the provided buffer
+    ///
+    /// # Return Value
+    ///
+    /// This function returns the new offset into the buffer wrapped in an SResult
     pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
         let mut off = offset;
 
@@ -136,6 +146,15 @@ impl ICMP6Header {
         stream_done!(off, off);
     }
 
+    /// Deserializes an `ICMP6Header` from a buffer.
+    ///
+    /// # Arguments
+    ///
+    /// `buf` - The byte array corresponding to the serialized `ICMP6Header`
+    ///
+    /// # Return Value
+    ///
+    /// This function returns the `ICMP6Header` wrapped in an SResult
     pub fn decode(buf: &[u8]) -> SResult<ICMP6Header> {
         let off = 0;
         let (off, type_num) = dec_try!(buf, off; decode_u8);
