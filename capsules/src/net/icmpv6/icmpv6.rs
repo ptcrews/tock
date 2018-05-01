@@ -1,4 +1,4 @@
-//! This file contains types, structs and methods associated with the 
+//! This file contains the types, structs and methods associated with the 
 //! ICMPv6 header, including getter and setter methods and encode/decode 
 //! functionality necessary for transmission. 
 //!
@@ -8,7 +8,7 @@ use net::stream::{decode_u16, decode_u32, decode_u8};
 use net::stream::{encode_u16, encode_u32, encode_u8};
 use net::stream::SResult;
 
-/// This struct stores the fields of an ICMPv6 header. 
+/// A struct representing an ICMPv6 header. 
 #[derive(Copy, Clone)]
 pub struct ICMP6Header {
     pub code: u8,

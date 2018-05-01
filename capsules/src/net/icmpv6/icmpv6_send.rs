@@ -14,13 +14,14 @@ use net::ipv6::ip_utils::IPAddr;
 use net::ipv6::ipv6::TransportHeader;
 use net::ipv6::ipv6_send::{IP6Client, IP6Sender};
 
-/// The `send_done` function in this trait is a client callback invoked 
-/// after an ICMP6Sender has completed sending a requested packet.
+/// A trait for a client of an `ICMP6Sender`.
 pub trait ICMP6SendClient {
+    /// A client callback invoked after an ICMP6Sender has completed sending 
+    /// a requested packet.
     fn send_done(&self, result: ReturnCode);
 }
 
-/// This is a trait that defines functionality for sending ICMPv6 packets.
+/// A trait that defines an interface for sending ICMPv6 packets.
 pub trait ICMP6Sender<'a> {
     /// Sets the client for the `ICMP6Sender` instance.
     ///
@@ -47,9 +48,7 @@ pub trait ICMP6Sender<'a> {
     fn send(&self, dest: IPAddr, icmp_header: ICMP6Header, buf: &'a [u8]) -> ReturnCode;
 }
 
-/// This is a struct that implements the `ICMP6Sender` trait. Note
-/// that this struct contains a reference to an `IP6Sender` which it
-/// forwards packets to (and receives callbacks from).
+/// A struct that implements the `ICMP6Sender` trait.
 pub struct ICMP6SendStruct<'a, T: IP6Sender<'a> + 'a> {
     ip_send_struct: &'a T,
     client: Cell<Option<&'a ICMP6SendClient>>,
@@ -64,8 +63,6 @@ impl<'a, T: IP6Sender<'a>> ICMP6SendStruct<'a, T> {
     }
 }
 
-/// Below is the implementation of the `ICMP6Sender` trait for the
-/// `ICMP6SendStruct`.
 impl<'a, T: IP6Sender<'a>> ICMP6Sender<'a> for ICMP6SendStruct<'a, T> {
     fn set_client(&self, client: &'a ICMP6SendClient) {
         self.client.set(Some(client));
@@ -79,10 +76,9 @@ impl<'a, T: IP6Sender<'a>> ICMP6Sender<'a> for ICMP6SendStruct<'a, T> {
     }
 }
 
-/// Below is the implementation of the `IP6Client` trait for the `ICMP6SendStruct`.
-/// When the ICMPv6 layer receives the callback, it forwards it to the 
-/// `ICMP6SendClient`.
 impl<'a, T: IP6Sender<'a>> IP6Client for ICMP6SendStruct<'a, T> {
+    /// Forwards callback received from the `IP6Sender` to the 
+    /// `ICMP6SendClient`.
     fn send_done(&self, result: ReturnCode) {
         self.client.get().map(|client| client.send_done(result));
     }
