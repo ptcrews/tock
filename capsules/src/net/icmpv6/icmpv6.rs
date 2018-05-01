@@ -1,6 +1,6 @@
-//! This file contains the types, structs and methods associated with the 
-//! ICMPv6 header, including getter and setter methods and encode/decode 
-//! functionality necessary for transmission. 
+//! This file contains the types, structs and methods associated with the
+//! ICMPv6 header, including getter and setter methods and encode/decode
+//! functionality necessary for transmission.
 //!
 //! - Author: Conor McAvity <cmcavity@stanford.edu>
 
@@ -8,7 +8,7 @@ use net::stream::{decode_u16, decode_u32, decode_u8};
 use net::stream::{encode_u16, encode_u32, encode_u8};
 use net::stream::SResult;
 
-/// A struct representing an ICMPv6 header. 
+/// A struct representing an ICMPv6 header.
 #[derive(Copy, Clone)]
 pub struct ICMP6Header {
     pub code: u8,
@@ -122,7 +122,7 @@ impl ICMP6Header {
     ///
     /// # Return Value
     ///
-    /// This function returns the new offset into the buffer, 
+    /// This function returns the new offset into the buffer,
     /// wrapped in an SResult
     pub fn encode(&self, buf: &mut [u8], offset: usize) -> SResult<usize> {
         let mut off = offset;
@@ -132,8 +132,7 @@ impl ICMP6Header {
         off = enc_consume!(buf, off; encode_u16, self.cksum);
 
         match self.options {
-            ICMP6HeaderOptions::Type1 { unused } 
-            | ICMP6HeaderOptions::Type3 { unused } => {
+            ICMP6HeaderOptions::Type1 { unused } | ICMP6HeaderOptions::Type3 { unused } => {
                 off = enc_consume!(buf, off; encode_u32, unused);
             }
             ICMP6HeaderOptions::Type128 { id, seqno }

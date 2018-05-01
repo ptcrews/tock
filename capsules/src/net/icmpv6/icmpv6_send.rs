@@ -1,4 +1,4 @@
-//! This file contains the definition and implementation of a simple ICMPv6 
+//! This file contains the definition and implementation of a simple ICMPv6
 //! sending interface. The [ICMP6Sender](trait.ICMP6Sender.html) trait provides
 //! an interface for an upper layer to send an ICMPv6 packet, and the
 //! [ICMP6SendClient](trait.ICMP6SendClient.html) trait is implemented by the
@@ -16,7 +16,7 @@ use net::ipv6::ipv6_send::{IP6Client, IP6Sender};
 
 /// A trait for a client of an `ICMP6Sender`.
 pub trait ICMP6SendClient {
-    /// A client callback invoked after an ICMP6Sender has completed sending 
+    /// A client callback invoked after an ICMP6Sender has completed sending
     /// a requested packet.
     fn send_done(&self, result: ReturnCode);
 }
@@ -30,14 +30,14 @@ pub trait ICMP6Sender<'a> {
     /// `client` - The `ICMP6SendClient` instance to be set as the client
     /// of the `ICMP6Sender` instance
     fn set_client(&self, client: &'a ICMP6SendClient);
-    
-    /// Constructs and sends an IP packet from provided ICMPv6 header 
+
+    /// Constructs and sends an IP packet from provided ICMPv6 header
     /// and payload.
-    /// 
+    ///
     /// # Arguments
     ///
     /// `dest` - The destination IP address
-    /// `icmp_header` - The ICMPv6 header to be sent 
+    /// `icmp_header` - The ICMPv6 header to be sent
     /// `buf` - The byte array containing the ICMPv6 payload
     ///
     /// # Return Value
@@ -77,7 +77,7 @@ impl<'a, T: IP6Sender<'a>> ICMP6Sender<'a> for ICMP6SendStruct<'a, T> {
 }
 
 impl<'a, T: IP6Sender<'a>> IP6Client for ICMP6SendStruct<'a, T> {
-    /// Forwards callback received from the `IP6Sender` to the 
+    /// Forwards callback received from the `IP6Sender` to the
     /// `ICMP6SendClient`.
     fn send_done(&self, result: ReturnCode) {
         self.client.get().map(|client| client.send_done(result));
