@@ -1,3 +1,4 @@
+pub mod sync_rng;
 pub mod trickle;
 pub mod deluge;
 pub mod program_state;
