@@ -528,7 +528,12 @@ pub unsafe fn reset_handler() {
         capsules::usb_user::UsbSyscallDriver::new(usb_client, kernel::Grant::create())
     );
 
-    let deluge_test = deluge_test::initialize_all(radio_mac, mux_alarm);
+    let mux_flash = static_init!(
+        capsules::virtual_flash::MuxFlash<'static, sam4l::flashcalw::FLASHCALW>,
+        capsules::virtual_flash::MuxFlash::new(&sam4l::flashcalw::FLASH_CONTROLLER));
+    hil::flash::HasClient::set_client(&sam4l::flashcalw::FLASH_CONTROLLER, mux_flash);
+
+    let deluge_test = deluge_test::initialize_all(radio_mac, mux_alarm, mux_flash);
 
     let imix = Imix {
         console: console,

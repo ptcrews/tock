@@ -8,9 +8,12 @@ use capsules::net::deluge::trickle::{Trickle, TrickleData, TrickleClient};
 use capsules::net::deluge::deluge;
 use capsules::net::deluge::deluge::{DelugeData};
 use capsules::net::deluge::program_state;
-use capsules::net::deluge::program_state::{ProgramState, ProgramStateClient, DelugeProgramState};
+use capsules::net::deluge::program_state::{ProgramState, DelugeProgramStateClient, DelugeProgramState};
 use capsules::net::deluge::transmit_layer;
 use capsules::net::deluge::transmit_layer::{DelugeTransmitLayer, DelugeTransmit};
+use capsules::net::deluge::flash_layer::FlashState;
+use capsules::virtual_flash::MuxFlash;
+use sam4l::flashcalw::Sam4lPage;
 use kernel::common::take_cell::TakeCell;
 use kernel::returncode::ReturnCode;
 use capsules::net::ieee802154::{Header, PanID, MacAddress};
@@ -27,11 +30,14 @@ static mut TX_PAGE: [u8; program_state::PAGE_SIZE] = [0 as u8; program_state::PA
 static mut RX_PAGE: [u8; program_state::PAGE_SIZE] = [0 as u8; program_state::PAGE_SIZE];
 static mut TX_RADIO_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_SIZE];
 
+static mut FLASH_BUFFER: Sam4lPage = Sam4lPage::new();
+
 const SRC_PAN_ADDR: PanID = 0xABCD;
 const SRC_MAC_ADDR: MacAddress = MacAddress::Short(0xabcd);
 
 pub unsafe fn initialize_all(radio_mac: &'static Mac,
-                             mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
+                             mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>,
+                             mux_flash: &'static MuxFlash<'static, sam4l::flashcalw::FLASHCALW>)
         -> &'static DelugeTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {
 
     // Allocate DelugeData + appropriate structs
@@ -48,6 +54,15 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     sam4l::trng::TRNG.set_client(trickle_data);
     trickle_alarm.set_client(trickle_data);
 
+    // Everything that then uses the virtualized flash must use one of these.
+    let virtual_flash = static_init!(
+        capsules::virtual_flash::FlashUser<'static, sam4l::flashcalw::FLASHCALW>,
+        capsules::virtual_flash::FlashUser::new(mux_flash));
+
+    let flash_layer = static_init!(
+        FlashState<'static, capsules::virtual_flash::FlashUser<'static, sam4l::flashcalw::FLASHCALW>>,
+        FlashState::new(virtual_flash, &mut FLASH_BUFFER, 0));
+
     let transmit_layer = static_init!(
         DelugeTransmitLayer<'static>,
         DelugeTransmitLayer::new(SRC_MAC_ADDR, SRC_PAN_ADDR, &mut TX_RADIO_BUF, radio_mac)
@@ -55,7 +70,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 
     let program_state = static_init!(
         ProgramState<'static>,
-        ProgramState::new(0, FIRST_PAGE.len(), &mut TX_PAGE, &mut RX_PAGE)
+        ProgramState::new(flash_layer, 0, &mut TX_PAGE, &mut RX_PAGE)
     );
 
     let deluge_alarm = static_init!(
@@ -78,7 +93,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
         DelugeTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
         DelugeTest::new(deluge_data)
     );
-    program_state.set_client(deluge_test);
+    program_state.set_client(deluge_data);
     deluge_test
 }
 
@@ -95,15 +110,5 @@ impl<'a, A: time::Alarm + 'a> DelugeTest<'a, A> {
         if is_sender {
         }
         */
-    }
-}
-
-impl<'a, A: time::Alarm + 'a> ProgramStateClient for DelugeTest<'a, A> {
-
-    fn get_page(&self, page_num: usize) -> bool {
-        unimplemented!();
-    }
-
-    fn page_completed(&self, page_num: usize, completed_page: &[u8]) {
     }
 }
