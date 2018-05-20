@@ -24,17 +24,23 @@ pub struct FlashState<'a, F: hil::flash::Flash + 'static> {
     client: Cell<Option<&'a DelugeFlashClient>>,
     buffer: TakeCell<'static, F::Page>,
     num_pages_offset: Cell<usize>,
+    // Length of the region in bytes
+    flash_region_length: Cell<usize>,
 }
 
 impl<'a, F: hil::flash::Flash + 'a> FlashState<'a, F> {
     pub fn new(flash_driver: &'a F,
                buffer: &'static mut F::Page,
-               num_pages_offset: usize) -> FlashState<'a, F> {
+               flash_region_start_addr: usize,
+               flash_region_length: usize) -> FlashState<'a, F> {
+        // TODO: Replace 512 with PAGE_SIZE
+        let num_pages_offset = flash_region_start_addr / 512;
         FlashState {
             flash_driver: flash_driver,
             client: Cell::new(None),
             buffer: TakeCell::new(buffer),
             num_pages_offset: Cell::new(num_pages_offset),
+            flash_region_length: Cell::new(flash_region_length),
         }
     }
 }
@@ -56,6 +62,7 @@ impl<'a, F: hil::flash::Flash + 'a> hil::flash::Client<F> for FlashState<'a, F> 
 
 impl<'a, F: hil::flash::Flash + 'a> DelugeFlashState<'a> for FlashState<'a, F> {
     fn get_page(&self, page_num: usize) -> ReturnCode {
+        let page_num = page_num + self.num_pages_offset.get();
         if self.buffer.is_none() {
             return ReturnCode::EBUSY;
         }
@@ -65,6 +72,7 @@ impl<'a, F: hil::flash::Flash + 'a> DelugeFlashState<'a> for FlashState<'a, F> {
     }
 
     fn page_completed(&self, page_num: usize, completed_page: &[u8]) -> ReturnCode {
+        let page_num = page_num + self.num_pages_offset.get();
         if self.buffer.is_none() {
             return ReturnCode::EBUSY;
         }

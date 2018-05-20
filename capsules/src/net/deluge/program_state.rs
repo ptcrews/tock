@@ -9,6 +9,10 @@ pub trait DelugeProgramStateClient {
 }
 
 pub trait DelugeProgramState<'a> {
+    // This is called externally, when something updates our binary
+    // TODO: Should this only be for testing?
+    fn updated_application(&self, new_version: usize, page_count: usize);
+
     fn received_new_version(&self, version: usize);
     fn receive_packet(&self, version: usize, page_num: usize, packet_num: usize, payload: &[u8]) -> bool;
     fn current_page_number(&self) -> usize;
@@ -45,6 +49,7 @@ pub struct ProgramState<'a> {
     //tx_page_vector: Cell<[u8; BIT_VECTOR_SIZE]>,
     tx_page_num: Cell<usize>,
     tx_page: TakeCell<'static, [u8; PAGE_SIZE]>,  // Page
+    tx_page_is_stale: Cell<bool>,
 
     //rx_page_vector: Cell<[u8; BIT_VECTOR_SIZE]>,
     rx_largest_packet: Cell<usize>, // Change to bitvector eventually
@@ -71,6 +76,7 @@ impl<'a> ProgramState<'a> {
 
             tx_page_num: Cell::new(0),
             tx_page: TakeCell::new(tx_page),
+            tx_page_is_stale: Cell::new(false),
 
             rx_largest_packet: Cell::new(0),
             rx_page_num: Cell::new(0),
@@ -127,6 +133,17 @@ impl<'a> DelugeFlashClient for ProgramState<'a> {
 }
 
 impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
+    // TODO: Note that this is slightly dangerous, as the tx_page buffer will
+    // now be stale. Even though we go and fetch it, we still have a race
+    // condition here -> should probably move "waiting" state tracking into
+    // this level
+    fn updated_application(&self, new_version: usize, page_count: usize) {
+        self.version.set(new_version);
+        // Minus one here since rx_page_num is 0-indexed
+        self.rx_page_num.set(page_count-1);
+        self.tx_page_is_stale.set(true);
+    }
+
     fn received_new_version(&self, version: usize) {
         // If we receive a data packet with a greater version than us and it is
         // the first page, reset our reception state and start receiving the
@@ -217,8 +234,10 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         }
 
         // If the page is a different page than the one we currently have, need
-        // to asynchronously read from flash
-        if page_num != self.tx_page_num.get() {
+        // to asynchronously read from flash. Note that the is_stale variable
+        // is only set when we manually force an update by calling
+        // updated_application
+        if self.tx_page_is_stale.get() || page_num != self.tx_page_num.get() {
             match self.flash_driver.get_page(page_num) {
                 ReturnCode::SUCCESS => {
                     // Set state for request

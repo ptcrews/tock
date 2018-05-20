@@ -5,7 +5,7 @@
 extern crate capsules;
 extern crate compiler_builtins;
 #[allow(unused_imports)]
-#[macro_use(debug, debug_gpio, static_init)]
+#[macro_use(debug, debug_gpio, static_init, storage_volume)]
 extern crate kernel;
 extern crate sam4l;
 
@@ -556,6 +556,9 @@ pub unsafe fn reset_handler() {
 
     let mut chip = sam4l::chip::Sam4l::new();
 
+    // TODO: Necessary?
+    sam4l::flashcalw::FLASH_CONTROLLER.configure();
+
     // Need to reset the nRF on boot, toggle it's SWDIO
     sam4l::gpio::PB[07].enable();
     sam4l::gpio::PB[07].enable_output();
@@ -584,6 +587,6 @@ pub unsafe fn reset_handler() {
         &mut PROCESSES,
         FAULT_RESPONSE,
     );
-    deluge_test.start();
+    deluge_test.start(true);
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }

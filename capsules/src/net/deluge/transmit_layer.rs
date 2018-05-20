@@ -1,12 +1,7 @@
 use core::cell::Cell;
 use kernel::ReturnCode;
-use kernel::hil::time;
-use kernel::hil::radio;
-use kernel::hil::time::Frequency;
 use kernel::common::take_cell::TakeCell;
 use ieee802154::mac::{RxClient, TxClient};
-use net::sixlowpan::{Sixlowpan, SixlowpanClient};
-use net::sixlowpan_compression::Context;
 use net::ieee802154::{MacAddress, PanID, Header};
 use ieee802154::mac::Mac;
 

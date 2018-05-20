@@ -5,11 +5,8 @@
 
 use core::cell::Cell;
 use core::mem;
-use core::cmp::min;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
-use kernel::common::{List, ListLink, ListNode};
-use kernel::common::take_cell::TakeCell;
 use kernel::ReturnCode;
 use net::stream::{decode_u16, decode_u8};
 use net::stream::{encode_u16, encode_u8, encode_bytes};
@@ -306,6 +303,10 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
             },
             DelugePacketType::RequestForData { version, page_num, packet_num } => {
                 debug!("mt state RequestForData received");
+                if version < self.program_state.current_version_number() as u16 {
+                    // Received inconsistent transmission
+                    self.trickle.received_transmission(false);
+                }
                 // TODO: Handle edge case where packet_num > current_page num
                 // What should we do in that case?
                 if page_num <= self.program_state.current_page_number() as u16 {
@@ -329,6 +330,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
     }
 
     // TODO: Handle transition to MT if a' < a over \lambda transmissions
+    #[allow(unused_variables)]
     fn rx_state_received_packet<'b>(&self, packet: &'b DelugePacket) {
         match packet.payload_type {
             // TODO: Confirm: Don't do anything for these packets?
@@ -414,7 +416,7 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
 
     fn transmit_packet(&self, deluge_packet: &DelugePacket) {
         debug!("DelugeData: Transmit packet!");
-        let mut send_buf: [u8; program_state::PACKET_SIZE + MAX_HEADER_SIZE] 
+        let mut send_buf: [u8; program_state::PACKET_SIZE + MAX_HEADER_SIZE]
             = [0; program_state::PACKET_SIZE + MAX_HEADER_SIZE];
         // TODO: Check results
         let _encode_result = deluge_packet.encode(&mut send_buf);
@@ -427,7 +429,7 @@ impl<'a, A: time::Alarm + 'a> DelugeProgramStateClient for DelugeData<'a, A> {
     // Need page number, packet number
     fn read_complete(&self, page_num: usize, packet_num: usize, buffer: &[u8]) {
         let mut packet_buf: [u8; program_state::PACKET_SIZE] = [0; program_state::PACKET_SIZE];
-        let payload_type = 
+        let payload_type =
             DelugePacketType::DataPacket { version: self.program_state.current_version_number() as u16,
                                            page_num: page_num as u16,
                                            packet_num: packet_num as u16};
@@ -477,9 +479,9 @@ impl<'a, A: time::Alarm + 'a> TrickleClient for DelugeData<'a, A> {
             // Transmit object profile
             // TODO: Fix the age vector to be correct
             debug!("Sending object profile");
-            DelugePacketType::MaintainObjectProfile { 
+            DelugePacketType::MaintainObjectProfile {
                 version: self.program_state.current_version_number() as u16,
-                age_vector_size: 0 as u16 
+                age_vector_size: 0 as u16
             }
         } else {
             // Transmit object summary

@@ -1,5 +1,5 @@
 use core::cell::Cell;
-use kernel::hil::{time, rng};
+use kernel::hil::rng;
 use kernel::hil::rng::RNG;
 
 // If you really need anything larger than a u64,
