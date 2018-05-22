@@ -112,11 +112,11 @@ impl<'a> DelugeFlashClient for ProgramState<'a> {
         self.tx_page.map(|tx_page| {
             // buffer and tx_page *should* be the same size
             tx_page.copy_from_slice(&buffer[0..PAGE_SIZE]);
-            let offset = packet_num * PAGE_SIZE;
+            let offset = packet_num * PACKET_SIZE;
             self.client.get().map(|client|
                                   client.read_complete(page_num,
                                                        packet_num,
-                                                       &tx_page[offset..offset+PAGE_SIZE]));
+                                                       &tx_page[offset..offset+PACKET_SIZE]));
         }).unwrap(); // Force the panic
     }
 
@@ -238,6 +238,11 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         // is only set when we manually force an update by calling
         // updated_application
         if self.tx_page_is_stale.get() || page_num != self.tx_page_num.get() {
+            // Set state for request: TODO: Remove
+            // The following two lines are only for testing, as we issue a
+            // synchronous callback, and the state is inconsistent
+            self.requested_packet_num.set(packet_num);
+            self.requested_page_num.set(page_num);
             match self.flash_driver.get_page(page_num) {
                 ReturnCode::SUCCESS => {
                     // Set state for request

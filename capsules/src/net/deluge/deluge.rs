@@ -428,6 +428,7 @@ impl<'a, A: time::Alarm + 'a> DelugeProgramStateClient for DelugeData<'a, A> {
     // Read a page for transmit
     // Need page number, packet number
     fn read_complete(&self, page_num: usize, packet_num: usize, buffer: &[u8]) {
+        debug!("Read complete for page: {}, packet num: {}", page_num, packet_num);
         let mut packet_buf: [u8; program_state::PACKET_SIZE] = [0; program_state::PACKET_SIZE];
         let payload_type =
             DelugePacketType::DataPacket { version: self.program_state.current_version_number() as u16,
