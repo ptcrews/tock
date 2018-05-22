@@ -104,7 +104,7 @@ impl<'a, A: time::Alarm + 'a> DelugeStateTest<'a, A> {
             flash_client: Cell::new(None),
             buffer: TakeCell::new(buffer),
 
-            test_number: Cell::new(0),
+            test_number: Cell::new(1),
             is_sender: Cell::new(false),
         }
     }
@@ -158,7 +158,8 @@ impl<'a, A: time::Alarm + 'a> DelugeFlashState<'a> for DelugeStateTest<'a, A> {
         debug!("Page completed: {}", page_num);
         let offset = page_num * program_state::PAGE_SIZE;
         self.buffer.map(|buffer| {
-            buffer[offset..offset+program_state::PAGE_SIZE].copy_from_slice(completed_page);
+            buffer[offset..offset+program_state::PAGE_SIZE]
+                .copy_from_slice(&completed_page[..program_state::PAGE_SIZE]);
         });
         self.flash_client.get().map(|flash_client| flash_client.write_complete());
         ReturnCode::SUCCESS

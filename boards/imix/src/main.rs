@@ -535,7 +535,7 @@ pub unsafe fn reset_handler() {
         capsules::virtual_flash::MuxFlash::new(&sam4l::flashcalw::FLASH_CONTROLLER));
     hil::flash::HasClient::set_client(&sam4l::flashcalw::FLASH_CONTROLLER, mux_flash);
 
-    let deluge_test = deluge_test::initialize_all(radio_mac, mux_alarm, mux_flash);
+    let deluge_state_test = deluge_state_test::initialize_all(radio_mac, mux_alarm);
 
     let imix = Imix {
         console: console,
@@ -589,6 +589,6 @@ pub unsafe fn reset_handler() {
         &mut PROCESSES,
         FAULT_RESPONSE,
     );
-    deluge_test.start(true);
+    deluge_state_test.start(true);
     kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
 }

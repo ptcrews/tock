@@ -111,12 +111,12 @@ impl<'a> DelugeFlashClient for ProgramState<'a> {
         // TODO: The tx_page should **REALLY** be here
         self.tx_page.map(|tx_page| {
             // buffer and tx_page *should* be the same size
-            tx_page.copy_from_slice(&buffer[0..PACKET_SIZE]);
-            let offset = packet_num * PACKET_SIZE;
+            tx_page.copy_from_slice(&buffer[0..PAGE_SIZE]);
+            let offset = packet_num * PAGE_SIZE;
             self.client.get().map(|client|
                                   client.read_complete(page_num,
                                                        packet_num,
-                                                       &tx_page[offset..offset+PACKET_SIZE]));
+                                                       &tx_page[offset..offset+PAGE_SIZE]));
         }).unwrap(); // Force the panic
     }
 
