@@ -1,9 +1,6 @@
 extern crate sam4l;
-use capsules;
-use capsules::rng::SimpleRng;
 use capsules::ieee802154::mac::{Mac, TxClient, RxClient};
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
-use capsules::net::deluge::trickle;
 use capsules::net::deluge::trickle::{Trickle, TrickleData, TrickleClient};
 use kernel::common::take_cell::TakeCell;
 use kernel::returncode::ReturnCode;
@@ -135,7 +132,7 @@ impl<'a> TrickleClient for TrickleTest<'a> {
 }
 
 impl<'a> RxClient for TrickleTest<'a> {
-    fn receive<'b>(&self, buf: &'b [u8], header: Header<'b>, data_offset: usize, data_len: usize) {
+    fn receive<'b>(&self, buf: &'b [u8], _header: Header<'b>, data_offset: usize, _data_len: usize) {
         let buffer = &buf[data_offset..];
         debug!("Received packet!");
         if self.is_packet_valid(buffer) {
@@ -146,7 +143,7 @@ impl<'a> RxClient for TrickleTest<'a> {
 }
 
 impl<'a> TxClient for TrickleTest<'a> {
-    fn send_done(&self, tx_buf: &'static mut [u8], _acked: bool, result: ReturnCode) {
+    fn send_done(&self, tx_buf: &'static mut [u8], _acked: bool, _result: ReturnCode) {
         self.tx_buf.replace(tx_buf);
     }
 }
