@@ -35,6 +35,8 @@ mod lowpan_frag_dummy;
 mod trickle_test;
 #[allow(dead_code)]
 mod deluge_test;
+#[allow(dead_code)]
+mod deluge_state_test;
 
 #[allow(dead_code)]
 mod power;
