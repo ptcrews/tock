@@ -15,9 +15,11 @@ pub trait DelugeProgramState<'a> {
 
     fn received_new_version(&self, version: usize);
     fn receive_packet(&self, version: usize, page_num: usize, packet_num: usize, payload: &[u8]) -> bool;
-    fn current_page_number(&self) -> usize;
     fn current_version_number(&self) -> usize;
+    fn current_page_number(&self) -> usize;
+    fn next_page_number(&self) -> usize;
     fn current_packet_number(&self) -> usize;
+    fn next_packet_number(&self) -> usize;
     // Result return asynchronously
     fn get_requested_packet(&self, page_num: usize, packet_num: usize) -> bool;
     fn set_client(&self, client: &'a DelugeProgramStateClient);
@@ -47,14 +49,15 @@ pub struct ProgramState<'a> {
     requested_page_num: Cell<usize>,
 
     //tx_page_vector: Cell<[u8; BIT_VECTOR_SIZE]>,
-    tx_page_num: Cell<usize>,
+    tx_page_num: Cell<Option<usize>>,
     tx_page: TakeCell<'static, [u8; PAGE_SIZE]>,  // Page
-    tx_page_is_stale: Cell<bool>,
 
     //rx_page_vector: Cell<[u8; BIT_VECTOR_SIZE]>,
     rx_largest_packet: Cell<usize>, // Change to bitvector eventually
     rx_page_num: Cell<usize>,       // Also largest page num ready for transfer
     rx_page: TakeCell<'static, [u8; PAGE_SIZE]>,  // Page
+
+    total_page_count: Cell<usize>,
 
     flash_driver: &'a DelugeFlashState<'a>,
     client: Cell<Option<&'a DelugeProgramStateClient>>,
@@ -74,13 +77,16 @@ impl<'a> ProgramState<'a> {
             requested_packet_num: Cell::new(0),
             requested_page_num: Cell::new(0),
 
-            tx_page_num: Cell::new(0),
+            tx_page_num: Cell::new(None),
             tx_page: TakeCell::new(tx_page),
-            tx_page_is_stale: Cell::new(false),
 
+            // NOTE: The rx_largest_packet *is not* zero-indexed; a value
+            // of 0 means we have not received *any* packets
             rx_largest_packet: Cell::new(0),
             rx_page_num: Cell::new(0),
             rx_page: TakeCell::new(rx_page),
+
+            total_page_count: Cell::new(0),
 
             flash_driver: flash_driver,
             client: Cell::new(None),
@@ -88,6 +94,9 @@ impl<'a> ProgramState<'a> {
     }
 
     fn page_completed(&self) -> ReturnCode {
+        // TODO: Remove after testing
+        self.rx_page_num.set(self.rx_page_num.get() + 1);
+        self.rx_largest_packet.set(0);
         let ret_code = self.rx_page.map(|rx_page|
                                         self.flash_driver.page_completed(self.rx_page_num.get(), rx_page)
                                        ).unwrap_or(ReturnCode::ENOMEM);
@@ -107,12 +116,12 @@ impl<'a> DelugeFlashClient for ProgramState<'a> {
         let packet_num = self.requested_packet_num.get();
         let page_num = self.requested_page_num.get();
         // Update tx_page_num here
-        self.tx_page_num.set(page_num);
+        self.tx_page_num.set(Some(page_num));
         // TODO: The tx_page should **REALLY** be here
         self.tx_page.map(|tx_page| {
             // buffer and tx_page *should* be the same size
             tx_page.copy_from_slice(&buffer[0..PAGE_SIZE]);
-            let offset = packet_num * PACKET_SIZE;
+            let offset = (packet_num - 1) * PACKET_SIZE;
             self.client.get().map(|client|
                                   client.read_complete(page_num,
                                                        packet_num,
@@ -141,7 +150,11 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         self.version.set(new_version);
         // Minus one here since rx_page_num is 0-indexed
         self.rx_page_num.set(page_count-1);
-        self.tx_page_is_stale.set(true);
+        // Since this is *not* zero-indexed, we leave it here
+        self.rx_largest_packet.set(PAGE_SIZE/PACKET_SIZE);
+        // Invalidate the tx_page here
+        self.tx_page_num.set(None);
+        self.total_page_count.set(page_count);
     }
 
     fn received_new_version(&self, version: usize) {
@@ -151,7 +164,7 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         if version > self.version.get() {
             self.version.set(version);
             // Reset TX state
-            self.tx_page_num.set(0);
+            self.tx_page_num.set(None);
             // Reset RX state
             self.rx_largest_packet.set(0);
             self.rx_page_num.set(0);
@@ -170,7 +183,7 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
             debug!("ProgramState: new version");
             self.received_new_version(version);
         }
-        let offset = packet_num * PACKET_SIZE;
+        let offset = (packet_num - 1) * PACKET_SIZE;
         if offset + payload.len() > PAGE_SIZE {
             // TODO: Error
             // Packet too large
@@ -185,7 +198,9 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
             return false;
         }
         self.rx_largest_packet.set(packet_num);
-        self.rx_page.map(|page| page[offset..].copy_from_slice(payload));
+        self.rx_page.map(|page| {
+            page[offset..offset+PACKET_SIZE].copy_from_slice(&payload[0..PACKET_SIZE])
+        });
 
         // TODO: Mark complete
         if packet_num * PACKET_SIZE == PAGE_SIZE {
@@ -202,12 +217,20 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         true
     }
 
+    fn next_page_number(&self) -> usize {
+        self.rx_page_num.get()
+    }
+
     fn current_page_number(&self) -> usize {
         self.rx_page_num.get()
     }
 
     fn current_version_number(&self) -> usize {
         self.version.get()
+    }
+
+    fn next_packet_number(&self) -> usize {
+        self.rx_largest_packet.get() + 1
     }
 
     fn current_packet_number(&self) -> usize {
@@ -217,8 +240,9 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
 
     // TODO: Make this an asynchrounous request to the flash layer
     // Make all retrieved pages be passed via the asynch interface
+    // NOTE: packet_num here is 1-indexed, as we treat it as the largest
+    // byte the receiver has received
     fn get_requested_packet(&self, page_num: usize, packet_num: usize) -> bool {
-        debug!("Get requested packet: {}", packet_num);
         // If we haven't received the latest page
         // NOTE: This is absolutely crucial to the correctness of the algorithm,
         // as we can receive in any state - if we attempt to transmit while
@@ -228,7 +252,8 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         }
 
         // TODO: Check for specific length
-        let offset = packet_num * PACKET_SIZE;
+        let offset = (packet_num - 1)* PACKET_SIZE;
+        debug!("Get requested packet: {} as offset: {}", packet_num, offset);
         if offset + PACKET_SIZE > PAGE_SIZE {
             return false;
         }
@@ -237,7 +262,7 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         // to asynchronously read from flash. Note that the is_stale variable
         // is only set when we manually force an update by calling
         // updated_application
-        if self.tx_page_is_stale.get() || page_num != self.tx_page_num.get() {
+        if self.tx_page_num.get().map_or(true, |tx_page_num| tx_page_num != page_num) {
             // Set state for request: TODO: Remove
             // The following two lines are only for testing, as we issue a
             // synchronous callback, and the state is inconsistent

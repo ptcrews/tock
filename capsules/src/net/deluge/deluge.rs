@@ -172,11 +172,6 @@ enum DelugeState {
     Maintenance,
     Transmit,
     Receive,
-    // These two states encode the fact that
-    // we may be waiting for the flash to respond
-    // for a transmit or receive call
-    RxPageWait,
-    TxPageWait,
 }
 
 pub struct DelugeData<'a, A: time::Alarm + 'a> {
@@ -188,6 +183,7 @@ pub struct DelugeData<'a, A: time::Alarm + 'a> {
 
     program_state: &'a DelugeProgramState<'a>,
     state: Cell<DelugeState>,
+    flash_txn_busy: Cell<bool>,
 
     // Other
     deluge_transmit_layer: &'a DelugeTransmit<'a>,
@@ -204,11 +200,12 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
             received_old_v: Cell::new(false),
             obj_update_count: Cell::new(0),
             // TODO: Initialize these to max?
-            last_page_req_time: Cell::new(0),
-            data_packet_recv_time: Cell::new(0),
+            last_page_req_time: Cell::new(usize::max_value()),
+            data_packet_recv_time: Cell::new(usize::max_value()),
 
             state: Cell::new(DelugeState::Maintenance),
             program_state: program_state,
+            flash_txn_busy: Cell::new(false),
 
             deluge_transmit_layer: transmit_layer,
             trickle: trickle,
@@ -230,10 +227,6 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
             },
             DelugeState::Receive => {
                 self.rx_state_reset_timer();
-            },
-            DelugeState::RxPageWait => {
-            },
-            DelugeState::TxPageWait => {
             },
         }
     }
@@ -387,11 +380,12 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
 
     fn tx_state_received_request(&self, page_num: u16, packet_num: u16) {
         debug!("Tx received request");
+        self.flash_txn_busy.set(true);
         // This issues an asynchronous callback
         // TODO: Make all page requests go through the asynch callback
-        if self.program_state.get_requested_packet(page_num as usize,
-                                                   packet_num as usize) {
-            self.transition_state(DelugeState::TxPageWait);
+        if !self.program_state.get_requested_packet(page_num as usize,
+                                                    packet_num as usize) {
+            self.flash_txn_busy.set(false);
         }
     }
 
@@ -403,14 +397,15 @@ impl<'a, A: time::Alarm + 'a> DelugeData<'a, A> {
                                      payload: &[u8]) {
         // TODO: Check CRC
         debug!("Received data packet");
+        self.flash_txn_busy.set(true);
         // NOTE: If we receive an invalid packet here, we just drop it
         // and don't return an error - this should probably be changed
-        if self.program_state.receive_packet(version as usize,
+        if !self.program_state.receive_packet(version as usize,
                                              page_num as usize,
                                              packet_num as usize,
                                              payload) {
             // TODO: Make all calls to receive_packet asynchronous
-            self.transition_state(DelugeState::RxPageWait);
+            self.flash_txn_busy.set(false);
         }
     }
 
@@ -429,6 +424,7 @@ impl<'a, A: time::Alarm + 'a> DelugeProgramStateClient for DelugeData<'a, A> {
     // Need page number, packet number
     fn read_complete(&self, page_num: usize, packet_num: usize, buffer: &[u8]) {
         debug!("Read complete for page: {}, packet num: {}", page_num, packet_num);
+        self.flash_txn_busy.set(false);
         let mut packet_buf: [u8; program_state::PACKET_SIZE] = [0; program_state::PACKET_SIZE];
         let payload_type =
             DelugePacketType::DataPacket { version: self.program_state.current_version_number() as u16,
@@ -441,6 +437,7 @@ impl<'a, A: time::Alarm + 'a> DelugeProgramStateClient for DelugeData<'a, A> {
 
     // Must have received a packet
     fn write_complete(&self, page_completed: bool) {
+        self.flash_txn_busy.set(false);
         if page_completed && self.state.get() == DelugeState::Receive {
             // If we completed a page and are in the receive state, transition to mt
             self.transition_state(DelugeState::Maintenance);
@@ -458,8 +455,8 @@ impl<'a, A: time::Alarm + 'a> time::Client for DelugeData<'a, A> {
             let payload_type = DelugePacketType::RequestForData {
                 version: self.program_state.current_version_number() as u16,
                 // TODO: This will cause problems if we want the *next* page
-                page_num: self.program_state.current_page_number() as u16 + 1,
-                packet_num: self.program_state.current_packet_number() as u16 + 1,
+                page_num: self.program_state.next_page_number() as u16,
+                packet_num: self.program_state.next_packet_number() as u16,
             };
             let mut deluge_packet = DelugePacket::new(&[]);
             deluge_packet.payload_type = payload_type;
@@ -505,6 +502,10 @@ impl<'a, A: time::Alarm + 'a> TrickleClient for DelugeData<'a, A> {
 
 impl<'a, A: time::Alarm + 'a> DelugeRxClient for DelugeData<'a, A> {
     fn receive(&self, buf: &[u8]) {
+        // If we are currently busy, do nothing
+        if self.flash_txn_busy.get() {
+            return;
+        }
         // TODO: Remove unwrap
         let (_, packet) = DelugePacket::decode(buf).done().unwrap();
         match self.state.get() {
@@ -519,9 +520,6 @@ impl<'a, A: time::Alarm + 'a> DelugeRxClient for DelugeData<'a, A> {
             DelugeState::Transmit => {
                 debug!("Received in tx state");
                 self.tx_state_received_packet(&packet);
-            },
-            DelugeState::RxPageWait | DelugeState::TxPageWait => {
-                // No action
             },
         }
     }
