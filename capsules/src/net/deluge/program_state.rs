@@ -95,15 +95,17 @@ impl<'a> ProgramState<'a> {
 
     fn page_completed(&self) -> ReturnCode {
         // TODO: Remove after testing
-        self.rx_page_num.set(self.rx_page_num.get() + 1);
+        let old_page_num = self.rx_page_num.get();
+        let old_packet_num = self.rx_largest_packet.get();
+        self.rx_page_num.set(old_page_num + 1);
         self.rx_largest_packet.set(0);
         let ret_code = self.rx_page.map(|rx_page|
-                                        self.flash_driver.page_completed(self.rx_page_num.get(), rx_page)
+                                        self.flash_driver.page_completed(old_page_num, rx_page)
                                        ).unwrap_or(ReturnCode::ENOMEM);
-        if ret_code == ReturnCode::SUCCESS {
+        if ret_code != ReturnCode::SUCCESS {
             // TODO: Should these be here, or in the callback?
-            self.rx_page_num.set(self.rx_page_num.get() + 1);
-            self.rx_largest_packet.set(0);
+            self.rx_page_num.set(old_page_num);
+            self.rx_largest_packet.set(old_packet_num);
         }
         ret_code
     }
@@ -183,18 +185,25 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
             debug!("ProgramState: new version");
             self.received_new_version(version);
         }
+        if payload.len() < PACKET_SIZE {
+            // Payload not large enough
+            return false;
+        }
         let offset = (packet_num - 1) * PACKET_SIZE;
-        if offset + payload.len() > PAGE_SIZE {
+        if offset + PACKET_SIZE > PAGE_SIZE {
             // TODO: Error
-            // Packet too large
+            // Packet out of bounds
+            debug!("Packet out of bounds");
             return false;
         }
         if self.rx_page_num.get() != page_num {
             // TODO: Error
+            debug!("Wrong page number");
             return false;
         }
         if self.rx_largest_packet.get() + 1 != packet_num {
             // TODO: Error
+            debug!("Out of order reception");
             return false;
         }
         self.rx_largest_packet.set(packet_num);
@@ -208,8 +217,10 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
             // receive the callback asynchronously
             // TODO: Should make this entire function return ReturnCode
             if self.page_completed() == ReturnCode::SUCCESS {
+                debug!("Page completed successfully!");
                 return true;
             } else {
+                debug!("Page completed unsuccessfully!");
                 return false;
             }
         }
@@ -284,6 +295,7 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         }
 
         // We have the page in our buffer
+        debug!("Didn't need to read new page");
         self.tx_page.map(|tx_page| {
             self.client.get().map(|client|
                                   client.read_complete(page_num,
