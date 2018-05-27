@@ -151,9 +151,9 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
     fn updated_application(&self, new_version: usize, page_count: usize) {
         self.version.set(new_version);
         // Minus one here since rx_page_num is 0-indexed
-        self.rx_page_num.set(page_count-1);
+        self.rx_page_num.set(page_count);
         // Since this is *not* zero-indexed, we leave it here
-        self.rx_largest_packet.set(PAGE_SIZE/PACKET_SIZE);
+        self.rx_largest_packet.set(0);
         // Invalidate the tx_page here
         self.tx_page_num.set(None);
         self.total_page_count.set(page_count);
