@@ -16,6 +16,9 @@ use sam4l::flashcalw::Sam4lPage;
 use capsules::net::ieee802154::{PanID, MacAddress};
 use kernel::hil::radio;
 use kernel::hil::time;
+use kernel::hil::time::Frequency;
+use kernel::hil::flash::HasClient;
+use kernel::common::take_cell::TakeCell;
 use core::cell::Cell;
 
 pub struct DelugeTest<'a, A: time::Alarm + 'a> {
@@ -26,6 +29,8 @@ pub struct DelugeTest<'a, A: time::Alarm + 'a> {
     flash_region_len: Cell<usize>,
     init_page_number: Cell<usize>,
     is_sender: Cell<bool>,
+    self_flash_client: Cell<Option<&'a DelugeFlashClient>>,
+    alarm: &'a A,
 }
 
 static mut FIRST_PAGE: [u8; program_state::PAGE_SIZE] = [0 as u8; program_state::PAGE_SIZE];
@@ -38,7 +43,9 @@ static mut FLASH_BUFFER: Sam4lPage = Sam4lPage::new();
 const SRC_PAN_ADDR: PanID = 0xABCD;
 const SRC_MAC_ADDR: MacAddress = MacAddress::Short(0xabcd);
 
-const UPDATED_APP_VERSION: usize = 0x1;
+const DELAY_IN_S: u32 = 420;
+
+const UPDATED_APP_VERSION: usize = 0x2;
 
 pub unsafe fn initialize_all(radio_mac: &'static Mac,
                              mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>,
@@ -48,7 +55,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     // Allocate flash storage section
     // NOTE: This macro allocates in 1024-byte chunks; this may not be
     // the same as the number of pages
-    storage_volume!(DELUGE_FLASH_REGION, 32);
+    storage_volume!(DELUGE_FLASH_REGION, 4);
     let deluge_flash_region_addr = (&DELUGE_FLASH_REGION).as_ptr() as usize;
 
     // Allocate DelugeData + appropriate structs
@@ -99,11 +106,20 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     radio_mac.set_receive_client(transmit_layer);
     radio_mac.set_transmit_client(transmit_layer);
     trickle_data.set_client(deluge_data);
+    virtual_flash.set_client(flash_layer);
+
+    let deluge_test_alarm = static_init!(
+        VirtualMuxAlarm<'static, sam4l::ast::Ast>,
+        VirtualMuxAlarm::new(mux_alarm)
+    );
 
     let deluge_test = static_init!(
         DelugeTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
-        DelugeTest::new(deluge_data, program_state, program_state, flash_layer, DELUGE_FLASH_REGION.len())
+        DelugeTest::new(deluge_data, program_state, program_state, flash_layer,
+                        DELUGE_FLASH_REGION.len(), deluge_test_alarm)
     );
+    deluge_test_alarm.set_client(deluge_test);
+    deluge_test.set_self_flash_client(deluge_test);
     program_state.set_client(deluge_data);
 
     // To write initial pages, we set the test suite to be the client initally
@@ -116,7 +132,8 @@ impl<'a, A: time::Alarm + 'a> DelugeTest<'a, A> {
                program_state: &'a DelugeProgramState<'a>,
                flash_client: &'a DelugeFlashClient,
                flash_driver: &'a DelugeFlashState<'a>,
-               flash_region_len: usize) -> DelugeTest<'a, A> {
+               flash_region_len: usize,
+               alarm: &'a A) -> DelugeTest<'a, A> {
         DelugeTest {
             deluge_data: deluge_data,
             program_state: program_state,
@@ -129,6 +146,9 @@ impl<'a, A: time::Alarm + 'a> DelugeTest<'a, A> {
             flash_region_len: Cell::new(flash_region_len),
             init_page_number: Cell::new(0),
             is_sender: Cell::new(false),
+            self_flash_client: Cell::new(None),
+
+            alarm: alarm,
         }
     }
 
@@ -152,12 +172,39 @@ impl<'a, A: time::Alarm + 'a> DelugeTest<'a, A> {
             // TODO: Use an alarm
             let num_pages = self.flash_region_len.get() / program_state::PAGE_SIZE;
             self.program_state.updated_application(UPDATED_APP_VERSION, num_pages);
+        } else {
+            // Set an alarm to check pages later
+            let delta = A::Frequency::frequency() * DELAY_IN_S;
+            let delay = self.alarm.now().wrapping_add(delta);
+            self.alarm.set_alarm(delay);
         }
+    }
+
+    fn set_self_flash_client(&self, self_flash_client: &'a DelugeFlashClient) {
+        self.self_flash_client.set(Some(self_flash_client));
     }
 }
 
 impl<'a, A: time::Alarm + 'a> DelugeFlashClient for DelugeTest<'a, A> {
     fn read_complete(&self, _buffer: &[u8]) {
+        // We are now verifying the different pages
+        for i in 0.._buffer.len() {
+            if _buffer[i] != self.init_page_number.get() as u8 {
+                debug!("Error: Page differs at {}. Should be {} but is {}",
+                       i, self.init_page_number.get(), _buffer[i]);
+                break;
+            }
+        }
+        let num_pages = self.flash_region_len.get() / program_state::PAGE_SIZE;
+        let next_page_number = self.init_page_number.get() + 1;
+        if next_page_number >= num_pages {
+            // We are done!
+            self.flash_driver.set_client(self.flash_client);
+            return;
+        }
+        self.init_page_number.set(next_page_number);
+        let result = self.flash_driver.get_page(next_page_number);
+        debug!("Requested page {} with return value: {:?}", next_page_number, result);
     }
 
     fn write_complete(&self) {
@@ -172,5 +219,16 @@ impl<'a, A: time::Alarm + 'a> DelugeFlashClient for DelugeTest<'a, A> {
         let next_page: [u8; program_state::PAGE_SIZE] = [next_page_number as u8; program_state::PAGE_SIZE];
         let result = self.flash_driver.page_completed(next_page_number, &next_page);
         debug!("Wrote page {} with return value: {:?}", next_page_number, result);
+    }
+}
+
+impl<'a, A: time::Alarm + 'a> time::Client for DelugeTest<'a, A> {
+    fn fired(&self) {
+        debug!("Timer fired");
+        // Set ourselves as the flash client again
+        self.flash_driver.set_client(self.self_flash_client.get().unwrap());
+        self.init_page_number.set(0);
+        let result = self.flash_driver.get_page(0);
+        debug!("Requested page {} with return value: {:?}", 0, result);
     }
 }

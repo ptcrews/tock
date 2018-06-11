@@ -724,6 +724,7 @@ impl FLASHCALW {
             unsafe {
                 use core::ptr;
 
+                debug!("Flashcal: buffer val: {}", buffer[0]);
                 let mut start_buffer: *const u8 = &buffer[0] as *const u8;
                 let mut data_transfered: u32 = 0;
                 while data_transfered < PAGE_SIZE {

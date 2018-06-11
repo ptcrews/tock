@@ -426,6 +426,7 @@ impl<'a, A: time::Alarm + 'a> DelugeProgramStateClient for DelugeData<'a, A> {
         debug!("Read complete for page: {}, packet num: {}", page_num, packet_num);
         self.flash_txn_busy.set(false);
         let mut packet_buf: [u8; program_state::PACKET_SIZE] = [0; program_state::PACKET_SIZE];
+        packet_buf.copy_from_slice(&buffer[0..program_state::PACKET_SIZE]);
         let payload_type =
             DelugePacketType::DataPacket { version: self.program_state.current_version_number() as u16,
                                            page_num: page_num as u16,

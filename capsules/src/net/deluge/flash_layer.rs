@@ -47,13 +47,18 @@ impl<'a, F: hil::flash::Flash + 'a> FlashState<'a, F> {
 
 impl<'a, F: hil::flash::Flash + 'a> hil::flash::Client<F> for FlashState<'a, F> {
     fn read_complete(&self, buffer: &'static mut F::Page, error: hil::flash::Error) {
-        self.client.get().map(|client| client.read_complete(buffer.as_mut()));
+        let mut result_buf: [u8; 512] = [0; 512];
+        for i in 0..buffer.as_mut().len() {
+            result_buf[i] = buffer.as_mut()[i];
+        }
         self.buffer.replace(buffer);
+        self.client.get().map(|client| client.read_complete(&result_buf));
     }
 
     fn write_complete(&self, buffer: &'static mut F::Page, error: hil::flash::Error) {
-        self.client.get().map(|client| client.write_complete());
         self.buffer.replace(buffer);
+        debug!("FlashLayer: Write complete callback");
+        self.client.get().map(|client| client.write_complete());
     }
 
     fn erase_complete(&self, error: hil::flash::Error) {
@@ -77,7 +82,10 @@ impl<'a, F: hil::flash::Flash + 'a> DelugeFlashState<'a> for FlashState<'a, F> {
             return ReturnCode::EBUSY;
         }
         let buffer = self.buffer.take().unwrap();
-        buffer.as_mut().copy_from_slice(completed_page);
+        for i in 0..buffer.as_mut().len() {
+            buffer.as_mut()[i] = completed_page[i];
+        }
+        debug!("FLASH LAYER****: page {}, buffer {}", completed_page[0], buffer.as_mut()[0]);
         self.flash_driver.write_page(self.num_pages_offset.get() + page_num, buffer);
         ReturnCode::SUCCESS
     }
