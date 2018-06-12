@@ -46,17 +46,22 @@ const SRC_MAC_ADDR: MacAddress = MacAddress::Short(0xabcd);
 const DELAY_IN_S: u32 = 420;
 
 const UPDATED_APP_VERSION: usize = 0x2;
-storage_volume!(DELUGE_FLASH_REGION, 30);
+// Allocate flash storage section
+// NOTE: This macro allocates in 1024-byte chunks; this may not be
+// the same as the number of pages
+// Allocates 10 * 1024 bytes = 10240 bytes
+storage_volume!(DELUGE_FLASH_REGION, 10);
 
 pub unsafe fn initialize_all(radio_mac: &'static Mac,
                              mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>,
                              mux_flash: &'static MuxFlash<'static, sam4l::flashcalw::FLASHCALW>)
         -> &'static DelugeTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {
 
-    // Allocate flash storage section
-    // NOTE: This macro allocates in 1024-byte chunks; this may not be
-    // the same as the number of pages
-    let deluge_flash_region_addr = (&DELUGE_FLASH_REGION).as_ptr() as usize;
+    let assigned_addr = (&DELUGE_FLASH_REGION).as_ptr() as usize;
+    // This will find the next 512-byte aligned region, since DELUGE_FLASH_REGION
+    // does not appear to be aligned
+    let deluge_flash_region_addr = assigned_addr + (512 - (assigned_addr % 512));
+    let flash_region_len = 4096;
 
     // Allocate DelugeData + appropriate structs
 
@@ -79,7 +84,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 
     let flash_layer = static_init!(
         FlashState<'static, capsules::virtual_flash::FlashUser<'static, sam4l::flashcalw::FLASHCALW>>,
-        FlashState::new(virtual_flash, &mut FLASH_BUFFER, deluge_flash_region_addr, DELUGE_FLASH_REGION.len()));
+        FlashState::new(virtual_flash, &mut FLASH_BUFFER, deluge_flash_region_addr, flash_region_len));
 
     let transmit_layer = static_init!(
         DelugeTransmitLayer<'static>,
@@ -116,7 +121,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     let deluge_test = static_init!(
         DelugeTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
         DelugeTest::new(deluge_data, program_state, program_state, flash_layer,
-                        DELUGE_FLASH_REGION.len(), deluge_test_alarm)
+                        flash_region_len, deluge_test_alarm)
     );
     deluge_test_alarm.set_client(deluge_test);
     deluge_test.set_self_flash_client(deluge_test);
@@ -155,7 +160,6 @@ impl<'a, A: time::Alarm + 'a> DelugeTest<'a, A> {
     pub fn start(&self, is_sender: bool) {
         // Really just initializes Trickle
         self.deluge_data.init();
-        debug!("Flash region addr: {:p}", &DELUGE_FLASH_REGION);
 
         self.is_sender.set(is_sender);
 
