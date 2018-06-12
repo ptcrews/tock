@@ -1,26 +1,38 @@
+//! Board file for Imix development platform.
+//!
+//! - <https://github.com/tock/tock/tree/master/boards/imix>
+//! - <https://github.com/tock/imix>
+
 #![no_std]
 #![no_main]
-#![feature(asm, const_fn, lang_items, compiler_builtins_lib, const_cell_new)]
+#![feature(asm, const_fn, lang_items, const_cell_new)]
+#![deny(missing_docs)]
 
 extern crate capsules;
-extern crate compiler_builtins;
 #[allow(unused_imports)]
 #[macro_use(debug, debug_gpio, static_init, storage_volume)]
 extern crate kernel;
+extern crate cortexm4;
 extern crate sam4l;
 
 use capsules::alarm::AlarmDriver;
-use capsules::ieee802154::mac::Mac;
+use capsules::ieee802154::device::MacDevice;
+use capsules::ieee802154::mac::{AwakeMac, Mac};
 use capsules::rf233::RF233;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use capsules::virtual_i2c::{I2CDevice, MuxI2C};
 use capsules::virtual_spi::{MuxSpiMaster, VirtualSpiMasterDevice};
 use kernel::hil;
-use kernel::hil::Controller;
 use kernel::hil::radio;
 use kernel::hil::radio::{RadioConfig, RadioData};
 use kernel::hil::spi::SpiMaster;
+use kernel::hil::symmetric_encryption;
+use kernel::hil::symmetric_encryption::{AES128, AES128CCM};
+use kernel::hil::Controller;
 
+/// Support routines for debugging I/O.
+///
+/// Note: Use of this module will trample any other USART3 configuration.
 #[macro_use]
 pub mod io;
 
@@ -28,15 +40,25 @@ pub mod io;
 #[allow(dead_code)]
 mod i2c_dummy;
 #[allow(dead_code)]
-mod spi_dummy;
+mod icmp_lowpan_test;
 #[allow(dead_code)]
-mod lowpan_frag_dummy;
+mod ipv6_lowpan_test;
+#[allow(dead_code)]
+mod spi_dummy;
 #[allow(dead_code)]
 mod trickle_test;
 #[allow(dead_code)]
 mod deluge_test;
 #[allow(dead_code)]
 mod deluge_state_test;
+#[allow(dead_code)]
+mod udp_lowpan_test;
+
+#[allow(dead_code)]
+mod aes_test;
+
+#[allow(dead_code)]
+mod aes_ccm_test;
 
 #[allow(dead_code)]
 mod power;
@@ -46,16 +68,17 @@ mod power;
 const NUM_PROCS: usize = 2;
 
 // how should the kernel respond when a process faults
-const FAULT_RESPONSE: kernel::process::FaultResponse = kernel::process::FaultResponse::Panic;
+const FAULT_RESPONSE: kernel::procs::FaultResponse = kernel::procs::FaultResponse::Panic;
 
 #[link_section = ".app_memory"]
 static mut APP_MEMORY: [u8; 16384] = [0; 16384];
 
-static mut PROCESSES: [Option<kernel::Process<'static>>; NUM_PROCS] = [None, None];
+static mut PROCESSES: [Option<&'static mut kernel::procs::Process<'static>>; NUM_PROCS] =
+    [None, None];
 
 // Save some deep nesting
 type RF233Device =
-    capsules::rf233::RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>;
+    capsules::rf233::RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::SpiHw>>;
 
 struct Imix {
     console: &'static capsules::console::Console<'static, sam4l::usart::USART>,
@@ -67,7 +90,7 @@ struct Imix {
     adc: &'static capsules::adc::Adc<'static, sam4l::adc::Adc>,
     led: &'static capsules::led::LED<'static, sam4l::gpio::GPIOPin>,
     button: &'static capsules::button::Button<'static, sam4l::gpio::GPIOPin>,
-    spi: &'static capsules::spi::Spi<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
+    spi: &'static capsules::spi::Spi<'static, VirtualSpiMasterDevice<'static, sam4l::spi::SpiHw>>,
     ipc: kernel::ipc::IPC,
     ninedof: &'static capsules::ninedof::NineDof<'static>,
     radio_driver: &'static capsules::ieee802154::RadioDriver<'static>,
@@ -80,6 +103,7 @@ struct Imix {
         'static,
         sam4l::usart::USART,
     >,
+    //nonvolatile_storage: &'static capsules::nonvolatile_storage_driver::NonvolatileStorage<'static>,
 }
 
 // The RF233 radio stack requires our buffers for its SPI operations:
@@ -95,10 +119,16 @@ static mut RF233_BUF: [u8; radio::MAX_BUF_SIZE] = [0x00; radio::MAX_BUF_SIZE];
 static mut RF233_RX_BUF: [u8; radio::MAX_BUF_SIZE] = [0x00; radio::MAX_BUF_SIZE];
 static mut RF233_REG_WRITE: [u8; 2] = [0x00; 2];
 static mut RF233_REG_READ: [u8; 2] = [0x00; 2];
+
 // The RF233 system call interface ("radio") requires one buffer, which it
 // copies application transmissions into or copies out to application buffers
 // for reception.
 static mut RADIO_BUF: [u8; radio::MAX_BUF_SIZE] = [0x00; radio::MAX_BUF_SIZE];
+
+// This buffer is used as an intermediate buffer for AES CCM encryption
+// An upper bound on the required size is 3 * BLOCK_SIZE + radio::MAX_BUF_SIZE
+const CRYPT_SIZE: usize = 3 * symmetric_encryption::AES128_BLOCK_SIZE + radio::MAX_BUF_SIZE;
+static mut CRYPT_BUF: [u8; CRYPT_SIZE] = [0x00; CRYPT_SIZE];
 
 impl kernel::Platform for Imix {
     fn with_driver<F, R>(&self, driver_num: usize, f: F) -> R
@@ -121,6 +151,7 @@ impl kernel::Platform for Imix {
             capsules::usb_user::DRIVER_NUM => f(Some(self.usb_driver)),
             capsules::ieee802154::DRIVER_NUM => f(Some(self.radio_driver)),
             capsules::nrf51822_serialization::DRIVER_NUM => f(Some(self.nrf51822)),
+            //capsules::nonvolatile_storage_driver::DRIVER_NUM => f(Some(self.nonvolatile_storage)),
             kernel::ipc::DRIVER_NUM => f(Some(&self.ipc)),
             _ => f(None),
         }
@@ -128,8 +159,8 @@ impl kernel::Platform for Imix {
 }
 
 unsafe fn set_pin_primary_functions() {
-    use sam4l::gpio::{PA, PB, PC};
     use sam4l::gpio::PeripheralFunction::{A, B, C, E};
+    use sam4l::gpio::{PA, PB, PC};
 
     // Right column: Imix pin name
     // Left  column: SAM4L peripheral function
@@ -194,6 +225,12 @@ unsafe fn set_pin_primary_functions() {
     PC[31].configure(None); //... D2          -- GPIO Pin
 }
 
+/// Reset Handler.
+///
+/// This symbol is loaded into vector table by the SAM4L chip crate.
+/// When the chip first powers on or later does a hard reset, after the core
+/// initializes all the hardware, the address of this function is loaded and
+/// execution begins here.
 #[no_mangle]
 pub unsafe fn reset_handler() {
     sam4l::init();
@@ -223,6 +260,7 @@ pub unsafe fn reset_handler() {
             &sam4l::usart::USART3,
             115200,
             &mut capsules::console::WRITE_BUF,
+            &mut capsules::console::READ_BUF,
             kernel::Grant::create()
         )
     );
@@ -295,23 +333,22 @@ pub unsafe fn reset_handler() {
 
     // Set up an SPI MUX, so there can be multiple clients
     let mux_spi = static_init!(
-        MuxSpiMaster<'static, sam4l::spi::Spi>,
+        MuxSpiMaster<'static, sam4l::spi::SpiHw>,
         MuxSpiMaster::new(&sam4l::spi::SPI)
     );
     sam4l::spi::SPI.set_client(mux_spi);
     sam4l::spi::SPI.init();
-    sam4l::spi::SPI.enable();
 
     // Create a virtualized client for SPI system call interface,
     // then the system call capsule
     let syscall_spi_device = static_init!(
-        VirtualSpiMasterDevice<'static, sam4l::spi::Spi>,
+        VirtualSpiMasterDevice<'static, sam4l::spi::SpiHw>,
         VirtualSpiMasterDevice::new(mux_spi, 3)
     );
 
     // Create the SPI systemc call capsule, passing the client
     let spi_syscalls = static_init!(
-        capsules::spi::Spi<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
+        capsules::spi::Spi<'static, VirtualSpiMasterDevice<'static, sam4l::spi::SpiHw>>,
         capsules::spi::Spi::new(syscall_spi_device)
     );
 
@@ -336,25 +373,23 @@ pub unsafe fn reset_handler() {
     si7021_alarm.set_client(si7021);
     let temp = static_init!(
         capsules::temperature::TemperatureSensor<'static>,
-        capsules::temperature::TemperatureSensor::new(si7021, kernel::Grant::create()),
-        96 / 8
+        capsules::temperature::TemperatureSensor::new(si7021, kernel::Grant::create())
     );
     kernel::hil::sensors::TemperatureDriver::set_client(si7021, temp);
     let humidity = static_init!(
         capsules::humidity::HumiditySensor<'static>,
-        capsules::humidity::HumiditySensor::new(si7021, kernel::Grant::create()),
-        96 / 8
+        capsules::humidity::HumiditySensor::new(si7021, kernel::Grant::create())
     );
     kernel::hil::sensors::HumidityDriver::set_client(si7021, humidity);
 
     // Create a second virtualized SPI client, for the RF233
     let rf233_spi = static_init!(
-        VirtualSpiMasterDevice<'static, sam4l::spi::Spi>,
+        VirtualSpiMasterDevice<'static, sam4l::spi::SpiHw>,
         VirtualSpiMasterDevice::new(mux_spi, 3)
     );
     // Create the RF233 driver, passing its pins and SPI client
-    let rf233: &RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>> = static_init!(
-        RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::Spi>>,
+    let rf233: &RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::SpiHw>> = static_init!(
+        RF233<'static, VirtualSpiMasterDevice<'static, sam4l::spi::SpiHw>>,
         RF233::new(
             rf233_spi,
             &sam4l::gpio::PA[09], // reset
@@ -396,7 +431,7 @@ pub unsafe fn reset_handler() {
             &sam4l::adc::CHANNEL_AD3, // AD2
             &sam4l::adc::CHANNEL_AD4, // AD3
             &sam4l::adc::CHANNEL_AD5, // AD4
-            &sam4l::adc::CHANNEL_AD6  // AD5
+            &sam4l::adc::CHANNEL_AD6, // AD5
         ]
     );
     let adc = static_init!(
@@ -422,7 +457,7 @@ pub unsafe fn reset_handler() {
             &sam4l::gpio::PC[28], // P5
             &sam4l::gpio::PC[27], // P6
             &sam4l::gpio::PC[26], // P7
-            &sam4l::gpio::PA[20]  // P8
+            &sam4l::gpio::PA[20], // P8
         ]
     );
 
@@ -445,7 +480,7 @@ pub unsafe fn reset_handler() {
             (
                 &sam4l::gpio::PC[10],
                 capsules::led::ActivationMode::ActiveHigh
-            )
+            ),
         ]
     );
     let led = static_init!(
@@ -457,12 +492,10 @@ pub unsafe fn reset_handler() {
 
     let button_pins = static_init!(
         [(&'static sam4l::gpio::GPIOPin, capsules::button::GpioMode); 1],
-        [
-            (
-                &sam4l::gpio::PC[24],
-                capsules::button::GpioMode::LowWhenPressed
-            )
-        ]
+        [(
+            &sam4l::gpio::PC[24],
+            capsules::button::GpioMode::LowWhenPressed
+        )]
     );
 
     let button = static_init!(
@@ -481,20 +514,38 @@ pub unsafe fn reset_handler() {
     rf233_spi.set_client(rf233);
     rf233.initialize(&mut RF233_BUF, &mut RF233_REG_WRITE, &mut RF233_REG_READ);
 
-    let rf233_mac = static_init!(
-        capsules::ieee802154::mac::MacDevice<'static, RF233Device>,
-        capsules::ieee802154::mac::MacDevice::new(rf233)
+    let aes_ccm = static_init!(
+        capsules::aes_ccm::AES128CCM<'static, sam4l::aes::Aes<'static>>,
+        capsules::aes_ccm::AES128CCM::new(&sam4l::aes::AES, &mut CRYPT_BUF)
     );
-    rf233.set_transmit_client(rf233_mac);
-    rf233.set_receive_client(rf233_mac, &mut RF233_RX_BUF);
-    rf233.set_config_client(rf233_mac);
+    sam4l::aes::AES.set_client(aes_ccm);
+    sam4l::aes::AES.enable();
+
+    // Keeps the radio on permanently; pass-through layer
+    let awake_mac: &AwakeMac<RF233Device> =
+        static_init!(AwakeMac<'static, RF233Device>, AwakeMac::new(rf233));
+    rf233.set_transmit_client(awake_mac);
+    rf233.set_receive_client(awake_mac, &mut RF233_RX_BUF);
+
+    let mac_device = static_init!(
+        capsules::ieee802154::framer::Framer<
+            'static,
+            AwakeMac<'static, RF233Device>,
+            capsules::aes_ccm::AES128CCM<'static, sam4l::aes::Aes<'static>>,
+        >,
+        capsules::ieee802154::framer::Framer::new(awake_mac, aes_ccm)
+    );
+    aes_ccm.set_client(mac_device);
+    awake_mac.set_transmit_client(mac_device);
+    awake_mac.set_receive_client(mac_device);
+    awake_mac.set_config_client(mac_device);
 
     let mux_mac = static_init!(
         capsules::ieee802154::virtual_mac::MuxMac<'static>,
-        capsules::ieee802154::virtual_mac::MuxMac::new(rf233_mac)
+        capsules::ieee802154::virtual_mac::MuxMac::new(mac_device)
     );
-    rf233_mac.set_transmit_client(mux_mac);
-    rf233_mac.set_receive_client(mux_mac);
+    mac_device.set_transmit_client(mux_mac);
+    mac_device.set_receive_client(mux_mac);
 
     let radio_mac = static_init!(
         capsules::ieee802154::virtual_mac::MacUser<'static>,
@@ -507,8 +558,8 @@ pub unsafe fn reset_handler() {
         capsules::ieee802154::RadioDriver::new(radio_mac, kernel::Grant::create(), &mut RADIO_BUF)
     );
 
-    rf233_mac.set_key_procedure(radio_driver);
-    rf233_mac.set_device_procedure(radio_driver);
+    mac_device.set_key_procedure(radio_driver);
+    mac_device.set_device_procedure(radio_driver);
     radio_mac.set_transmit_client(radio_driver);
     radio_mac.set_receive_client(radio_driver);
     radio_mac.set_pan(0xABCD);
@@ -530,6 +581,9 @@ pub unsafe fn reset_handler() {
         capsules::usb_user::UsbSyscallDriver::new(usb_client, kernel::Grant::create())
     );
 
+    // TODO: Necessary?
+    sam4l::flashcalw::FLASH_CONTROLLER.configure();
+
     let mux_flash = static_init!(
         capsules::virtual_flash::MuxFlash<'static, sam4l::flashcalw::FLASHCALW>,
         capsules::virtual_flash::MuxFlash::new(&sam4l::flashcalw::FLASH_CONTROLLER));
@@ -538,6 +592,33 @@ pub unsafe fn reset_handler() {
     let deluge_state_test = deluge_test::initialize_all(radio_mac,
                                                         mux_alarm,
                                                         mux_flash);
+    /*
+    sam4l::flashcalw::FLASH_CONTROLLER.configure();
+    pub static mut FLASH_PAGEBUFFER: sam4l::flashcalw::Sam4lPage =
+        sam4l::flashcalw::Sam4lPage::new();
+    let nv_to_page = static_init!(
+        capsules::nonvolatile_to_pages::NonvolatileToPages<'static, sam4l::flashcalw::FLASHCALW>,
+        capsules::nonvolatile_to_pages::NonvolatileToPages::new(
+            &mut sam4l::flashcalw::FLASH_CONTROLLER,
+            &mut FLASH_PAGEBUFFER
+        )
+    );
+    hil::flash::HasClient::set_client(&sam4l::flashcalw::FLASH_CONTROLLER, nv_to_page);
+
+    let nonvolatile_storage = static_init!(
+        capsules::nonvolatile_storage_driver::NonvolatileStorage<'static>,
+        capsules::nonvolatile_storage_driver::NonvolatileStorage::new(
+            nv_to_page,
+            kernel::Grant::create(),
+            0x60000, // Start address for userspace accessible region
+            0x20000, // Length of userspace accessible region
+            0,       // Start address of kernel accessible region
+            0,       // Length of kernel accessible region
+            &mut capsules::nonvolatile_storage_driver::BUFFER
+        )
+    );
+    hil::nonvolatile_storage::NonvolatileStorage::set_client(nv_to_page, nonvolatile_storage);
+    */
 
     let imix = Imix {
         console: console,
@@ -556,12 +637,10 @@ pub unsafe fn reset_handler() {
         radio_driver: radio_driver,
         usb_driver: usb_driver,
         nrf51822: nrf_serialization,
+        //nonvolatile_storage: nonvolatile_storage,
     };
 
     let mut chip = sam4l::chip::Sam4l::new();
-
-    // TODO: Necessary?
-    sam4l::flashcalw::FLASH_CONTROLLER.configure();
 
     // Need to reset the nRF on boot, toggle it's SWDIO
     sam4l::gpio::PB[07].enable();
@@ -569,7 +648,7 @@ pub unsafe fn reset_handler() {
     sam4l::gpio::PB[07].clear();
     // minimum hold time is 200ns, ~20ns per instruction, so overshoot a bit
     for _ in 0..10 {
-        kernel::support::nop();
+        cortexm4::support::nop();
     }
     sam4l::gpio::PB[07].set();
 
@@ -585,7 +664,7 @@ pub unsafe fn reset_handler() {
         /// Beginning of the ROM region containing app images.
         static _sapps: u8;
     }
-    kernel::process::load_processes(
+    kernel::procs::load_processes(
         &_sapps as *const u8,
         &mut APP_MEMORY,
         &mut PROCESSES,

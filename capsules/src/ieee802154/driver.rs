@@ -6,11 +6,11 @@
 
 use core::cell::Cell;
 use core::cmp::min;
-use ieee802154::mac;
+use ieee802154::{device, framer};
+use kernel::common::cells::{MapCell, TakeCell};
 use kernel::{AppId, AppSlice, Callback, Driver, Grant, ReturnCode, Shared};
-use kernel::common::take_cell::{MapCell, TakeCell};
 use net::ieee802154::{AddressMode, Header, KeyId, MacAddress, PanID, SecurityLevel};
-use net::stream::{decode_bytes, encode_bytes, SResult, decode_u8, encode_u8};
+use net::stream::{decode_bytes, decode_u8, encode_bytes, encode_u8, SResult};
 
 const MAX_NEIGHBORS: usize = 4;
 const MAX_KEYS: usize = 4;
@@ -168,7 +168,7 @@ impl Default for App {
 
 pub struct RadioDriver<'a> {
     /// Underlying MAC device, possibly multiplexed
-    mac: &'a mac::Mac<'a>,
+    mac: &'a device::MacDevice<'a>,
 
     /// List of (short address, long address) pairs representing IEEE 802.15.4
     /// neighbors.
@@ -193,7 +193,7 @@ pub struct RadioDriver<'a> {
 
 impl<'a> RadioDriver<'a> {
     pub fn new(
-        mac: &'a mac::Mac<'a>,
+        mac: &'a device::MacDevice<'a>,
         grant: Grant<App>,
         kernel_tx: &'static mut [u8],
     ) -> RadioDriver<'a> {
@@ -492,7 +492,7 @@ impl<'a> RadioDriver<'a> {
     }
 }
 
-impl<'a> mac::DeviceProcedure for RadioDriver<'a> {
+impl<'a> framer::DeviceProcedure for RadioDriver<'a> {
     /// Gets the long address corresponding to the neighbor that matches the given
     /// MAC address. If no such neighbor exists, returns `None`.
     fn lookup_addr_long(&self, addr: MacAddress) -> Option<([u8; 8])> {
@@ -508,7 +508,7 @@ impl<'a> mac::DeviceProcedure for RadioDriver<'a> {
     }
 }
 
-impl<'a> mac::KeyProcedure for RadioDriver<'a> {
+impl<'a> framer::KeyProcedure for RadioDriver<'a> {
     /// Gets the key corresponding to the key that matches the given security
     /// level `level` and key ID `key_id`. If no such key matches, returns
     /// `None`.
@@ -532,13 +532,18 @@ impl<'a> Driver for RadioDriver<'a> {
     /// - `2`: Config buffer. Used to contain miscellaneous data associated with
     ///        some commands because the system call parameters / return codes are
     ///        not enough to convey the desired information.
-    fn allow(&self, appid: AppId, allow_num: usize, slice: AppSlice<Shared, u8>) -> ReturnCode {
+    fn allow(
+        &self,
+        appid: AppId,
+        allow_num: usize,
+        slice: Option<AppSlice<Shared, u8>>,
+    ) -> ReturnCode {
         match allow_num {
             0 | 1 | 2 => self.do_with_app(appid, |app| {
                 match allow_num {
-                    0 => app.app_read = Some(slice),
-                    1 => app.app_write = Some(slice),
-                    2 => app.app_cfg = Some(slice),
+                    0 => app.app_read = slice,
+                    1 => app.app_write = slice,
+                    2 => app.app_cfg = slice,
                     _ => {}
                 }
                 ReturnCode::SUCCESS
@@ -553,14 +558,19 @@ impl<'a> Driver for RadioDriver<'a> {
     ///
     /// - `0`: Setup callback for when frame is received.
     /// - `1`: Setup callback for when frame is transmitted.
-    fn subscribe(&self, subscribe_num: usize, callback: Callback) -> ReturnCode {
+    fn subscribe(
+        &self,
+        subscribe_num: usize,
+        callback: Option<Callback>,
+        app_id: AppId,
+    ) -> ReturnCode {
         match subscribe_num {
-            0 => self.do_with_app(callback.app_id(), |app| {
-                app.rx_callback = Some(callback);
+            0 => self.do_with_app(app_id, |app| {
+                app.rx_callback = callback;
                 ReturnCode::SUCCESS
             }),
-            1 => self.do_with_app(callback.app_id(), |app| {
-                app.tx_callback = Some(callback);
+            1 => self.do_with_app(app_id, |app| {
+                app.tx_callback = callback;
                 ReturnCode::SUCCESS
             }),
             _ => ReturnCode::ENOSUPPORT,
@@ -640,12 +650,10 @@ impl<'a> Driver for RadioDriver<'a> {
                 self.mac.set_pan(arg1 as u16);
                 ReturnCode::SUCCESS
             }
-            5 => self.mac.set_channel(arg1 as u8),
-            6 => {
-                // Userspace casts the i8 to a u8 before casting to u32, so this works.
-                self.mac.set_tx_power(arg1 as i8);
-                ReturnCode::SUCCESS
-            }
+            // XXX: Setting channel DEPRECATED by MAC layer channel control
+            5 => ReturnCode::ENOSUPPORT,
+            // XXX: Setting tx power DEPRECATED by MAC layer tx power control
+            6 => ReturnCode::ENOSUPPORT,
             7 => {
                 self.mac.config_commit();
                 ReturnCode::SUCCESS
@@ -668,20 +676,10 @@ impl<'a> Driver for RadioDriver<'a> {
                     value: (pan as usize) + 1,
                 }
             }
-            11 => {
-                // Guarantee that the channel is positive by adding 1
-                let channel = self.mac.get_channel();
-                ReturnCode::SuccessWithValue {
-                    value: (channel as usize) + 1,
-                }
-            }
-            12 => {
-                // Cast the power to unsigned, then ensure it is positive
-                let power = self.mac.get_tx_power() as u8;
-                ReturnCode::SuccessWithValue {
-                    value: (power as usize) + 1,
-                }
-            }
+            // XXX: Getting channel DEPRECATED by MAC layer channel control
+            11 => ReturnCode::ENOSUPPORT,
+            // XXX: Getting tx power DEPRECATED by MAC layer tx power control
+            12 => ReturnCode::ENOSUPPORT,
             13 => {
                 // Guarantee that it is positive by adding 1
                 ReturnCode::SuccessWithValue {
@@ -795,7 +793,7 @@ impl<'a> Driver for RadioDriver<'a> {
     }
 }
 
-impl<'a> mac::TxClient for RadioDriver<'a> {
+impl<'a> device::TxClient for RadioDriver<'a> {
     fn send_done(&self, spi_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
         self.kernel_tx.replace(spi_buf);
         self.current_app.get().map(|appid| {
@@ -826,7 +824,7 @@ fn encode_address(addr: &Option<MacAddress>) -> usize {
     ((AddressMode::from(addr) as usize) << 16) | short_addr_only
 }
 
-impl<'a> mac::RxClient for RadioDriver<'a> {
+impl<'a> device::RxClient for RadioDriver<'a> {
     fn receive<'b>(&self, buf: &'b [u8], header: Header<'b>, data_offset: usize, data_len: usize) {
         self.apps.each(|app| {
             app.app_read.take().as_mut().map(|rbuf| {
