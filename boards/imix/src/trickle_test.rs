@@ -1,9 +1,9 @@
 extern crate sam4l;
-use capsules::ieee802154::mac::{Mac, TxClient, RxClient};
+use capsules::ieee802154::device::{MacDevice, TxClient, RxClient};
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use capsules::net::deluge::trickle::{Trickle, TrickleData, TrickleClient};
-use kernel::common::take_cell::TakeCell;
-use kernel::returncode::ReturnCode;
+use kernel::common::cells::TakeCell;
+use kernel::ReturnCode;
 use capsules::net::ieee802154::{Header, PanID, MacAddress};
 use kernel::hil::radio;
 use core::cell::Cell;
@@ -12,7 +12,7 @@ pub struct TrickleTest<'a> {
     value: Cell<u8>,
     tx_buf: TakeCell<'static, [u8]>,
     trickle: &'a Trickle<'a>,
-    radio: &'a Mac<'a>,
+    radio: &'a MacDevice<'a>,
 }
 
 static mut TX_BUF: [u8; radio::MAX_BUF_SIZE] = [0 as u8; radio::MAX_BUF_SIZE];
@@ -30,7 +30,7 @@ pub const SRC_MAC_ADDR: MacAddress =
 pub const DST_MAC_ADDR: MacAddress =
     MacAddress::Long([0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f]);
 
-pub unsafe fn initialize_all(radio_mac: &'static Mac,
+pub unsafe fn initialize_all(radio_mac: &'static MacDevice,
                              mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
         -> &'static TrickleTest<'static> {
 
@@ -58,7 +58,7 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
 }
 
 impl<'a> TrickleTest<'a> {
-    pub fn new(tx_buf: &'static mut [u8], trickle: &'a Trickle<'a>, radio: &'a Mac<'a>) -> TrickleTest<'a> {
+    pub fn new(tx_buf: &'static mut [u8], trickle: &'a Trickle<'a>, radio: &'a MacDevice<'a>) -> TrickleTest<'a> {
         TrickleTest {
             value: Cell::new(INITIAL_VALUE),
             tx_buf: TakeCell::new(tx_buf),

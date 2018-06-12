@@ -3,7 +3,7 @@
 
 extern crate sam4l;
 use capsules;
-use capsules::ieee802154::mac::Mac;
+use capsules::ieee802154::device::MacDevice;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use capsules::net::deluge::trickle::{Trickle, TrickleData};
 use capsules::net::deluge::deluge::{DelugeData};
@@ -18,7 +18,7 @@ use kernel::hil::radio;
 use kernel::hil::time;
 use kernel::hil::time::Frequency;
 use kernel::hil::flash::HasClient;
-use kernel::common::take_cell::TakeCell;
+use kernel::common::cells::TakeCell;
 use core::cell::Cell;
 
 pub struct DelugeTest<'a, A: time::Alarm + 'a> {
@@ -52,7 +52,7 @@ const UPDATED_APP_VERSION: usize = 0x2;
 // Allocates 10 * 1024 bytes = 10240 bytes
 storage_volume!(DELUGE_FLASH_REGION, 10);
 
-pub unsafe fn initialize_all(radio_mac: &'static Mac,
+pub unsafe fn initialize_all(radio_mac: &'static MacDevice,
                              mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>,
                              mux_flash: &'static MuxFlash<'static, sam4l::flashcalw::FLASHCALW>)
         -> &'static DelugeTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {

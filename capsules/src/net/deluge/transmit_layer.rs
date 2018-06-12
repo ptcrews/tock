@@ -1,9 +1,8 @@
 use core::cell::Cell;
 use kernel::ReturnCode;
-use kernel::common::take_cell::TakeCell;
-use ieee802154::mac::{RxClient, TxClient};
+use kernel::common::cells::TakeCell;
+use ieee802154::device::{MacDevice, RxClient, TxClient};
 use net::ieee802154::{MacAddress, PanID, Header};
-use ieee802154::mac::Mac;
 
 pub trait DelugeTransmit<'a> {
     // TODO: Add destination eventually
@@ -26,7 +25,7 @@ pub struct DelugeTransmitLayer<'a> {
     tx_buffer: TakeCell<'static, [u8]>,
     tx_client: Cell<Option<&'a DelugeTxClient>>,
     rx_client: Cell<Option<&'a DelugeRxClient>>,
-    radio: &'a Mac<'a>,
+    radio: &'a MacDevice<'a>,
 }
 
 const DST_MAC_ADDR: MacAddress = MacAddress::Short(0xffff);
@@ -91,7 +90,7 @@ impl<'a> DelugeTransmitLayer<'a> {
     pub fn new(src_addr: MacAddress,
                src_pan: PanID,
                tx_buffer: &'static mut [u8],
-               radio: &'a Mac<'a>) -> DelugeTransmitLayer<'a> {
+               radio: &'a MacDevice<'a>) -> DelugeTransmitLayer<'a> {
         DelugeTransmitLayer {
             src_addr: Cell::new(src_addr),
             src_pan: Cell::new(src_pan),

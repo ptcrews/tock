@@ -5,8 +5,8 @@
 /// errors and lower-layer stuff + mux the flash layer easily
 use core::cell::Cell;
 use kernel::hil;
-use kernel::common::take_cell::TakeCell;
-use kernel::returncode::ReturnCode;
+use kernel::common::cells::TakeCell;
+use kernel::ReturnCode;
 
 pub trait DelugeFlashClient {
     fn read_complete(&self, buffer: &[u8]);

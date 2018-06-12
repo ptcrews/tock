@@ -1,6 +1,6 @@
 use core::cell::Cell;
-use kernel::returncode::ReturnCode;
-use kernel::common::take_cell::TakeCell;
+use kernel::ReturnCode;
+use kernel::common::cells::TakeCell;
 use net::deluge::flash_layer::{DelugeFlashClient, DelugeFlashState};
 
 pub trait DelugeProgramStateClient {

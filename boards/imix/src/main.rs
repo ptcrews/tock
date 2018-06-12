@@ -670,6 +670,6 @@ pub unsafe fn reset_handler() {
         &mut PROCESSES,
         FAULT_RESPONSE,
     );
-    deluge_state_test.start(true);
-    kernel::main(&imix, &mut chip, &mut PROCESSES, &imix.ipc);
+    deluge_state_test.start(false);
+    kernel::main(&imix, &mut chip, &mut PROCESSES, Some(&imix.ipc));
 }

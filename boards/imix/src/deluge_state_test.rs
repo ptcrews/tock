@@ -2,7 +2,7 @@
 /// state machine itself to be tested.
 
 extern crate sam4l;
-use capsules::ieee802154::mac::Mac;
+use capsules::ieee802154::device::MacDevice;
 use capsules::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use capsules::net::deluge::trickle::{Trickle, TrickleData};
 use capsules::net::deluge::deluge::{DelugeData};
@@ -14,7 +14,7 @@ use capsules::net::ieee802154::{PanID, MacAddress};
 use kernel::hil::radio;
 use kernel::hil::time;
 use kernel::ReturnCode;
-use kernel::common::take_cell::TakeCell;
+use kernel::common::cells::TakeCell;
 use core::cell::Cell;
 
 pub struct DelugeStateTest<'a, A: time::Alarm + 'a> {
@@ -39,7 +39,7 @@ const SRC_MAC_ADDR: MacAddress = MacAddress::Short(0xabcd);
 
 const UPDATED_APP_VERSION: usize = 0x1;
 
-pub unsafe fn initialize_all(radio_mac: &'static Mac,
+pub unsafe fn initialize_all(radio_mac: &'static MacDevice,
                              mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>)
         -> &'static DelugeStateTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {
 
