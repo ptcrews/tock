@@ -74,6 +74,7 @@ impl<'a> DelugeTransmit<'a> for DelugeTransmitLayer<'a> {
 
 impl<'a> TxClient for DelugeTransmitLayer<'a> {
     fn send_done(&self, tx_buf: &'static mut [u8], _acked: bool, result: ReturnCode) {
+        debug!("SEND DONE CALLED");
         self.tx_buffer.replace(tx_buf);
         self.tx_client.get().map(move |tx_client| tx_client.transmit_done(result));
     }

@@ -16,6 +16,7 @@ use sam4l::flashcalw::Sam4lPage;
 use capsules::net::ieee802154::{PanID, MacAddress};
 use kernel::hil::radio;
 use kernel::hil::time;
+use kernel::hil::time::Client;
 use kernel::hil::time::Frequency;
 use kernel::hil::flash::HasClient;
 use kernel::common::cells::TakeCell;
@@ -200,6 +201,7 @@ impl<'a, A: time::Alarm + 'a> DelugeFlashClient for DelugeTest<'a, A> {
                 break;
             }
         }
+        debug!("DONE VERIFYING PAGE");
         let num_pages = self.flash_region_len.get() / program_state::PAGE_SIZE;
         let next_page_number = self.init_page_number.get() + 1;
         if next_page_number >= num_pages {
@@ -214,16 +216,16 @@ impl<'a, A: time::Alarm + 'a> DelugeFlashClient for DelugeTest<'a, A> {
 
     fn write_complete(&self) {
         let num_pages = self.flash_region_len.get() / program_state::PAGE_SIZE;
-        let next_page_number = self.init_page_number.get() + 1;
-        if next_page_number >= num_pages {
+        let current_page_number = self.init_page_number.get();
+        if current_page_number >= num_pages {
             // We are done initializing the pages
             self.init_done();
             return;
         }
-        self.init_page_number.set(next_page_number);
-        let next_page: [u8; program_state::PAGE_SIZE] = [next_page_number as u8; program_state::PAGE_SIZE];
-        let result = self.flash_driver.page_completed(next_page_number, &next_page);
-        debug!("Wrote page {} with return value: {:?}", next_page_number, result);
+        self.init_page_number.set(current_page_number+1);
+        let current_page: [u8; program_state::PAGE_SIZE] = [current_page_number as u8; program_state::PAGE_SIZE];
+        let result = self.flash_driver.page_completed(current_page_number, &current_page);
+        debug!("Wrote page {} with return value: {:?}", current_page_number, result);
     }
 }
 

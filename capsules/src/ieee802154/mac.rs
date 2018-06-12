@@ -148,6 +148,7 @@ impl<'a, R: radio::Radio + 'a> Mac for AwakeMac<'a, R> {
 
 impl<'a, R: radio::Radio + 'a> radio::TxClient for AwakeMac<'a, R> {
     fn send_done(&self, buf: &'static mut [u8], acked: bool, result: ReturnCode) {
+        debug!("mac.rs: SEND DONE CALLED");
         self.tx_client.get().map(move |c| {
             c.send_done(buf, acked, result);
         });
@@ -167,7 +168,7 @@ impl<'a, R: radio::Radio + 'a> radio::RxClient for AwakeMac<'a, R> {
         if let Some((_, (header, _))) = Header::decode(&buf[radio::PSDU_OFFSET..], false).done() {
             if let Some(dst_addr) = header.dst_addr {
                 addr_match = match dst_addr {
-                    MacAddress::Short(addr) => addr == self.radio.get_address(),
+                    MacAddress::Short(addr) => addr == 0xffff || addr == self.radio.get_address(),
                     MacAddress::Long(long_addr) => long_addr == self.radio.get_address_long(),
                 };
             }

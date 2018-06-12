@@ -93,7 +93,7 @@ struct Imix {
     spi: &'static capsules::spi::Spi<'static, VirtualSpiMasterDevice<'static, sam4l::spi::SpiHw>>,
     ipc: kernel::ipc::IPC,
     ninedof: &'static capsules::ninedof::NineDof<'static>,
-    radio_driver: &'static capsules::ieee802154::RadioDriver<'static>,
+    //radio_driver: &'static capsules::ieee802154::RadioDriver<'static>,
     crc: &'static capsules::crc::Crc<'static, sam4l::crccu::Crccu<'static>>,
     usb_driver: &'static capsules::usb_user::UsbSyscallDriver<
         'static,
@@ -149,7 +149,7 @@ impl kernel::Platform for Imix {
             capsules::ninedof::DRIVER_NUM => f(Some(self.ninedof)),
             capsules::crc::DRIVER_NUM => f(Some(self.crc)),
             capsules::usb_user::DRIVER_NUM => f(Some(self.usb_driver)),
-            capsules::ieee802154::DRIVER_NUM => f(Some(self.radio_driver)),
+            //capsules::ieee802154::DRIVER_NUM => f(Some(self.radio_driver)),
             capsules::nrf51822_serialization::DRIVER_NUM => f(Some(self.nrf51822)),
             //capsules::nonvolatile_storage_driver::DRIVER_NUM => f(Some(self.nonvolatile_storage)),
             kernel::ipc::DRIVER_NUM => f(Some(&self.ipc)),
@@ -540,6 +540,9 @@ pub unsafe fn reset_handler() {
     awake_mac.set_receive_client(mac_device);
     awake_mac.set_config_client(mac_device);
 
+    /* TODO: Strange error if I use the radio_mac instead of mac_device
+     * for Deluge. Silently fails somewhere in the transmit stack, appears
+     * to either loop forever or silently crash (unsure which)
     let mux_mac = static_init!(
         capsules::ieee802154::virtual_mac::MuxMac<'static>,
         capsules::ieee802154::virtual_mac::MuxMac::new(mac_device)
@@ -553,17 +556,9 @@ pub unsafe fn reset_handler() {
     );
     mux_mac.add_user(radio_mac);
 
-    let radio_driver = static_init!(
-        capsules::ieee802154::RadioDriver<'static>,
-        capsules::ieee802154::RadioDriver::new(radio_mac, kernel::Grant::create(), &mut RADIO_BUF)
-    );
-
-    mac_device.set_key_procedure(radio_driver);
-    mac_device.set_device_procedure(radio_driver);
-    radio_mac.set_transmit_client(radio_driver);
-    radio_mac.set_receive_client(radio_driver);
     radio_mac.set_pan(0xABCD);
     radio_mac.set_address(0x1008);
+    */
 
     // Configure the USB controller
     let usb_client = static_init!(
@@ -589,7 +584,7 @@ pub unsafe fn reset_handler() {
         capsules::virtual_flash::MuxFlash::new(&sam4l::flashcalw::FLASH_CONTROLLER));
     hil::flash::HasClient::set_client(&sam4l::flashcalw::FLASH_CONTROLLER, mux_flash);
 
-    let deluge_state_test = deluge_test::initialize_all(radio_mac,
+    let deluge_state_test = deluge_test::initialize_all(mac_device,
                                                         mux_alarm,
                                                         mux_flash);
     /*
@@ -634,7 +629,7 @@ pub unsafe fn reset_handler() {
         spi: spi_syscalls,
         ipc: kernel::ipc::IPC::new(),
         ninedof: ninedof,
-        radio_driver: radio_driver,
+        //radio_driver: radio_driver,
         usb_driver: usb_driver,
         nrf51822: nrf_serialization,
         //nonvolatile_storage: nonvolatile_storage,
@@ -670,6 +665,6 @@ pub unsafe fn reset_handler() {
         &mut PROCESSES,
         FAULT_RESPONSE,
     );
-    deluge_state_test.start(false);
+    deluge_state_test.start(true);
     kernel::main(&imix, &mut chip, &mut PROCESSES, Some(&imix.ipc));
 }
