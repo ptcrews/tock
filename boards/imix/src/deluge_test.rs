@@ -46,6 +46,7 @@ const SRC_MAC_ADDR: MacAddress = MacAddress::Short(0xabcd);
 const DELAY_IN_S: u32 = 420;
 
 const UPDATED_APP_VERSION: usize = 0x2;
+storage_volume!(DELUGE_FLASH_REGION, 30);
 
 pub unsafe fn initialize_all(radio_mac: &'static Mac,
                              mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>,
@@ -55,7 +56,6 @@ pub unsafe fn initialize_all(radio_mac: &'static Mac,
     // Allocate flash storage section
     // NOTE: This macro allocates in 1024-byte chunks; this may not be
     // the same as the number of pages
-    storage_volume!(DELUGE_FLASH_REGION, 4);
     let deluge_flash_region_addr = (&DELUGE_FLASH_REGION).as_ptr() as usize;
 
     // Allocate DelugeData + appropriate structs
@@ -155,6 +155,7 @@ impl<'a, A: time::Alarm + 'a> DelugeTest<'a, A> {
     pub fn start(&self, is_sender: bool) {
         // Really just initializes Trickle
         self.deluge_data.init();
+        debug!("Flash region addr: {:p}", &DELUGE_FLASH_REGION);
 
         self.is_sender.set(is_sender);
 
