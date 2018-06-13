@@ -452,9 +452,12 @@ impl TbfHeader {
 /// not perform sanity or security checking on the structure.
 unsafe fn parse_and_validate_tbf_header(address: *const u8) -> Option<TbfHeader> {
     let version = *(address as *const u16);
+    debug!("In parse and validate tbf header for addr: {:p}", address);
+    debug!("Value: {}", version);
 
     match version {
         1 => {
+            debug!("LoadProcess: Version 1");
             let tbf_header = &*(address as *const TbfHeaderV1);
 
             let checksum = tbf_header.version ^ tbf_header.total_size ^ tbf_header.entry_offset
@@ -475,6 +478,7 @@ unsafe fn parse_and_validate_tbf_header(address: *const u8) -> Option<TbfHeader>
         }
 
         2 => {
+            debug!("LoadProcess: Version 2");
             let tbf_header_base = &*(address as *const TbfHeaderV2Base);
 
             // Some sanity checking. Make sure the header isn't longer than the

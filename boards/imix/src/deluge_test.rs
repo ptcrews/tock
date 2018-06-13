@@ -21,6 +21,7 @@ use kernel::hil::time::Frequency;
 use kernel::hil::flash::HasClient;
 use kernel::common::cells::TakeCell;
 use core::cell::Cell;
+use imix_load_processes;
 
 pub struct DelugeTest<'a, A: time::Alarm + 'a> {
     deluge_data: &'a DelugeData<'a, A>,
@@ -31,6 +32,8 @@ pub struct DelugeTest<'a, A: time::Alarm + 'a> {
     init_page_number: Cell<usize>,
     is_sender: Cell<bool>,
     self_flash_client: Cell<Option<&'a DelugeFlashClient>>,
+    app_flash_ptr: *const u8,
+    deluge_flash_ptr: *const u8,
     alarm: &'a A,
 }
 
@@ -44,25 +47,17 @@ static mut FLASH_BUFFER: Sam4lPage = Sam4lPage::new();
 const SRC_PAN_ADDR: PanID = 0xABCD;
 const SRC_MAC_ADDR: MacAddress = MacAddress::Short(0xabcd);
 
-const DELAY_IN_S: u32 = 420;
+const DELAY_IN_S: u32 = 500; //500; //420;
 
 const UPDATED_APP_VERSION: usize = 0x2;
-// Allocate flash storage section
-// NOTE: This macro allocates in 1024-byte chunks; this may not be
-// the same as the number of pages
-// Allocates 10 * 1024 bytes = 10240 bytes
-storage_volume!(DELUGE_FLASH_REGION, 10);
 
-pub unsafe fn initialize_all(radio_mac: &'static MacDevice,
+pub unsafe fn initialize_all(app_flash_ptr: *const u8,
+                             deluge_flash_region_addr: usize,
+                             flash_region_len: usize,
+                             radio_mac: &'static MacDevice,
                              mux_alarm: &'static MuxAlarm<'static, sam4l::ast::Ast>,
                              mux_flash: &'static MuxFlash<'static, sam4l::flashcalw::FLASHCALW>)
         -> &'static DelugeTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast<'static>>> {
-
-    let assigned_addr = (&DELUGE_FLASH_REGION).as_ptr() as usize;
-    // This will find the next 512-byte aligned region, since DELUGE_FLASH_REGION
-    // does not appear to be aligned
-    let deluge_flash_region_addr = assigned_addr + (512 - (assigned_addr % 512));
-    let flash_region_len = 4096;
 
     // Allocate DelugeData + appropriate structs
 
@@ -119,10 +114,11 @@ pub unsafe fn initialize_all(radio_mac: &'static MacDevice,
         VirtualMuxAlarm::new(mux_alarm)
     );
 
+    let deluge_flash_ptr: *const u8 = deluge_flash_region_addr as *const u8;
     let deluge_test = static_init!(
         DelugeTest<'static, VirtualMuxAlarm<'static, sam4l::ast::Ast>>,
         DelugeTest::new(deluge_data, program_state, program_state, flash_layer,
-                        flash_region_len, deluge_test_alarm)
+                        flash_region_len, app_flash_ptr, deluge_flash_ptr, deluge_test_alarm)
     );
     deluge_test_alarm.set_client(deluge_test);
     deluge_test.set_self_flash_client(deluge_test);
@@ -139,6 +135,8 @@ impl<'a, A: time::Alarm + 'a> DelugeTest<'a, A> {
                flash_client: &'a DelugeFlashClient,
                flash_driver: &'a DelugeFlashState<'a>,
                flash_region_len: usize,
+               app_flash_ptr: *const u8,
+               deluge_flash_ptr: *const u8,
                alarm: &'a A) -> DelugeTest<'a, A> {
         DelugeTest {
             deluge_data: deluge_data,
@@ -155,6 +153,8 @@ impl<'a, A: time::Alarm + 'a> DelugeTest<'a, A> {
             self_flash_client: Cell::new(None),
 
             alarm: alarm,
+            app_flash_ptr: app_flash_ptr,
+            deluge_flash_ptr: deluge_flash_ptr,
         }
     }
 
@@ -189,24 +189,34 @@ impl<'a, A: time::Alarm + 'a> DelugeTest<'a, A> {
     fn set_self_flash_client(&self, self_flash_client: &'a DelugeFlashClient) {
         self.self_flash_client.set(Some(self_flash_client));
     }
+
+    fn reload_processes(&self) {
+        unsafe {
+            imix_load_processes(self.app_flash_ptr);
+        }
+    }
 }
 
 impl<'a, A: time::Alarm + 'a> DelugeFlashClient for DelugeTest<'a, A> {
     fn read_complete(&self, _buffer: &[u8]) {
         // We are now verifying the different pages
-        for i in 0.._buffer.len() {
-            if _buffer[i] != self.init_page_number.get() as u8 {
-                debug!("Error: Page differs at {}. Should be {} but is {}",
-                       i, self.init_page_number.get(), _buffer[i]);
-                break;
-            }
+        let current_page_number = self.init_page_number.get();
+        unsafe {
+            use core::ptr;
+            let app_offset = (current_page_number * program_state::PAGE_SIZE) as isize;
+            let mut_app_ptr: *mut u8 = self.app_flash_ptr.offset(app_offset) as *mut u8;
+            let buf_ptr = &_buffer[0] as *const u8;
+            debug!("Copying to addr: {:p}", mut_app_ptr);
+            ptr::copy(buf_ptr, mut_app_ptr, program_state::PAGE_SIZE);
+            debug!("Values: {}, {}", _buffer[0], *mut_app_ptr);
         }
-        debug!("DONE VERIFYING PAGE");
+        debug!("DONE WRITING APP PAGE");
         let num_pages = self.flash_region_len.get() / program_state::PAGE_SIZE;
-        let next_page_number = self.init_page_number.get() + 1;
+        let next_page_number = current_page_number + 1;
         if next_page_number >= num_pages {
             // We are done!
             self.flash_driver.set_client(self.flash_client);
+            self.reload_processes();
             return;
         }
         self.init_page_number.set(next_page_number);
@@ -223,7 +233,15 @@ impl<'a, A: time::Alarm + 'a> DelugeFlashClient for DelugeTest<'a, A> {
             return;
         }
         self.init_page_number.set(current_page_number+1);
-        let current_page: [u8; program_state::PAGE_SIZE] = [current_page_number as u8; program_state::PAGE_SIZE];
+        let mut current_page: [u8; program_state::PAGE_SIZE] = [0; program_state::PAGE_SIZE];
+        unsafe {
+            use core::ptr;
+            let current_page_ptr: *mut u8 = &mut current_page[0] as *mut u8;
+            let app_offset = (current_page_number * program_state::PAGE_SIZE) as isize;
+            let app_ptr = self.app_flash_ptr.offset(app_offset);
+            ptr::copy(app_ptr, current_page_ptr, program_state::PAGE_SIZE);
+            debug!("WriteComplete: Value: {} at {:p}", current_page[0], app_ptr);
+        }
         let result = self.flash_driver.page_completed(current_page_number, &current_page);
         debug!("Wrote page {} with return value: {:?}", current_page_number, result);
     }

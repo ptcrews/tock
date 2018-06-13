@@ -72,8 +72,7 @@ impl<'a, F: hil::flash::Flash + 'a> DelugeFlashState<'a> for FlashState<'a, F> {
             return ReturnCode::EBUSY;
         }
         let buffer = self.buffer.take().unwrap();
-        self.flash_driver.read_page(self.num_pages_offset.get() + page_num, buffer);
-        ReturnCode::SUCCESS
+        self.flash_driver.read_page(self.num_pages_offset.get() + page_num, buffer)
     }
 
     fn page_completed(&self, page_num: usize, completed_page: &[u8]) -> ReturnCode {

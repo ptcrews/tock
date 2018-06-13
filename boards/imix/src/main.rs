@@ -6,7 +6,7 @@
 #![no_std]
 #![no_main]
 #![feature(asm, const_fn, lang_items, const_cell_new)]
-#![deny(missing_docs)]
+//#![deny(missing_docs)]
 
 extern crate capsules;
 #[allow(unused_imports)]
@@ -72,9 +72,16 @@ const FAULT_RESPONSE: kernel::procs::FaultResponse = kernel::procs::FaultRespons
 
 #[link_section = ".app_memory"]
 static mut APP_MEMORY: [u8; 16384] = [0; 16384];
+static mut SINGLE_APP : [u8; 4096] = [0; 4096];
 
 static mut PROCESSES: [Option<&'static mut kernel::procs::Process<'static>>; NUM_PROCS] =
     [None, None];
+
+// Allocate flash storage section
+// NOTE: This macro allocates in 1024-byte chunks; this may not be
+// the same as the number of pages
+// Allocates 10 * 1024 bytes = 10240 bytes
+storage_volume!(DELUGE_FLASH_REGION, 10);
 
 // Save some deep nesting
 type RF233Device =
@@ -105,6 +112,9 @@ struct Imix {
     >,
     //nonvolatile_storage: &'static capsules::nonvolatile_storage_driver::NonvolatileStorage<'static>,
 }
+
+static mut IMIX_REF: Option<&Imix> = None;
+static mut CHIP_REF: Option<&'static mut sam4l::chip::Sam4l> = None;
 
 // The RF233 radio stack requires our buffers for its SPI operations:
 //
@@ -584,9 +594,36 @@ pub unsafe fn reset_handler() {
         capsules::virtual_flash::MuxFlash::new(&sam4l::flashcalw::FLASH_CONTROLLER));
     hil::flash::HasClient::set_client(&sam4l::flashcalw::FLASH_CONTROLLER, mux_flash);
 
-    let deluge_state_test = deluge_test::initialize_all(mac_device,
+    extern "C" {
+        /// Beginning of the ROM region containing app images.
+        static _sapps: u8;
+    }
+    let is_sender = false;
+    let raw_app_ptr = if is_sender {
+        &_sapps as *const u8
+    } else {
+        &SINGLE_APP as *const u8
+    };
+
+    let assigned_addr = (&DELUGE_FLASH_REGION).as_ptr() as usize;
+    let flash_region_addr = assigned_addr + (512 - (assigned_addr % 512));
+    // This will find the next 512-byte aligned region, since DELUGE_FLASH_REGION
+    // does not appear to be aligned
+    let flash_region_len = 4096;
+    let deluge_state_test = deluge_test::initialize_all(raw_app_ptr,
+                                                        flash_region_addr,
+                                                        flash_region_len,
+                                                        mac_device,
                                                         mux_alarm,
                                                         mux_flash);
+    let flash_region_ptr = raw_app_ptr;
+
+    /*
+    {
+        use core::ptr;
+        ptr::copy(
+    }
+    */
     /*
     sam4l::flashcalw::FLASH_CONTROLLER.configure();
     pub static mut FLASH_PAGEBUFFER: sam4l::flashcalw::Sam4lPage =
@@ -655,16 +692,17 @@ pub unsafe fn reset_handler() {
     rf233.start();
 
     debug!("Initialization complete. Entering main loop");
-    extern "C" {
-        /// Beginning of the ROM region containing app images.
-        static _sapps: u8;
-    }
+    deluge_state_test.start(is_sender);
+    kernel::main(&imix, &mut chip, &mut PROCESSES, Some(&imix.ipc));
+
+}
+
+pub unsafe fn imix_load_processes(process_region_ptr: *const u8) {
     kernel::procs::load_processes(
-        &_sapps as *const u8,
+        //&_sapps as *const u8,
+        process_region_ptr,
         &mut APP_MEMORY,
         &mut PROCESSES,
         FAULT_RESPONSE,
     );
-    deluge_state_test.start(true);
-    kernel::main(&imix, &mut chip, &mut PROCESSES, Some(&imix.ipc));
 }

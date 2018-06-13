@@ -40,12 +40,12 @@ pub unsafe fn do_process<P: Platform, C: Chip>(
 
         match process.current_state() {
             process::State::Running => {
-                process.setup_mpu(chip.mpu());
-                chip.mpu().enable_mpu();
+                //process.setup_mpu(chip.mpu());
+                //chip.mpu().enable_mpu();
                 systick.enable(true);
                 process.switch_to();
                 systick.enable(false);
-                chip.mpu().disable_mpu();
+                //chip.mpu().disable_mpu();
             }
             process::State::Yielded => match process.dequeue_task() {
                 None => break,

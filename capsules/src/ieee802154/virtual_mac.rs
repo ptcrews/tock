@@ -44,7 +44,6 @@ pub struct MuxMac<'a> {
 
 impl<'a> device::TxClient for MuxMac<'a> {
     fn send_done(&self, spi_buf: &'static mut [u8], acked: bool, result: ReturnCode) {
-        debug!("virtual_mac.rs: SEND DONE CALLED");
         self.inflight.get().map(move |user| {
             self.inflight.set(None);
             user.send_done(spi_buf, acked, result);
