@@ -57,7 +57,6 @@ impl<'a, F: hil::flash::Flash + 'a> hil::flash::Client<F> for FlashState<'a, F> 
 
     fn write_complete(&self, buffer: &'static mut F::Page, error: hil::flash::Error) {
         self.buffer.replace(buffer);
-        debug!("FlashLayer: Write complete callback");
         self.client.get().map(|client| client.write_complete());
     }
 
@@ -84,7 +83,6 @@ impl<'a, F: hil::flash::Flash + 'a> DelugeFlashState<'a> for FlashState<'a, F> {
         for i in 0..buffer.as_mut().len() {
             buffer.as_mut()[i] = completed_page[i];
         }
-        debug!("FLASH LAYER****: page {}, buffer {}", completed_page[0], buffer.as_mut()[0]);
         self.flash_driver.write_page(self.num_pages_offset.get() + page_num, buffer);
         ReturnCode::SUCCESS
     }

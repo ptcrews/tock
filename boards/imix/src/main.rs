@@ -609,7 +609,7 @@ pub unsafe fn reset_handler() {
     let flash_region_addr = assigned_addr + (512 - (assigned_addr % 512));
     // This will find the next 512-byte aligned region, since DELUGE_FLASH_REGION
     // does not appear to be aligned
-    let flash_region_len = 4096;
+    let flash_region_len = 2048;
     let deluge_state_test = deluge_test::initialize_all(raw_app_ptr,
                                                         flash_region_addr,
                                                         flash_region_len,
@@ -692,6 +692,9 @@ pub unsafe fn reset_handler() {
     rf233.start();
 
     debug!("Initialization complete. Entering main loop");
+    if is_sender {
+        imix_load_processes(flash_region_ptr);
+    }
     deluge_state_test.start(is_sender);
     kernel::main(&imix, &mut chip, &mut PROCESSES, Some(&imix.ipc));
 

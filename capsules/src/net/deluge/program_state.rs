@@ -180,9 +180,9 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
                       packet_num: usize,
                       payload: &[u8]) -> bool {
 
-        debug!("ProgramState: receive_packet: {}, {}, {}", version, page_num, packet_num);
+        debug!("ProgramState: Receive Packet: {}, {}, {}", version, page_num, packet_num);
         if version > self.version.get() {
-            debug!("ProgramState: new version");
+            debug!("----: New Version");
             self.received_new_version(version);
         }
         if payload.len() < PACKET_SIZE {
@@ -217,10 +217,10 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
             // receive the callback asynchronously
             // TODO: Should make this entire function return ReturnCode
             if self.page_completed() == ReturnCode::SUCCESS {
-                debug!("Page completed successfully!");
+                debug!("---: Page completed successfully");
                 return true;
             } else {
-                debug!("Page completed unsuccessfully!");
+                debug!("---: Page completed unsuccessfully");
                 return false;
             }
         }
@@ -245,7 +245,6 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
     }
 
     fn current_packet_number(&self) -> usize {
-        debug!("Current packet number: {}", self.rx_largest_packet.get());
         self.rx_largest_packet.get()
     }
 
@@ -264,7 +263,6 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
 
         // TODO: Check for specific length
         let offset = (packet_num - 1)* PACKET_SIZE;
-        debug!("Get requested packet: {} as offset: {}", packet_num, offset);
         if offset + PACKET_SIZE > PAGE_SIZE {
             return false;
         }
@@ -295,7 +293,6 @@ impl<'a> DelugeProgramState<'a> for ProgramState<'a> {
         }
 
         // We have the page in our buffer
-        debug!("Didn't need to read new page");
         self.tx_page.map(|tx_page| {
             self.client.get().map(|client|
                                   client.read_complete(page_num,

@@ -12,7 +12,7 @@ use kernel::hil::rng::RNG;
 use kernel::hil::time::Frequency;
 
 // TODO: Replace default constants
-const I_MIN: usize = 1; // In seconds, minimum interval size
+const I_MIN: usize = 100; // In ms, minimum interval size
 const I_MAX: usize = 7;     // Doublings of interval size
 const K: usize = 1;         // Redundancy constant
 
@@ -108,7 +108,7 @@ impl<'a, A: time::Alarm + 'a> TrickleData<'a, A> {
     fn set_timer(&self, time: usize) {
         // TODO: Cancel pending alarms
         // TODO: Consider issue with overflow w/u32
-        let tics = self.clock.now().wrapping_add((time as u32) * A::Frequency::frequency());
+        let tics = self.clock.now().wrapping_add((time as u32) * A::Frequency::frequency() / 1000);
         self.clock.set_alarm(tics);
     }
 }

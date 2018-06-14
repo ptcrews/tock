@@ -20,6 +20,7 @@ use kernel::hil::time::Client;
 use kernel::hil::time::Frequency;
 use kernel::hil::flash::HasClient;
 use kernel::common::cells::TakeCell;
+use kernel::ReturnCode;
 use core::cell::Cell;
 use imix_load_processes;
 
@@ -47,7 +48,7 @@ static mut FLASH_BUFFER: Sam4lPage = Sam4lPage::new();
 const SRC_PAN_ADDR: PanID = 0xABCD;
 const SRC_MAC_ADDR: MacAddress = MacAddress::Short(0xabcd);
 
-const DELAY_IN_S: u32 = 500; //500; //420;
+const DELAY_IN_S: u32 = 60; //500; //420;
 
 const UPDATED_APP_VERSION: usize = 0x2;
 
@@ -206,22 +207,23 @@ impl<'a, A: time::Alarm + 'a> DelugeFlashClient for DelugeTest<'a, A> {
             let app_offset = (current_page_number * program_state::PAGE_SIZE) as isize;
             let mut_app_ptr: *mut u8 = self.app_flash_ptr.offset(app_offset) as *mut u8;
             let buf_ptr = &_buffer[0] as *const u8;
-            debug!("Copying to addr: {:p}", mut_app_ptr);
             ptr::copy(buf_ptr, mut_app_ptr, program_state::PAGE_SIZE);
-            debug!("Values: {}, {}", _buffer[0], *mut_app_ptr);
         }
-        debug!("DONE WRITING APP PAGE");
+        debug!("DelugeTest: Copied page {} to application storage", current_page_number);
         let num_pages = self.flash_region_len.get() / program_state::PAGE_SIZE;
         let next_page_number = current_page_number + 1;
         if next_page_number >= num_pages {
             // We are done!
             self.flash_driver.set_client(self.flash_client);
+            debug!("DelugeTest: TEST COMPLETED, LOADING PROGRAM");
             self.reload_processes();
             return;
         }
         self.init_page_number.set(next_page_number);
         let result = self.flash_driver.get_page(next_page_number);
-        debug!("Requested page {} with return value: {:?}", next_page_number, result);
+        if result != ReturnCode::SUCCESS {
+            debug!("DelugeTest: ERROR: Requested page {} with return value: {:?}", next_page_number, result);
+        }
     }
 
     fn write_complete(&self) {
@@ -240,20 +242,24 @@ impl<'a, A: time::Alarm + 'a> DelugeFlashClient for DelugeTest<'a, A> {
             let app_offset = (current_page_number * program_state::PAGE_SIZE) as isize;
             let app_ptr = self.app_flash_ptr.offset(app_offset);
             ptr::copy(app_ptr, current_page_ptr, program_state::PAGE_SIZE);
-            debug!("WriteComplete: Value: {} at {:p}", current_page[0], app_ptr);
+            debug!("DelugeTest: Wrote page {}", current_page_number);
         }
         let result = self.flash_driver.page_completed(current_page_number, &current_page);
-        debug!("Wrote page {} with return value: {:?}", current_page_number, result);
+        if result != ReturnCode::SUCCESS {
+            debug!("DelugeTest: ERROR: Wrote page {} with return value: {:?}", current_page_number, result);
+        }
     }
 }
 
 impl<'a, A: time::Alarm + 'a> time::Client for DelugeTest<'a, A> {
     fn fired(&self) {
-        debug!("Timer fired");
+        debug!("DelugeTest: Application Updated");
         // Set ourselves as the flash client again
         self.flash_driver.set_client(self.self_flash_client.get().unwrap());
         self.init_page_number.set(0);
         let result = self.flash_driver.get_page(0);
-        debug!("Requested page {} with return value: {:?}", 0, result);
+        if result != ReturnCode::SUCCESS {
+            debug!("Requested page {} with return value: {:?}", 0, result);
+        }
     }
 }
