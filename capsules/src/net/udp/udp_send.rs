@@ -86,6 +86,7 @@ impl<'a, T: IP6Sender<'a>> UDPSender<'a> for UDPSendStruct<'a, T> {
     fn send(&self, dest: IPAddr, mut udp_header: UDPHeader, buf: &[u8]) -> ReturnCode {
         let total_length = buf.len() + udp_header.get_hdr_size();
         udp_header.set_len(total_length as u16);
+        debug!("UDP Header is: {:?}", udp_header);
         let transport_header = TransportHeader::UDP(udp_header);
         self.ip_send_struct.send_to(dest, transport_header, buf)
     }

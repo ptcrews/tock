@@ -28,7 +28,7 @@ use net::sixlowpan::sixlowpan_state::TxState;
 // TODO: These should *not* be constants, and should be set at some other
 // point during the initialization of the IP stack
 const SRC_MAC_ADDR: MacAddress = MacAddress::Short(0xf00f);
-const DST_MAC_ADDR: MacAddress = MacAddress::Short(0xffff);
+const DST_MAC_ADDR: MacAddress = MacAddress::Short(0x802); //match 802154 rx userland app
 
 /// This trait must be implemented by upper layers in order to receive
 /// the `send_done` callback when a transmission has completed. The upper

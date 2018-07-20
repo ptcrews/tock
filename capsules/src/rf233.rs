@@ -907,6 +907,7 @@ impl<'a, S: spi::SpiMasterDevice + 'a> spi::SpiMasterClient for RF233<'a, S> {
                 );
             }
             InternalState::CONFIG_SHORT1_SET => {
+                debug!("about to set pan to: {:?}", self.pan.get());
                 self.state_transition_write(
                     RF233Register::PAN_ID_0,
                     (self.pan.get() & 0xff) as u8,
@@ -1297,12 +1298,16 @@ impl<'a, S: spi::SpiMasterDevice + 'a> radio::RadioConfig for RF233<'a, S> {
 
     fn config_commit(&self) {
         let pending = self.config_pending.get();
+        debug!("In config commit, pending is: {:?}", pending);
         if !pending {
             self.config_pending.set(true);
             let state = self.state.get();
 
             if state == InternalState::READY {
                 // Start configuration commit
+                debug!("Starting radio config!!");
+                debug!("addr is {:?}", self.addr.get());
+                debug!("pan in config commit is {:?}", self.pan.get());
                 self.state_transition_write(
                     RF233Register::SHORT_ADDR_0,
                     (self.addr.get() & 0xff) as u8,
