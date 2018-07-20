@@ -828,6 +828,8 @@ impl<'a> device::RxClient for RadioDriver<'a> {
     fn receive<'b>(&self, buf: &'b [u8], header: Header<'b>, data_offset: usize, data_len: usize) {
         self.apps.each(|app| {
             app.app_read.take().as_mut().map(|rbuf| {
+                debug!("Inside driver rx method");
+                debug!("radio mac is {:?}", self.mac.get_address());
                 let rbuf = rbuf.as_mut();
                 let len = min(rbuf.len(), data_offset + data_len);
                 // Copy the entire frame over to userland, preceded by two

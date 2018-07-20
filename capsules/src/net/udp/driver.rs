@@ -235,6 +235,11 @@ impl<'a> UDPDriver<'a> {
                 let dst_addr = addr_ports[1].addr;
                 let dst_port = addr_ports[1].port;
                 let src_port = addr_ports[0].port;
+                let src_addr = addr_ports[0].addr;
+
+                debug!("dst addr: {:?}", dst_addr);
+                debug!("src addr: {:?}", src_addr);
+                debug!("dst port: {:?}", dst_port);
 
                 // Copy UDP payload to kernel memory
                 // TODO: handle if too big
@@ -271,8 +276,10 @@ impl<'a> UDPDriver<'a> {
         self.get_next_tx_if_idle()
             .map(|appid| {
                 if appid == new_appid {
+                    debug!("sync tx coming up");
                     self.perform_tx_sync(appid)
                 } else {
+                    debug!("async tx coming up");
                     self.perform_tx_async(appid);
                     ReturnCode::SUCCESS
                 }
@@ -396,7 +403,8 @@ impl<'a> Driver for UDPDriver<'a> {
                             return None;
                         }
 
-                        debug!("{:?}", self.parse_ip_port_pair(&cfg.as_ref()[mem::size_of::<IPAddrPort>()..]));
+                        debug!("hi {:?}", self.parse_ip_port_pair(&cfg.as_ref()[mem::size_of::<IPAddrPort>()..]));
+                        debug!("hey {:?}", self.parse_ip_port_pair(&cfg.as_ref()[..mem::size_of::<IPAddrPort>()]));
 
                         if let (Some(dst), Some(src)) = (self.parse_ip_port_pair(&cfg.as_ref()[mem::size_of::<IPAddrPort>()..]),
                                                          self.parse_ip_port_pair(&cfg.as_ref()[..mem::size_of::<IPAddrPort>()])) {
@@ -409,6 +417,7 @@ impl<'a> Driver for UDPDriver<'a> {
                         debug!("TX IS NONE");
                         return ReturnCode::EINVAL;
                     }
+                    debug!("Boo {:?}", next_tx);
                     app.pending_tx = next_tx;
 
                     self.do_next_tx_sync(appid)

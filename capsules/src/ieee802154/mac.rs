@@ -142,6 +142,7 @@ impl<'a, R: radio::Radio + 'a> Mac for AwakeMac<'a, R> {
         full_mac_frame: &'static mut [u8],
         frame_len: usize,
     ) -> (ReturnCode, Option<&'static mut [u8]>) {
+        debug!("Mac Pan is: {:?}", self.get_pan());
         self.radio.transmit(full_mac_frame, frame_len)
     }
 }

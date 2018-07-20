@@ -33,6 +33,7 @@ static void tx_done_callback(int result,
                              __attribute__ ((unused)) int arg3,
                              void *ud) {
   tx_result = result;
+  printf("tx_result is: %d\n", tx_result);
   *((bool *) ud) = true;
 }
 
@@ -43,7 +44,7 @@ ssize_t udp_send_to(sock_handle_t *handle, void *buf, size_t len,
   int bytes = sizeof(sock_addr_t);
   int err = allow(UDP_DRIVER, ALLOW_CFG, (void *) BUF_TX_CFG, 2 * bytes);
   if (err < 0) return err;
-
+  int i;
   memcpy(BUF_TX_CFG, &(handle->addr), bytes);
   memcpy(BUF_TX_CFG + bytes, dst_addr, bytes);
 
