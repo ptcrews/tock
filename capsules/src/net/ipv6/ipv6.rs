@@ -94,7 +94,7 @@ impl Default for IP6Header {
             payload_len: 0,
             next_header: ip6_nh::NO_NEXT,
             hop_limit: hop_limit,
-            src_addr: IPAddr::new(),
+            src_addr: IPAddr([1; 16]),
             dst_addr: IPAddr::new(),
         }
     }
